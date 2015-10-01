@@ -17,11 +17,7 @@
 #ifndef MuscleMessage_h
 #define MuscleMessage_h
 
-#include "support/Point.h"
-#include "support/Rect.h"
-#include "util/ByteBuffer.h"
-#include "util/String.h"
-#include "util/Hashtable.h"
+#include "message/MessageImpl.h"  // this is the only place that MessageImpl.h should ever be #included!
 
 namespace muscle {
 
@@ -99,9 +95,6 @@ MessageRef GetLightweightCopyOfMessageFromPool(const Message & copyMe);
  */
 MessageRef GetLightweightCopyOfMessageFromPool(ObjectPool<Message> & pool, const Message & copyMe);
 
-// this declaration is for internal use only
-class AbstractDataArray;
-
 /** This is an iterator that allows you to efficiently iterate over the field names in a Message. */
 class MessageFieldNameIterator MUSCLE_FINAL_CLASS
 {
@@ -142,11 +135,11 @@ public:
 
 private:
    friend class Message;
-   MessageFieldNameIterator(const HashtableIterator<String, RefCountableRef> & iter, uint32 tc) : _typeCode(tc), _iter(iter) {if (_typeCode != B_ANY_TYPE) SkipNonMatchingFieldNames();}
+   MessageFieldNameIterator(const HashtableIterator<String, muscle_message_imp::MessageField> & iter, uint32 tc) : _typeCode(tc), _iter(iter) {if (_typeCode != B_ANY_TYPE) SkipNonMatchingFieldNames();}
    void SkipNonMatchingFieldNames();
 
    uint32 _typeCode;
-   HashtableIterator<String, RefCountableRef> _iter;
+   HashtableIterator<String, muscle_message_imp::MessageField> _iter;
 };
 
 // Version number of the Message serialization protocol.
@@ -665,7 +658,7 @@ public:
     *  @param fieldName Name of the field to remove.
     *  @return B_NO_ERROR on success, B_ERROR if the field name wasn't found.
     */
-   status_t RemoveName(const String & fieldName);
+   status_t RemoveName(const String & fieldName) {return _entries.Remove(fieldName);}
 
    /** Clears all fields from the Message. 
     *  @param releaseCachedBuffers If set true, any cached buffers we are holding will be immediately freed.
@@ -887,12 +880,12 @@ public:
    template <class T> status_t FindFlat(const String & fieldName, uint32 index, T & obj) const
    {
       uint32 arrayTypeCode;
-      const AbstractDataArray * ada = GetArrayAndTypeCode(fieldName, index, &arrayTypeCode);
-      if ((ada)&&(obj.AllowsTypeCode(arrayTypeCode)))
+      const muscle_message_imp::MessageField * mf = GetMessageFieldAndTypeCode(fieldName, index, &arrayTypeCode);
+      if ((mf)&&(obj.AllowsTypeCode(arrayTypeCode)))
       {
          uint32 numBytes;
          const FlatCountable * fcPtr;
-         const uint8 * ptr = FindFlatAux(ada, index, numBytes, &fcPtr);
+         const uint8 * ptr = FindFlatAux(mf, index, numBytes, &fcPtr);
               if (ptr)   return obj.Unflatten(ptr, numBytes);
          else if (fcPtr) return obj.CopyFrom(*fcPtr);
       }
@@ -1220,7 +1213,7 @@ public:
     *  @param type the type to look for, or B_ANY_TYPE if type isn't important to you.
     *  @return true if such a field exists, else false. 
     */
-   bool HasName(const String & fieldName, uint32 type = B_ANY_TYPE) const {return (GetArray(fieldName, type) != NULL);}
+   bool HasName(const String & fieldName, uint32 type = B_ANY_TYPE) const {return (GetMessageField(fieldName, type) != NULL);}
 
    /** Returns the number of values in the field with the given name and type in the Message.
     *  @param fieldName the field name to look for.
@@ -1268,9 +1261,10 @@ public:
 
    /** Take the data under (fieldName) in this message, and shares it into (shareTo). 
     *  Any data that was under (fieldName) in (shareTo) will be replaced.
-    *  This operation is similar to CopyName(), except that no copy of the field
-    *  data is made:  instead, the field becomes shared between the two Messages,
-    *  and changes to the field in one Message will be seen in the other.
+    *  This operation is similar to CopyName(), except that if there is more than
+    *  one value present in the source field, no copy of the field data is made:  
+    *  instead, the field becomes shared between the two Messages, and changes 
+    *  to the field in one Message will be seen in the other.
     *  This method is more efficient than CopyName(), but you need to be careful
     *  when using it or you may get unexpected results...
     *  @param fieldName Name of an existing field to be shared.
@@ -1282,9 +1276,10 @@ public:
    /** Take the data under (oldFieldName) in this message, and shares it into (shareTo), 
     *  where it will appear under the field name (newFieldName).
     *  Any data that was under (newFieldName) in (shareTo) will be replaced.
-    *  This operation is similar to CopyName(), except that no copy of the field
-    *  data is made:  instead, the field becomes shared between the two Messages,
-    *  and changes to the field in one Message will be seen in the other.
+    *  This operation is similar to CopyName(), except that if there is more than
+    *  one value present in the source field, no copy of the field data is made:  
+    *  instead, the field becomes shared between the two Messages, and changes 
+    *  to the field in one Message will be seen in the other.
     *  This method is more efficient than CopyName(), but you need to be careful
     *  when using it or you may get unexpected results...
     *  @param oldFieldName Name of an existing field to be shared.
@@ -1451,47 +1446,47 @@ public:
 #define DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(bw)                                                                                               \
    inline status_t FindInt##bw (const String & fieldName, uint32 index, uint##bw & val) const {return FindInt##bw (fieldName, index, (int##bw &)val);} \
    inline status_t FindInt##bw (const String & fieldName,               uint##bw & val) const {return FindInt##bw (fieldName,        (int##bw &)val);}
-   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(8);   ///< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
-   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(16);  ///< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
-   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(32);  ///< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
-   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(64);  ///< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
+   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(8);   //< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
+   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(16);  //< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
+   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(32);  //< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
+   DECLARE_MUSCLE_UNSIGNED_INTEGER_FIND_METHODS(64);  //< This macro defined Find methods with unsigned value arguments, so the user doesn't have to do ugly C-style casts to retrieve unsigned values.
 
 #define DECLARE_MUSCLE_POINTER_FIND_METHODS(name, type)                                                                                \
    inline status_t Find##name (const String & fieldName, uint32 index, type * val) const {return Find##name (fieldName, index, *val);} \
    inline status_t Find##name (const String & fieldName,               type * val) const {return Find##name (fieldName,        *val);}
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Bool,    bool);         ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Double,  double);       ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Float,   float);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int8,    int8);         ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int16,   int16);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int32,   int32);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int64,   int64);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int8,    uint8);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int16,   uint16);       ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int32,   uint32);       ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int64,   uint64);       ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Point,   Point);        ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(Rect,    Rect);         ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
-   DECLARE_MUSCLE_POINTER_FIND_METHODS(String,  const char *); ///< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Bool,    bool);         //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Double,  double);       //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Float,   float);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int8,    int8);         //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int16,   int16);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int32,   int32);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int64,   int64);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int8,    uint8);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int16,   uint16);       //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int32,   uint32);       //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Int64,   uint64);       //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Point,   Point);        //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(Rect,    Rect);         //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
+   DECLARE_MUSCLE_POINTER_FIND_METHODS(String,  const char *); //< This macro defines old-style Find methods with pointer value arguments, for backwards compatibility.
 
 #define DECLARE_MUSCLE_CONVENIENCE_METHODS(name, type) \
    inline type Get##name(const String & fieldName, const type & defVal = type(), uint32 idx = 0) const {type r; return (Find##name (fieldName, idx, r) == B_NO_ERROR) ? (const type &)r : defVal;} \
    inline status_t CAdd##name(    const String & fieldName, const type & value, const type & defVal = type())   {return (value == defVal) ? B_NO_ERROR : Add##name     (fieldName, value);}        \
    inline status_t CPrepend##name(const String & fieldName, const type & value, const type & defVal = type())   {return (value == defVal) ? B_NO_ERROR : Prepend##name (fieldName, value);}
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Bool,    bool);            ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Double,  double);          ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Float,   float);           ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int8,    int8);            ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int16,   int16);           ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int32,   int32);           ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int64,   int64);           ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Point,   Point);           ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Rect,    Rect);            ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(String,  String);          ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Message, MessageRef);      ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Flat,    ByteBufferRef);   ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_MUSCLE_CONVENIENCE_METHODS(Tag,     RefCountableRef); ///< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
-   DECLARE_STANDARD_CLONE_METHOD(Message);  ///< implements the standard Clone() method to copy a Message object.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Bool,    bool);            //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Double,  double);          //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Float,   float);           //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int8,    int8);            //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int16,   int16);           //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int32,   int32);           //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Int64,   int64);           //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Point,   Point);           //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Rect,    Rect);            //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(String,  String);          //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Message, MessageRef);      //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Flat,    ByteBufferRef);   //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_MUSCLE_CONVENIENCE_METHODS(Tag,     RefCountableRef); //< This macro defines Get(), CAdd(), and CPrepend() methods for convience in common use cases.
+   DECLARE_STANDARD_CLONE_METHOD(Message);  //< implements the standard Clone() method to copy a Message object.
 
 protected:
    /** Overridden to copy directly if (copyFrom) is a Message as well. */
@@ -1503,13 +1498,12 @@ private:
 
    // Given a known uint32, returns the size of an item of that type.
    // Returns zero if items of the given type are variable length.
-   uint32 GetElementSize(uint32 type) const;
+   static uint32 GetElementSize(uint32 type);
 
-   RefCountableRef GetArrayRef(const String & arrayName, uint32 etc) const;
-   AbstractDataArray * GetArray(const String & arrayName, uint32 etc);
-   const AbstractDataArray * GetArray(const String & arrayName, uint32 etc) const;
-   AbstractDataArray * GetOrCreateArray(const String & arrayName, uint32 tc);
-   const AbstractDataArray * GetArrayAndTypeCode(const String & arrayName, uint32 index, uint32 * retTypeCode) const;
+   muscle_message_imp::MessageField * GetMessageField(const String & fieldName, uint32 etc);
+   const muscle_message_imp::MessageField * GetMessageField(const String & fieldName, uint32 etc) const;
+   muscle_message_imp::MessageField * GetOrCreateMessageField(const String & fieldName, uint32 tc);
+   const muscle_message_imp::MessageField * GetMessageFieldAndTypeCode(const String & fieldName, uint32 index, uint32 * retTypeCode) const;
 
    status_t AddFlatAux(const String & fieldName, const FlatCountableRef & flat, uint32 etc, bool prepend);
    status_t AddFlatAux(const String & fieldName, const ByteBufferRef & bufRef, uint32 etc, bool prepend)
@@ -1520,7 +1514,7 @@ private:
 
    status_t AddDataAux(const String & fieldName, const void * data, uint32 size, uint32 etc, bool prepend);
 
-   const uint8 * FindFlatAux(const AbstractDataArray * ada, uint32 index, uint32 & retNumBytes, const FlatCountable ** optRetFCPtr) const;
+   const uint8 * FindFlatAux(const muscle_message_imp::MessageField * ada, uint32 index, uint32 & retNumBytes, const FlatCountable ** optRetFCPtr) const;
    status_t FindDataItemAux(const String & fieldName, uint32 index, uint32 tc, void * setValue, uint32 valueSize) const;
 
    status_t ReplaceFlatAux(bool okayToAdd, const String & fieldName, uint32 index, const ByteBufferRef & bufRef, uint32 tc);
@@ -1534,9 +1528,9 @@ private:
       return iter.HasData() ? &iter.GetFieldName() : NULL;
    }
 
-   // Iterator support methods
+   friend class muscle_message_imp::MessageField;
    friend class MessageFieldNameIterator;
-   Hashtable<String, RefCountableRef> _entries;   
+   Hashtable<String, muscle_message_imp::MessageField> _entries;   
 };
 
 // Template specializations so that the *Flat() methods do the right thing when called with a String or Message object as the argument
@@ -1559,6 +1553,13 @@ DECLARE_MUSCLE_FLAT_SPECIALIZERS(Message)
  *  @return Reference to a Message object, or a NULL ref on failure (out of memory or unflattening error)
  */
 inline MessageRef GetMessageFromPool(const ByteBuffer & bb) {return GetMessageFromPool(bb.GetBuffer(), bb.GetNumBytes());}
+
+/** Convenience method:  Gets a Message from the message pool, populates it using the flattened Message
+ *  bytes held by (bb), and returns it.
+ *  @param bbRef a ByteBufferRef referencing a ByteBuffer object to unflatten the Message from.
+ *  @return Reference to a Message object, or a NULL ref on failure (out of memory or unflattening error)
+ */
+inline MessageRef GetMessageFromPool(const ByteBufferRef & bbRef) {return bbRef() ? GetMessageFromPool(*bbRef()) : MessageRef();}
 
 /** Convenience method:  Gets a Message from the message pool, and populates it by calling
   * SaveToArchive(msg) on the passed in object.  Templates so that the passed-in object may be of any type.
