@@ -1,113 +1,45 @@
+using System;
+using System.Collections;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
 
+using muscle.iogateway;
+using muscle.message;
 
-namespace muscle.client 
+namespace muscle.client {
 
-{
-
-    using muscle.message;
-
-    using muscle.iogateway;
-
-
-
-    using System;
-
-    using System.IO;
-
-    using System.Net;
-
-    using System.Net.Sockets;
-
-    using System.Text;
-
-    using System.Collections;
-
-    using System.Diagnostics;
-
-    using System.Threading;
-
-  
-
-
-
-    public delegate void DisconnectCallback(MessageTransceiver client,
-
-    Exception err,
-
-    object state);
-
-
-
-    public delegate void MessagesCallback(Message [] messages,
-
-    MessageTransceiver client, 
-
-    object state);
-
-
+    public delegate void DisconnectCallback(MessageTransceiver client, Exception err, object state);
+    public delegate void MessagesCallback(Message [] messages, MessageTransceiver client, object state);
 
     public class MessageTransceiver : IDisposable 
-
     {
-
         const int MAX_RECEIVED_BEFORE_CALLBACK = 200;
-
         const int RECEIVE_BUFFER_SIZE = 16384;
-
-
-
         public MessageTransceiver(string host, int port) : 
 
-	  this(host, port, MessageIOGateway.MUSCLE_MESSAGE_ENCODING_DEFAULT)
-
-	{ 
-
-
-
-	}
-
-	  
+        this(host, port, MessageIOGateway.MUSCLE_MESSAGE_ENCODING_DEFAULT){ }
 
         public MessageTransceiver(string host, int port, int encoding) 
-
         {
-
 	    this.encoding = encoding;
-
             read_buffer = new byte[RECEIVE_BUFFER_SIZE];
-
             write_buffer = null;
-
             write_pos = 0;
-
             sendQueue = new Queue();
-
             run = true;
 
-
-
-            socket = new Socket(AddressFamily.InterNetwork, 
-
-                SocketType.Stream,
-
-                ProtocolType.Tcp);
-
-      
+            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); 
 
             IPHostEntry hEntry = Dns.GetHostByName(host);
-
             IPAddress ipaddress = hEntry.AddressList[0];
-
-            endPoint = new IPEndPoint(ipaddress, port);
-
-      
-
+            endPoint = new IPEndPoint(ipaddress, port);   
         }
 
 
 
         public IAsyncResult BeginConnect(AsyncCallback callback, object state) 
-
         {
 
             return socket.BeginConnect(endPoint, callback, state);

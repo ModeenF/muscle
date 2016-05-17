@@ -1,5 +1,3 @@
-namespace muscle.client {
-  
   /// <summary>
   /// Constants that are understood by the StorageReflectSession class 
   /// of the standard MUSCLE server.
@@ -7,7 +5,9 @@ namespace muscle.client {
   ///
   /// See documentation or comments at the end of this file for what 
   /// they all mean
-  /// 
+
+namespace muscle.client {
+  
   public abstract class StorageReflectConstants
   {
     /// Unused dummy value ('!Pc0'), marks the beginning of the reserved command array

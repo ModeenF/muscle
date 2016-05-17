@@ -1,16 +1,15 @@
 
-namespace muscle.iogateway {
-  using muscle.support;
-  using muscle.message;
+using System.IO;
+using muscle.message;
 
-  using System.IO;
+/// <summary>
+/// Interface for an object that knows how to translate bytes
+/// into Messages, and vice versa.
+/// </summary>
 
-  /// <summary>
-  /// Interface for an object that knows how to translate bytes
-  /// into Messages, and vice versa.
-  /// </summary>
-  ///
-  public interface AbstractMessageIOGateway {
+namespace muscle.iogateway
+{
+    public interface AbstractMessageIOGateway {
 
     /// <summary>
     /// Reads from the input stream until a Message can be assembled and 
