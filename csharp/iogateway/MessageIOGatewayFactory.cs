@@ -42,7 +42,7 @@ namespace muscle.iogateway {
             }
 
             if (ret != null)
-                ret.SetMaximumIncomingMessageSize(maxIncomingMessageSize);
+                ret.setMaximumIncomingMessageSize(maxIncomingMessageSize);
 
             return ret;
         }

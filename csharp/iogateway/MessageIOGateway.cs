@@ -14,14 +14,14 @@ namespace muscle.iogateway {
     public class MessageIOGateway : AbstractMessageIOGateway
     {
         private int _outgoingEncoding;
-        private MemoryStreamExtended _outgoing;
+        private ByteBuffer _outgoing;
         public const int MESSAGE_HEADER_SIZE = 8;
 
         // 'Enc0' -- just plain ol' flattened Message objects, with no 
         // special encoding 
         public const int MUSCLE_MESSAGE_ENCODING_DEFAULT = 1164862256;
 
-        private int _maximumIncomingMessageSize = int.MaxValue;
+        private int _maximumIncomingMessageSize = Integer.MAX_VALUE;
 
         // zlib encoding levels
         public const int MUSCLE_MESSAGE_ENCODING_ZLIB_1 = 1164862257;
@@ -46,15 +46,14 @@ namespace muscle.iogateway {
         /// <summary>
         /// Constructs a MessageIOGateway whose outgoing encoding is one of MUSCLE_MESSAGE_ENCODING_*.
         ///</summary>
-        public MessageIOGateway(int encoding) 
+        private MessageIOGateway(int encoding) 
         {
-            SetOutgoingEncoding(encoding);
+            setOutgoingEncoding(encoding);
         }
 
-        public void SetOutgoingEncoding(int newEncoding)
+        public void setOutgoingEncoding(int newEncoding)
         {
-            if ((newEncoding < MUSCLE_MESSAGE_ENCODING_DEFAULT) || (newEncoding > MUSCLE_MESSAGE_ENCODING_ZLIB_9))
-                throw new NotSupportedException("The argument is not a supported encoding");
+            if ((newEncoding < MUSCLE_MESSAGE_DEFAULT_ENCODING) || (newEncoding > MUSCLE_MESSAGE_ENCODING_ZLIB_9)) throw new UnsupportedOperationException("The argument is not a supported encoding");
             _outgoingEncoding = newEncoding;
         }
 
@@ -71,13 +70,13 @@ namespace muscle.iogateway {
         /// Set the largest allowable size for incoming Message objects.  Default value is Integer.MAX_VALUE. */
         /// </summary>
         /// 
-        public void SetMaximumIncomingMessageSize(int maxSize) { _maximumIncomingMessageSize = maxSize; }
+        public void setMaximumIncomingMessageSize(int maxSize) { _maximumIncomingMessageSize = maxSize; }
     
         /// <summary>
         /// Returns the current maximum-incoming-message-size.  Default value is Integer.MAX_VALUE. */
         /// </summary>
         /// 
-        public int GetMaximumIncomingMessageSize() { return _maximumIncomingMessageSize; }
+        public int getMaximumIncomingMessageSize() { return _maximumIncomingMessageSize; }
 
         /// <summary>
         /// Reads from the input stream until a Message can be assembled 
@@ -89,7 +88,7 @@ namespace muscle.iogateway {
         /// <exception cref="UnflattenFormatException"/>
         /// <returns>The next assembled Message</returns>
         ///
-        public Message UnflattenMessage(Stream inputStream)
+        public Message unflattenMessage(Stream inputStream)
         {
             BinaryReader reader = new BinaryReader(inputStream);
             int numBytes = reader.ReadInt32();
@@ -203,6 +202,22 @@ namespace muscle.iogateway {
 */
 
         /// <summary>
+        /// Converts the given Message into bytes and sends it out the stream.
+        /// </summary>
+        ///
+        /// <param name="outDO">the data stream to send the converted bytes to.</param>
+        /// <param name="msg">the Message to convert.</param>
+        /// <exception cref="IOException"> if there is an error writing to the stream.</exception>
+        /// <returns>The next assembled Message</returns>
+        ///
+        public void flattenMessage(DataOutput outDO, Message msg)
+        {
+            outDO.writeInt(msg.flattenedSize());
+            outDO.writeInt(MUSCLE_MESSAGE_DEFAULT_ENCODING);
+            msg.flatten(outDO);
+        }
+
+        /// <summary>
         /// 
         /// </summary>
         ///
@@ -210,7 +225,7 @@ namespace muscle.iogateway {
         /// <exception cref="IOException"/>
         /// <returns>The next assembled Message</returns>
         ///
-/*        public ByteBuffer FlattenMessage(Message msg)
+        public ByteBuffer flattenMessage(Message msg)
         {
             ByteBuffer buffer;
             int flattenedSize = msg.flattenedSize();
@@ -224,7 +239,7 @@ namespace muscle.iogateway {
             msg.flatten(buffer);
             buffer.rewind();
             return buffer;
-        }*/
+        }
     
         /// <summary>
         /// Converts the given Message into bytes and sends it out the stream.
@@ -234,14 +249,13 @@ namespace muscle.iogateway {
         /// <param name="msg">the message to convert</param>
         /// <exception cref="IOException"/>
         ///
-        public void FlattenMessage(Stream outputStream, Message msg)
+        public void flattenMessage(Stream outputStream, Message msg)
         {
             int flattenedSize = msg.flattenedSize();
 
             if (flattenedSize >= 32 &&
-                _outgoingEncoding >= MUSCLE_MESSAGE_ENCODING_ZLIB_1 &&
-                _outgoingEncoding <= MUSCLE_MESSAGE_ENCODING_ZLIB_9)
-            {
+                _encoding >= MUSCLE_MESSAGE_ENCODING_ZLIB_1 &&
+                _encoding <= MUSCLE_MESSAGE_ENCODING_ZLIB_9) {
 
                 // currently do not compress outgoing messages do later
                 BinaryWriter writer = new BinaryWriter(outputStream);
@@ -256,6 +270,6 @@ namespace muscle.iogateway {
                 msg.flatten(writer);
                 writer.Flush();
             }
-        }
+        }    
     }
 }

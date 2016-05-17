@@ -30,7 +30,8 @@ namespace muscle.iogateway {
         /// <exception cref="UnflattenFormatException">if there is an error parsing the data in the stream.</exception>
         /// <returns>The next assembled Message.</returns>
         /// 
-        public Message UnflattenMessage(Stream inputStream);
+        public Message unflattenMessage(DataInput dataIn);
+        //    Message unflattenMessage(Stream inputStream);
 
         /// <summary>
         /// Unflattens the Message based on the contents of the supplied ByteBuffer instead.
@@ -42,7 +43,8 @@ namespace muscle.iogateway {
         /// <exception cref="NotEnoughDataException">if the byte buffer doesn't contain enough data to unflatten a message.</exception>
         /// <returns>The next assembled Message.</returns>
         ///
-        public Message UnflattenMessage(Stream inputStream);
+        public Message unflattenMessage(ByteBuffer dataIn);
+        //    Message unflattenMessage(Stream inputStream);
 
         /// <summary>
         /// Converts the given Message into bytes and sends it out the stream.
@@ -51,7 +53,7 @@ namespace muscle.iogateway {
         /// <param name="dataOut">The data stream to send the converted bytes to.</param>
         /// <param name="msg">The Message to convert.</param>
         /// <exception cref="IOException">If there is an error writing to the stream.</exception>
-        public void FlattenMessage(Stream outputStream, Message msg);
+        public void flattenMessage(DataOutput dataOut, Message msg);
         //    void flattenMessage(Stream outputStream, Message msg);
    
         /// <summary>
@@ -61,7 +63,8 @@ namespace muscle.iogateway {
         /// <param name="dataOut">The ByteChannel send the converted bytes to.</param>
         /// <param name="msg">The Message to convert.</param>
         /// <exception cref="IOException">If there is an error writing to the ByteChannel.</exception>
-        public void FlattenMessage(Stream outputStream, Message msg);
+        public void flattenMessage(ByteChannel dataOut, Message msg);
+        //    void flattenMessage(Stream outputStream, Message msg);
 
         /// <summary>
         /// Converts the given Message into a ByteBuffer and returns the filled buffer to the caller. 
@@ -71,7 +74,8 @@ namespace muscle.iogateway {
         /// <param name="msg">The Message to flatten.</param>
         /// <returns>A filled ByteBuffer</returns>
         /// <exception cref="IOException">If there is an error writing to the ByteChannel.</exception>
-        public Stream FlattenMessage(Message msg);
+        public ByteBuffer flattenMessage(Message msg);
+        //    void flattenMessage(Stream outputStream, Message msg);
 
         /// <summary>
         /// Should be implemented to return the largest allowable incoming message size, in bytes.
@@ -79,13 +83,13 @@ namespace muscle.iogateway {
         /// </summary>
         ///
         /// <returns>return the largest allowable incoming message size</returns>
-        public int GetMaximumIncomingMessageSize();
+        public int getMaximumIncomingMessageSize();
 
         /// <summary>
         /// Change the currently used outgoing encoding. 
         /// </summary>
         ///
         /// <param name="newEncoding"></param>
-        public void SetOutgoingEncoding(int newEncoding);
+        public void setOutgoingEncoding(int newEncoding);
     }
 }
