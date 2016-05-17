@@ -4,15 +4,17 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{F0D6CF3A-1E73-4087-9A94-51BA2F5AD489}</ProjectGuid>
-    <OutputType>Library</OutputType>
+    <ProjectGuid>{E4171821-A354-4A4A-93A3-D2C05A38ACD3}</ProjectGuid>
+    <OutputType>Exe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>muscle</RootNamespace>
-    <AssemblyName>muscle</AssemblyName>
+    <RootNamespace>TestDecoding</RootNamespace>
+    <AssemblyName>TestDecoding</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
@@ -22,6 +24,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
@@ -40,27 +43,17 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="client\MessageDecoder.cs" />
-    <Compile Include="client\MessageEncoder.cs" />
-    <Compile Include="client\MessageTransceiver.cs" />
-    <Compile Include="client\StorageReflectConstants.cs" />
-    <Compile Include="iogateway\AbstractMessageIOGateway.cs" />
-    <Compile Include="iogateway\MessageIOGateway.cs" />
-    <Compile Include="message\FieldNotFoundException.cs" />
-    <Compile Include="message\FieldTypeMismatchException.cs" />
-    <Compile Include="message\Message.cs" />
-    <Compile Include="message\MessageException.cs" />
-    <Compile Include="message\MessageField.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="support\Flattenable.cs" />
-    <Compile Include="support\Point.cs" />
-    <Compile Include="support\Rect.cs" />
-    <Compile Include="support\TypeConstants.cs" />
-    <Compile Include="support\UnflattenFormatException.cs" />
+    <Compile Include="TestDecoding.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="queue\" />
-    <Folder Include="thread\" />
+    <None Include="App.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\muscle\muscle.csproj">
+      <Project>{f0d6cf3a-1e73-4087-9a94-51ba2f5ad489}</Project>
+      <Name>muscle</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

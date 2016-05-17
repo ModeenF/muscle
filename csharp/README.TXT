@@ -1,5 +1,10 @@
-
 This folder contains a C# implementation of the MUSCLE client API.
+
+I have reorder everything, cleand it upp a bit , renamed Client to MessageTransceiver
+
+- Fredrik
+
+-----------------------------------------------------------------------
 
 The code in this folder was converted from MUSCLE Java codebase 
 by Wilson Yeung (wilson@whack.org), and donated back to the MUSCLE 
