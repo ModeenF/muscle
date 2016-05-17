@@ -17,8 +17,8 @@ namespace muscle.test {
 
     static void Main() {
       MessageIOGateway gw = new MessageIOGateway();
-      Client.MessageDecoder d = new Client.MessageDecoder();
-      Client.MessageEncoder e = new Client.MessageEncoder();
+      MessageTransceiver.MessageDecoder d = new MessageTransceiver.MessageDecoder();
+      MessageTransceiver.MessageEncoder e = new MessageTransceiver.MessageEncoder();
 
       Message m = new Message();
 

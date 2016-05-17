@@ -30,7 +30,7 @@ namespace muscle.test {
       
     public ExampleClient(string hostName, int port)
     {
-      Client client = new Client(hostName, port);
+      MessageTransceiver client = new MessageTransceiver(hostName, port);
 
       client.RegisterForMessages(new MessagesCallback(MessagesCallback), null);
       client.RegisterForDisconnect(new DisconnectCallback(DisconnectCallback),
@@ -56,11 +56,11 @@ namespace muscle.test {
 
     public void ConnectCallback(IAsyncResult ar) 
     {
-      Client client = (Client) ar.AsyncState;
+      MessageTransceiver client = (MessageTransceiver) ar.AsyncState;
       client.EndConnect(ar);
     }
 
-    public void DisconnectCallback(Client client,
+    public void DisconnectCallback(MessageTransceiver client,
 				   Exception err,
 				   object state)
     {
@@ -70,7 +70,7 @@ namespace muscle.test {
     }
 
     public void MessagesCallback(Message [] messages,
-				 Client client, 
+				 MessageTransceiver client, 
 				 object state) 
     {
       foreach (Message message in messages) {

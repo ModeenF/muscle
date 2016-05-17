@@ -30,7 +30,7 @@ namespace muscle.client
 
 
 
-    public delegate void DisconnectCallback(Client client,
+    public delegate void DisconnectCallback(MessageTransceiver client,
 
     Exception err,
 
@@ -40,13 +40,13 @@ namespace muscle.client
 
     public delegate void MessagesCallback(Message [] messages,
 
-    Client client, 
+    MessageTransceiver client, 
 
     object state);
 
 
 
-    public class Client : IDisposable 
+    public class MessageTransceiver : IDisposable 
 
     {
 
@@ -56,7 +56,7 @@ namespace muscle.client
 
 
 
-        public Client(string host, int port) : 
+        public MessageTransceiver(string host, int port) : 
 
 	  this(host, port, MessageIOGateway.MUSCLE_MESSAGE_ENCODING_DEFAULT)
 
@@ -68,7 +68,7 @@ namespace muscle.client
 
 	  
 
-        public Client(string host, int port, int encoding) 
+        public MessageTransceiver(string host, int port, int encoding) 
 
         {
 
@@ -128,7 +128,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
@@ -160,7 +160,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
@@ -212,7 +212,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
@@ -242,7 +242,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
@@ -270,7 +270,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
@@ -318,7 +318,7 @@ namespace muscle.client
 
                 {
 
-                    throw new ObjectDisposedException("Client already disposed or connection terminated");
+                    throw new ObjectDisposedException("MessageTransceiver already disposed or connection terminated");
 
                 }
 
