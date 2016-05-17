@@ -49,8 +49,7 @@ namespace muscle.client {
     /// Remove ban patterns from the server's ban list (Requires privilege)
     public const int PR_COMMAND_REMOVEBANS        = 558916412; 
     
-    /// Submessages under PR_NAME_KEYS are executed in order, as if they 
-    /// came separately
+    /// Submessages under PR_NAME_KEYS are executed in order, as if they came separately
     public const int PR_COMMAND_BATCH             = 558916413; 
     
     /// Server will ignore this message

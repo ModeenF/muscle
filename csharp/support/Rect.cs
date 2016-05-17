@@ -36,7 +36,10 @@ namespace muscle.support {
 
         ///<summary>Copy constructor</summary>
         ///<param name="rhs"></param>
-        public Rect(Rect rhs) { setEqualTo(rhs); }
+        public Rect(Rect rhs) 
+        { 
+            setEqualTo(rhs);
+        }
 
         ///<summary>Constructor where you specify the leftTop point and the rightBottom point.</summary>
         ///<param name="leftTop"></param>
@@ -81,28 +84,52 @@ namespace muscle.support {
         }
 
         /** Returns the left top corner of the rectangle. */
-        public Point leftTop() { return new Point(left, top); }
+        public Point leftTop()
+        { 
+            return new Point(left, top);
+        }
 
         /** Returns the right bottom corner of the rectangle. */
-        public Point rightBottom() { return new Point(right, bottom); }
+        public Point rightBottom()
+        { 
+            return new Point(right, bottom);
+        }
 
         /** Returns the left bottom corner of the rectangle. */
-        public Point leftBottom() { return new Point(left, bottom); }
+        public Point leftBottom()
+        {
+            return new Point(left, bottom);
+        }
 
         /** Returns the right top corner of the rectangle. */
-        public Point rightTop() { return new Point(right, top); }
+        public Point rightTop()
+        {
+            return new Point(right, top);
+        }
 
         /** Set the left top corner of the rectangle. */
-        public void setLeftTop(Point p) { left = p.x; top = p.y; }
+        public void setLeftTop(Point p)
+        {
+            left = p.x; top = p.y;
+        }
 
         /** Set the right bottom corner of the rectangle. */
-        public void setRightBottom(Point p) { right = p.x; bottom = p.y; }
+        public void setRightBottom(Point p)
+        {
+            right = p.x; bottom = p.y;
+        }
 
         /** Set the left bottom corner of the rectangle. */
-        public void setLeftBottom(Point p) { left = p.x; bottom = p.y; }
+        public void setLeftBottom(Point p)
+        {
+            left = p.x; bottom = p.y;
+        }
 
         /** Set the right top corner of the rectangle. */
-        public void setRightTop(Point p) { right = p.x; top = p.y; }
+        public void setRightTop(Point p)
+        {
+            right = p.x; top = p.y;
+        }
 
         
     
