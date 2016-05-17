@@ -1,0 +1,15 @@
+csharp/muscle/bin/Debug/muscle.dll
+*.dll
+csharp/muscle/obj/Debug/muscle.pdb
+*.pdb
+csharp/muscle/obj/Debug/muscle.csproj.FileListAbsolute.txt
+*.config
+*.user
+csharp/test/ExampleClient/obj/Debug/DesignTimeResolveAssemblyReferencesInput.cache
+*.cache
+csharp/test/ExampleClient/bin/Debug/ExampleClient.exe
+*.exe
+csharp/test/ExampleClient/obj/Debug/TemporaryGeneratedFile_E7A71F73-0F8D-4B9B-B56E-8E70B10BC5D3.cs
+*.cs
+csharp/test/ExampleClient/obj/Debug/ExampleClient.csproj.FileListAbsolute.txt
+*.txt
