@@ -13,7 +13,7 @@ namespace muscle {
  * will add a user-specified MessageRef to its incoming Message queue.
  * It's useful primarily for thread synchronization purposes.
  */
-class SignalMessageIOGateway : public AbstractMessageIOGateway, private CountedObject<SignalMessageIOGateway>
+class SignalMessageIOGateway : public AbstractMessageIOGateway
 {
 public:
    /** Constructor.  Creates a SignalMessageIOGateway with a NULL signal message reference.  
@@ -34,31 +34,40 @@ public:
    /** Returns a reference to our current signal message */
    MessageRef GetSignalMessage() const {return _signalMessage;}
 
-   /** Sets our current signal message reference. */
+   /** Sets our current signal message reference. 
+     * @param r the new Message to send to the AbstractGatewayMessageReceiver whenever we receive some bytes from the socket
+     */
    void SetSignalMessage(const MessageRef & r) {_signalMessage = r;}
 
 protected:
-   /** DoOutput is a no-op for this gateway... all messages are simply eaten and dropped. */
+   /** DoOutput is a no-op for this gateway... all messages are simply eaten and dropped.
+     * @copydoc AbstractMessageIOGateway::DoOutputImplementation(uint32)
+     */
    virtual int32 DoOutputImplementation(uint32 maxBytes = MUSCLE_NO_LIMIT)
    {
       // Just eat and drop ... we don't really support outgoing messages
-      while(GetOutgoingMessageQueue().RemoveHead() == B_NO_ERROR) {/* keep doing it */}
+      while(GetOutgoingMessageQueue().RemoveHead().IsOK()) {/* keep doing it */}
       return maxBytes;
    }
 
-   /** Overridden to enqeue a (signalMessage) whenever data is read. */
+   /** Overridden to enqeue a (signalMessage) whenever data is read.
+     * @copydoc AbstractMessageIOGateway::DoInputImplementation(AbstractGatewayMessageReceiver &, uint32)
+     */
    virtual int32 DoInputImplementation(AbstractGatewayMessageReceiver & receiver, uint32 maxBytes = MUSCLE_NO_LIMIT)
    {
       char buf[256];
-      int32 bytesRead = GetDataIO()()->Read(buf, muscleMin(maxBytes, (uint32)sizeof(buf)));
+      const int32 bytesRead = GetDataIO()() ? GetDataIO()()->Read(buf, muscleMin(maxBytes, (uint32)sizeof(buf))) : -1;
       if (bytesRead > 0) receiver.CallMessageReceivedFromGateway(_signalMessage);
       return bytesRead;
    }
 
 private:
    MessageRef _signalMessage;
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(SignalMessageIOGateway);
+};
+DECLARE_REFTYPES(SignalMessageIOGateway);
+
+} // end namespace muscle
 
 #endif

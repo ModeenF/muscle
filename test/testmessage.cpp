@@ -8,8 +8,8 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Operation failed, line %i\n", __LINE__);
-#define NEGATIVETEST(x) if ((x) == B_NO_ERROR) printf("Operation succeeded when it should not have, line %i\n", __LINE__); 
+#define TEST(x) if ((x).IsError()) printf("Operation failed, line %i\n", __LINE__);
+#define NEGATIVETEST(x) if ((x).IsOK()) printf("Operation succeeded when it should not have, line %i\n", __LINE__); 
 
 void printSep(const char * title);
 void printSep(const char * title)
@@ -24,7 +24,11 @@ void printSep(const char * title)
 class TestFlatCountable : public FlatCountable
 {
 public:
-   TestFlatCountable() : _val(-1) {/* empty */}
+   TestFlatCountable()
+      : _val(-1) 
+   {
+      // empty
+   }
    TestFlatCountable(const String & s, int32 val) : _string(s), _val(val) {/* empty */}
 
    bool operator != (const TestFlatCountable & rhs) const {return ((_val != rhs._val)||(_string != rhs._string));}
@@ -35,14 +39,14 @@ public:
 
    virtual void Flatten(uint8 *buffer) const
    {
-      *((int32 *)buffer) = B_HOST_TO_LENDIAN_INT32(_val); buffer += sizeof(_val);
+      muscleCopyOut(buffer, B_HOST_TO_LENDIAN_INT32(_val)); buffer += sizeof(_val);
       _string.Flatten(buffer);
    }
 
    virtual status_t Unflatten(const uint8 *buf, uint32 size)
    {
-      if (size < sizeof(_val)) return B_ERROR;
-      _val = B_LENDIAN_TO_HOST_INT32(*((const int32 *)buf)); buf += sizeof(_val); size -= sizeof(_val);
+      if (size < sizeof(_val)) return B_BAD_DATA;
+      _val = B_LENDIAN_TO_HOST_INT32(muscleCopyIn<int32>(buf)); buf += sizeof(_val); size -= sizeof(_val);
       return _string.Unflatten(buf, size);
    }
 
@@ -53,6 +57,58 @@ private:
    int32 _val; 
 };
 DECLARE_REFTYPES(TestFlatCountable);
+
+static void TestTemplatedFlatten(const Message & m, int lineNumber)
+{
+   const uint32 oldChecksum = m.CalculateChecksum();
+   MessageRef messageTemplate = m.CreateMessageTemplate();
+   if (messageTemplate() == NULL)
+   {
+      printf("CreateMessageTemplate() failed!\n");
+      exit(10);
+   }
+
+   const uint32 newChecksum = m.CalculateChecksum();
+   if (newChecksum != oldChecksum)
+   {
+      printf("CreateMessageTemplate() caused original Message's checksum to change from " UINT32_FORMAT_SPEC " to " UINT32_FORMAT_SPEC ", that shouldn't happen!\n", oldChecksum, newChecksum);
+      exit(10);
+   }
+
+   const uint32 templatedFlatSize = m.TemplatedFlattenedSize(*messageTemplate());
+   const uint32 regularFlatSize   = m.FlattenedSize();
+   printf("TEMPLATE TEST at line %i:  templatedFlatSize=" UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC " (%.0f%% size reduction)\n", lineNumber, templatedFlatSize, regularFlatSize, 100.0*(1.0-((float)templatedFlatSize/regularFlatSize)));
+
+   printf("Message is:\n");
+   m.PrintToStream();
+ 
+   ByteBufferRef buf = GetByteBufferFromPool(templatedFlatSize);
+   memset(buf()->GetBuffer(), 'X', buf()->GetNumBytes());  // just to make any unwritten-to-bytes more obvious
+   m.TemplatedFlatten(*messageTemplate(), buf()->GetBuffer());
+
+   //printf("Template Message is:\n");
+   //messageTemplate()->PrintToStream();
+
+   printf("Templated flattened buffer is:\n");
+   PrintHexBytes(buf);
+
+   status_t ret;
+   Message newMsg;
+   if (newMsg.TemplatedUnflatten(*messageTemplate(), buf()->GetBuffer(), buf()->GetNumBytes()).IsOK(ret))
+   {
+      if (newMsg != m)
+      {
+         printf("Template test failed (line %i), Unflattened Message didn't match the original!  Unflattened Message is:\n", lineNumber);
+         newMsg.PrintToStream();
+         exit(10);
+      }
+   }
+   else 
+   {
+      printf("TemplatedUnflatten() (line %i) failed [%s]\n", lineNumber, ret());
+      exit(10);
+   }
+}
 
 // This program exercises the Message class.
 int main(int, char **)
@@ -77,10 +133,13 @@ int main(int, char **)
 
    Message m1;
    m1.AddFloat("va", 1.0f);
-   printf("m1=" UINT32_FORMAT_SPEC"\n", m1.FlattenedSize());
+   TestTemplatedFlatten(m1, __LINE__);
+   m1.AddFloat("va", 2.0f);
+   TestTemplatedFlatten(m1, __LINE__);
+   printf("m1 flattenedSize=" UINT32_FORMAT_SPEC "\n", m1.FlattenedSize());
    m1.AddInt32("co", 32);
-   printf("m2=" UINT32_FORMAT_SPEC"\n", m1.FlattenedSize());
-   m1.PrintToStream();
+   TestTemplatedFlatten(m1, __LINE__);
+   printf("m2 flattenedSize=" UINT32_FORMAT_SPEC "\n", m1.FlattenedSize());
 
    printSep("Testing Replace*() with okayToAdd...");
    Message butter;
@@ -92,6 +151,7 @@ int main(int, char **)
    butter.ReplaceDouble(true, "double", 6.28);
    butter.ReplacePoint(true, "point", Point(5,4));
    butter.ReplaceRect(true, "rect", Rect(5,6,7,8));
+   TestTemplatedFlatten(butter, __LINE__);
    butter.ReplacePointer(true, "pointer", &butter);
    butter.PrintToStream();
 
@@ -105,7 +165,11 @@ int main(int, char **)
    butter.PrintToStream();
 
    void * t;
-   if ((butter.FindPointer("pointer", t) != B_NO_ERROR)||(t != &butter)) printf("Error retrieving pointer!\n");
+   if ((butter.FindPointer("pointer", t).IsError())||(t != &butter)) printf("Error retrieving pointer!\n");
+
+   (void) butter.RemoveName("pointer");  // otherwise the templated test will fail since pointer fields don't get flattened
+   (void) butter.RemoveName("Tag");      // otherwise the templated test will fail since tag fields don't get flattened
+   TestTemplatedFlatten(butter, __LINE__);
 
    printf("(butter==m1) == %i\n", butter == m1);
    printf("(butter==butter) == %i\n", butter == butter);
@@ -128,15 +192,16 @@ int main(int, char **)
    TEST(msg.AddInt8("int8", 45));
    TEST(msg.AddInt16("int16", 123));
    TEST(msg.AddInt32("int32", 89));
-   TEST(msg.AddInt64("int64", 99999));
-   TEST(msg.AddFloat("float", 3.14159));
+   TEST(msg.AddFloat("float", 3.14159f));
    TEST(msg.AddDouble("double", 6.28));
    TEST(msg.AddDouble("double", 6.66));
-   TEST(msg.AddPointer("ptr", &msg));
-   TEST(msg.AddPointer("ptr", &butter));
    TEST(msg.AddMessage("msg", butter));
+   TEST(msg.AddInt64("int64", 99999));
    TEST(msg.AddData("Data", B_RAW_TYPE, "ABCDEFGHIJKLMNOPQRS", 12));
    TEST(msg.AddData("Data", B_RAW_TYPE, "Mouse", 3));
+   TestTemplatedFlatten(msg, __LINE__);
+   TEST(msg.AddPointer("ptr", &msg));
+   TEST(msg.AddPointer("ptr", &butter));
 
    printf("Testing the Get*() functions...\n");
    printf("GetCstr(\"Friesner\")     =%s\n", msg.GetCstr(  "Friesner", "<not found>"));
@@ -151,10 +216,10 @@ int main(int, char **)
    printf("GetString(\"Friesner(3)\")=%s\n", msg.GetString("Friesner", "<not found>", 3)());
    printf("GetInt8=%i\n", msg.GetInt8("int8")); 
    printf("GetInt16=%i\n", msg.GetInt16("int16")); 
-   printf("GetInt32=" INT32_FORMAT_SPEC"\n", msg.GetInt32("int32")); 
-   printf("GetInt64=" INT64_FORMAT_SPEC"\n", msg.GetInt64("int64")); 
-   printf("GetInt64_XXX=" INT64_FORMAT_SPEC"\n", msg.GetInt64("not_present")); 
-   printf("GetInt64_666=" INT64_FORMAT_SPEC"\n", msg.GetInt64("not_present", 666)); 
+   printf("GetInt32=" INT32_FORMAT_SPEC "\n", msg.GetInt32("int32")); 
+   printf("GetInt64=" INT64_FORMAT_SPEC "\n", msg.GetInt64("int64")); 
+   printf("GetInt64_XXX=" INT64_FORMAT_SPEC "\n", msg.GetInt64("not_present")); 
+   printf("GetInt64_666=" INT64_FORMAT_SPEC "\n", msg.GetInt64("not_present", 666)); 
    printf("GetDouble(0)=%f\n", msg.GetDouble("double", 0, 0));
    printf("GetDouble(1)=%f\n", msg.GetDouble("double", 0, 1));
    printf("GetDouble(2)=%f\n", msg.GetDouble("double", 0, 2));
@@ -181,8 +246,8 @@ int main(int, char **)
    {for (int i=0; i<10; i++) TEST(msg.AddInt32("TestInt32", i));  }
    {for (int i=0; i<10; i++) TEST(msg.AddInt64("TestInt64", i));  }
    {for (int i=0; i<10; i++) TEST(msg.AddDouble("TestDouble", i));}
-   {for (int i=0; i<10; i++) TEST(msg.AddFloat("TestFloat", i));  }
-   {for (int i=0; i<10; i++) TEST(msg.AddBool("TestBool", i));    }
+   {for (int i=0; i<10; i++) TEST(msg.AddFloat("TestFloat", (float)i));  }
+   {for (int i=0; i<10; i++) TEST(msg.AddBool("TestBool", (i!=0)));}
 
    printf("Finished message:\n");
    msg.PrintToStream();
@@ -199,9 +264,9 @@ int main(int, char **)
    TEST(msg.ReplaceString(false, "Chicken", 2, "Breast"));
    NEGATIVETEST(msg.ReplaceString(false, "Chicken", 3, "Soul"));  
    TEST(msg.ReplaceDouble(true, "TestDouble", 2, 222.222));
-   TEST(msg.ReplaceFloat(true, "TestFloat", 3, 333.333));
+   TEST(msg.ReplaceFloat(true, "TestFloat", 3, 333.333f));
    NEGATIVETEST(msg.ReplaceFloat(false, "RootBeerFloat", 0, 444.444f));
-   TEST(msg.ReplaceBool(false, "TestBool", 5));
+   TEST(msg.ReplaceBool(false, "TestBool", true));
    TEST(msg.ReplaceRect(false, "rect2345", Rect(2,3,4,5)));
 
    Message eqMsg = msg;
@@ -234,11 +299,11 @@ int main(int, char **)
 
    int32 int32Result;
    TEST(msg.FindInt32("TestInt32", 4, int32Result));
-   printf("TestInt32(4) = " INT32_FORMAT_SPEC"\n",int32Result);
+   printf("TestInt32(4) = " INT32_FORMAT_SPEC "\n",int32Result);
 
    uint32 uint32Result;
    TEST(msg.FindInt32("TestInt32", 4, uint32Result));
-   printf("TestUInt32(4) = " INT32_FORMAT_SPEC"\n",uint32Result);
+   printf("TestUInt32(4) = " INT32_FORMAT_SPEC "\n",uint32Result);
 
    int64 int64Result;
    TEST(msg.FindInt64("TestInt64", 4, int64Result));
@@ -274,20 +339,20 @@ int main(int, char **)
    uint32 getDataSize;
    TEST(msg.FindData("Data", B_RAW_TYPE, &gd, &getDataSize));
    String dataStr((const char *) gd, getDataSize);
-   printf("data=[%s], size=" UINT32_FORMAT_SPEC"\n", dataStr(), getDataSize);
+   printf("data=[%s], size=" UINT32_FORMAT_SPEC "\n", dataStr(), getDataSize);
 
    TEST(msg.FindData("Data", B_RAW_TYPE, 1, &gd, &getDataSize));
    dataStr.SetCstr((const char *) gd, getDataSize);
-   printf("data(1)=[%s], size=" UINT32_FORMAT_SPEC"\n", dataStr(), getDataSize);
+   printf("data(1)=[%s], size=" UINT32_FORMAT_SPEC "\n", dataStr(), getDataSize);
   
    printSep("Testing misc");
 
-   printf("There are " UINT32_FORMAT_SPEC" string entries\n", msg.GetNumNames(B_STRING_TYPE));
+   printf("There are " UINT32_FORMAT_SPEC " string entries\n", msg.GetNumNames(B_STRING_TYPE));
    msg.PrintToStream();
    Message tryMe = msg;
-   printf("Msg is " UINT32_FORMAT_SPEC" bytes.\n",msg.FlattenedSize());
+   printf("Msg is " UINT32_FORMAT_SPEC " bytes.\n",msg.FlattenedSize());
    msg.AddTag("anothertag", RefCountableRef(GetMessageFromPool()()));
-   printf("After adding tag, msg is (hopefully still) " UINT32_FORMAT_SPEC" bytes.\n",msg.FlattenedSize());
+   printf("After adding tag, msg is (hopefully still) " UINT32_FORMAT_SPEC " bytes.\n",msg.FlattenedSize());
    tryMe.PrintToStream();
 
    printf("Extracting...\n");
@@ -301,20 +366,20 @@ int main(int, char **)
    printSep("Extracted subsubMessage!\n");
    subExtract.PrintToStream();
 
-   uint32 flatSize = msg.FlattenedSize();
-   printf("FlatSize=" UINT32_FORMAT_SPEC"\n",flatSize);
+   const uint32 flatSize = msg.FlattenedSize();
+   printf("FlatSize=" UINT32_FORMAT_SPEC "\n",flatSize);
    uint8 * buf = new uint8[flatSize*10];
    {for (uint32 i=flatSize; i<flatSize*10; i++) buf[i] = 'J';}
 
    msg.Flatten(buf);
 
-   {for (uint32 i=flatSize; i<flatSize*10; i++) if (buf[i] != 'J') printf("OVERWRITE ON BYTE " UINT32_FORMAT_SPEC"\n",i);}
+   {for (uint32 i=flatSize; i<flatSize*10; i++) if (buf[i] != 'J') printf("OVERWRITE ON BYTE " UINT32_FORMAT_SPEC "\n",i);}
    printf("\n====\n");
    
    PrintHexBytes(buf, flatSize);
 
    Message copy;
-   if (copy.Unflatten(buf, flatSize) == B_NO_ERROR)
+   if (copy.Unflatten(buf, flatSize).IsOK())
    {
       printf("****************************\n");
       copy.PrintToStream();
@@ -342,10 +407,10 @@ int main(int, char **)
 
    printf("Testing adding and retrieval of FlatCountableRefs by reference\n");
    TestFlatCountableRef tfcRef(new TestFlatCountable("Hello", 5));
-   if (msg.AddFlat("tfc", FlatCountableRef(tfcRef.GetRefCountableRef(), false)) == B_NO_ERROR)
+   if (msg.AddFlat("tfc", FlatCountableRef(tfcRef.GetRefCountableRef(), false)).IsOK())
    {
       TestFlatCountable tfc2;
-      if (msg.FindFlat("tfc", tfc2) == B_NO_ERROR) 
+      if (msg.FindFlat("tfc", tfc2).IsOK()) 
       {
          printf("FindFlat() found: [%s]\n", tfc2.ToString()());
          if (tfc2 != *tfcRef()) printf("Error, found TFC [%s] doesn't match original [%s]\n", tfc2.ToString()(), tfcRef()->ToString()());
@@ -362,7 +427,7 @@ int main(int, char **)
          if (newMsg())
          {
             TestFlatCountable tfc3;
-            if (newMsg()->FindFlat("tfc", tfc3) == B_NO_ERROR)
+            if (newMsg()->FindFlat("tfc", tfc3).IsOK())
             {
                printf("FindFlat() found: [%s]\n", tfc3.ToString()());
                if (tfc3 != *tfcRef()) printf("Error, found TFC [%s] doesn't match original [%s]\n", tfc3.ToString()(), tfcRef()->ToString()());

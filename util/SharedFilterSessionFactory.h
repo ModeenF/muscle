@@ -6,6 +6,7 @@
 #include "reflector/AbstractReflectSession.h"
 #include "reflector/AbstractSessionIOPolicy.h"
 #include "regex/PathMatcher.h"
+#include "system/SharedMemory.h"
 
 namespace muscle {
 
@@ -14,7 +15,7 @@ namespace muscle {
   * SharedMemory class) and look in that area for a list of IP addresses.  The decision about
   * whether to pass the CreateSession() call on to the slave ReflectSessionFactory
   * or just fail (i.e. return NULL) will be made based on whether the requesting client's IP
-  * address is present in that shared memory area (as an ip_address).
+  * address is present in that shared memory area (as an IPAddress).
   */
 class SharedFilterSessionFactory : public ProxySessionFactory
 {
@@ -45,30 +46,41 @@ public:
    /** Returns the name of the shared memory area to consult for a list of IP addresses. */
    const String & GetSharedMemoryAreaName() const {return _sharedMemName;}
 
-   /** Sets the name of the shared memory area to consult for a list of IP addresses. */
+   /** Sets the name of the shared memory area to consult for a list of IP addresses. 
+     * @param name the new Shared Memory area name to use
+     */
    void SetSharedMemoryAreaName(const String & name) {_sharedMemName = name;}
 
    /** Returns true iff IP addresses in the shared memory area are to be granted access. */
    bool IsGrantList() const {return _isGrantList;}
 
-   /** Sets whether IP addresses in the shared memory area are to be granted access. */
+   /** Sets whether IP addresses in the shared memory area are to be granted access. 
+     * @param igl true iff the list of IP addresses is a whitelist; false if it's a blacklist
+     */
    void SetIsGrantList(bool igl) {_isGrantList = igl;}
 
    /** Returns true iff a missing shared memory area means all IP addresses should be granted access. */
    bool IsDefaultPass() const {return _defaultPass;}
 
-   /** Sets whether missing shared memory area means all IP addresses should be granted access. */
+   /** Sets whether missing shared memory area means all IP addresses should be granted access.
+     * @param dp true iff we default-grant access when the memory area is missing, false if we default-deny access in that case
+     */
    void SetDefaultPass(bool dp) {_defaultPass = dp;}
 
-   /** Convenience method:  Returns true iff access should be allowed for the given settings and IP address. */
-   static bool IsAccessAllowedForIP(const String & sharedMemName, const ip_address & ip, bool isGrantList, bool defaultPass);
+   /** Convenience method:  Returns true iff access should be allowed for the given settings and IP address. 
+     * @param ip the IP address to inquire about
+     */
+   bool IsAccessAllowedForIP(const IPAddress & ip) const;
 
 private:
    String _sharedMemName;
    bool _isGrantList;
    bool _defaultPass;
-};
 
-}; // end namespace muscle
+   mutable SharedMemory _sharedMemory;
+};
+DECLARE_REFTYPES(SharedFilterSessionFactory);
+
+} // end namespace muscle
 
 #endif

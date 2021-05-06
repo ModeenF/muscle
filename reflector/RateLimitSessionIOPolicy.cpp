@@ -7,7 +7,11 @@ namespace muscle {
 #define CUTOFF (_byteLimit/2)
 
 RateLimitSessionIOPolicy :: 
-RateLimitSessionIOPolicy(uint32 maxRate, uint32 primeBytes) : _maxRate(maxRate), _byteLimit(primeBytes), _lastTransferAt(0), _transferTally(0)
+RateLimitSessionIOPolicy(uint32 maxRate, uint32 primeBytes) 
+   : _maxRate(maxRate)
+   , _byteLimit(primeBytes)
+   , _lastTransferAt(0)
+   , _transferTally(0)
 {
    // empty
 }
@@ -69,7 +73,7 @@ UpdateTransferTally(uint64 now)
 {
    if (_maxRate > 0)
    {
-      uint32 newBytesAvailable = (_lastTransferAt > 0) ? ((uint32)(((now-_lastTransferAt)*_maxRate)/MICROS_PER_SECOND)) : MUSCLE_NO_LIMIT;
+      const uint32 newBytesAvailable = (_lastTransferAt > 0) ? ((uint32)(((now-_lastTransferAt)*_maxRate)/MICROS_PER_SECOND)) : MUSCLE_NO_LIMIT;
       if (_transferTally > newBytesAvailable) _transferTally -= newBytesAvailable;
                                          else _transferTally = 0;
    }
@@ -110,4 +114,4 @@ EndIO(uint64)
    // empty
 }
 
-}; // end namespace muscle
+} // end namespace muscle

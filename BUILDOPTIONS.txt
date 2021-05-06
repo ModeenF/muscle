@@ -7,14 +7,43 @@ of your Makefile to alter muscle's behaviour:
    Set this to enable built-in support for SSL connections via OpenSSL.
    (e.g. ReflectServer::SetSSLPrivateKey())
 
--DMUSCLE_USE_CPLUSPLUS11
-   Set this to enable C++11-specific features such as move-constructors.
+-DMUSCLE_AVOID_CPLUSPLUS11
+   Set this to avoid C++11-specific features such as move-constructors
+   (i.e. so that you can build MUSCLE under older, pre-C++11 compilers)
 
+-DMUSCLE_USE_CPLUSPLUS17
+   This should be set automatically when compiling with a compiler that
+   is targetting C++17 or later.  If not, you can manually define it in
+   order to enable C++17-specific features in MUSCLE.
+
+-DMUSCLE_AVOID_CPLUSPLUS11_THREADS
+   Set this to avoid using the C++11-specific APIs (thread, mutex,
+   etc) as back-ends for the MUSCLE Thread/Mutex/AtomicCounter etc 
+   classes if you are compiling using C++11 but nevertheless you still 
+   want those classes to use OS-specific back-end APIs instead.
+
+-DMUSCLE_AVOID_CPLUSPLUS11_BITCHORD
+   Set this to avoid the C++11 implementation of the BitChord class and
+   fall back to the legacy/C++03 implementation instead.  (Useful for
+   old/broken C++11 compilers that don't quite grok the C++11 implementation)
+
+-DMUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD
+   Tells the ThreadLocalStorage class to avoid using the C++11 thread_local
+   keyword even through C++11 support is enabled.  Defined automatically for
+   older (pre-MSVC2015) Microsoft compilers that are known not to support
+   this keyword; but it can also be defined manually if necessary (e.g.  
+   because your compiler doesn't support the thread_local keyword either)
+   
 -DMUSCLE_AVOID_IPV6
    Set this to indicate that Muscle should be compiled without IPv6
    support.  The main difference with this flag is that muscle_ip_address
    will be defined a typedef'd alias for a uint32 (rather than a C++ class
    that holds 128 bits of data).
+
+-DMUSCLE_AVOID_STDINT
+   If for some reason you want to force MuscleSupport.h to not include
+   stdint.h and inttypes.h (and instead hand-roll its typedefs from
+   scratch) you can define this.  Probably only useful on very old compilers.
 
 -DMUSCLE_SINGLE_THREAD_ONLY 
    Makes the Mutex class's methods compile down to no-ops.  Specify this if 
@@ -68,13 +97,9 @@ of your Makefile to alter muscle's behaviour:
    This might be useful to do if compiling on a platform where multicast
    APIs aren't supported.
 
--DMUSCLE_ENABLE_KEEPALIVE_API
-   Set this to make the TCP keepalive API calls in NetworkUtilityFunctions.h
-   available for use.  (it's disabled by default to make sure that the
-   keepalive functions won't break the build on platforms that don't 
-   support keepalive).  Note that muscled itself won't use keepalive even 
-   if this constant is specified; the functions are a convenience for 
-   other MUSCLE-based applications to use if they wish.
+-DMUSCLE_DISABLE_KEEPALIVE_API
+   Set this to avoid attempting to compile the TCP-keepalive API calls in 
+   NetworkUtilityFunctions.{cpp,h} under Linux.
 
 -DMUSCLE_64_BIT_PLATFORM
    Set this to indicate that compilation is being done on a 64-bit platform.
@@ -119,9 +144,6 @@ of your Makefile to alter muscle's behaviour:
 
 -DMUSCLE_DISABLE_MESSAGE_FIELD_POOLS 
    turn off Object pooling for Message field objects; helpful for debugging
-
--DMUSCLE_MAX_OUTPUT_CHUNK=N 
-   tell muscled not to send() more than N bytes of output per call
 
 -DMUSCLE_INLINE_LOGGING 
    turn Log(), LogTime(), etc into simple printf() passthroughs
@@ -173,8 +195,21 @@ of your Makefile to alter muscle's behaviour:
 
 -DMUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME
    Compiles MUSCLE's and LogTime() function as a macro that includes the
-   source code location in the call.  By enabling this it is possible to include
-   the source of a message with the messge itself, should your code choose to do so.
+   source code location in the _LogCallback() call.  If enabled, the log
+   preamble string (at the start of each log-line) will include a four-character
+   location-code (e.g. "RS4P") that corresponds to the filename and line
+   number of the LogTime() call that generated it.  (You can later use the
+   muscle/test/findsourcelocations.cpp program to find out which
+   source-code-location(s) the four-character-location-code refers to, or
+   the muscle/test/printsourcelocations.cpp to generate a list of all the
+   four-character-location-codes that your program might print out)
+
+-DMUSCLE_LOG_VERBOSE_SOURCE_LOCATIONS
+   Compiles MUSCLE's and LogTime() function as a macro that includes the
+   source code location in the _LogCallback() call.  If enabled, the log
+   preamble string (at the start of each log-line) will include the
+   filename and line number (e.g. "ReflectServer.cpp:388") of the LogTime()
+   call that generated it.
 
 -DMUSCLE_WARN_ABOUT_LOUSY_HASH_FUNCTIONS=200
    If defined, the Hashtable::EnsureSize() method will do some paranoia
@@ -217,8 +252,12 @@ of your Makefile to alter muscle's behaviour:
    If set, calls to the CHECK_THREAD_STACK_USAGE macro will be
    converted into no-ops.
 
--DMUSCLE_AVOID_OBJECT_COUNTING
-   If defined, the CountedObject<> class will compile down to a no-op.
+-DMUSCLE_ENABLE_OBJECT_COUNTING
+   If defined, the CountedObject<> class will be enabled, so that
+   PrintCountedObjectInfo() will print out tallies of the numbers
+   of various kinds of objects currently in memory.
+   Otherwise it is compiled down to a no-op, and the
+   DECLARE_COUNTED_OBJECT macro likewise becomes a no-op.
 
 -DMUSCLE_AVOID_THREAD_LOCAL_STORAGE
    If defined, the MUSCLE code will try to avoid using the ThreadLocalStorage
@@ -230,7 +269,7 @@ of your Makefile to alter muscle's behaviour:
    If defined, the MUSCLE Hashtable class will not used variable-sized
    indexing in its HashtableEntries.  Variable-sized indexing saves memory
    when tables have less than 65,535 slots in them, but increases the
-   number of "if" statesments in common Hashtable codepaths.  Whether or
+   number of "if" statements in common Hashtable codepaths.  Whether or
    not it increases or decreases performance will depend on the architecture
    of the host computer (e.g. on cache size, CPU speed, etc).
 
@@ -242,7 +281,7 @@ of your Makefile to alter muscle's behaviour:
    does impose some overhead, though -- about 16 bytes of RAM per
    Hashtable object, and a small amount of CPU overhead imposed
    by using an AtomicCounter.  If you want to avoid that overhead
-   and you're confident that you will always supply the 
+   and you're confident that you will always supply the
    HTIT_FLAG_NOREGISTER argument whenever you are doing 
    concurrent iterations over a Hashtable (or Message), you can
    supply this flag on the command line to avoid the overhead.
@@ -263,13 +302,71 @@ of your Makefile to alter muscle's behaviour:
    TARGET_PLATFORM_XENOMAI is defined.
 
 -DDEBUG_LARGE_MEMORY_ALLOCATIONS_THRESHOLD=n
-    If defined, whenever muscleAlloc() is called with a request size
-    greater than (n), information about the allocation and a stack
-    trace will be printed to stdout.  Good for quickly figuring out who 
-    is allocating big contiguous chunks of memory.
+   If defined, whenever muscleAlloc() is called with a request size
+   greater than (n), information about the allocation and a stack
+   trace will be printed to stdout.  Good for quickly figuring out who 
+   is allocating big contiguous chunks of memory.
 
 -DMUSCLE_AVOID_AUTOCHOOSE_SWAP
-    If set, MuscleSupport.h will define muscleSwap() the simple, 
-    old-fashioned way.  This is less efficient, but avoiding the SFINAE
-    mumbo-jumbo helps the code compile on older compilers (e.g. gcc 3.x)
-    that don't handle SFINAE correctly.
+   If set, MuscleSupport.h will define muscleSwap() the simple, 
+   old-fashioned way.  This is less efficient, but avoiding the SFINAE
+   mumbo-jumbo helps the code compile on older compilers (e.g. gcc 3.x)
+   that don't handle SFINAE correctly.
+
+-DMUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+   If set, the RefCountable and ObjectPool code will be instrumented
+   such that every time a RefCountable object is obtained from an
+   ObjectPool, the thread's current stack trace will be recorded and 
+   associated with the RefCountable object.  What this does (apart from 
+   making your program really slow and memory-hungry) is allow the
+   assertion failures in the ObjectPool class's destructor to tell you 
+   exactly where a "leaked" object had been allocated, rather than just 
+   telling you that an object is still in use.  That can make it much 
+   easier to track down where the leaked-references problem is and fix it.
+
+-DMUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION
+   If set, and if MUSCLE is using Qt's QThread class to implement its
+   Thread functionality, then the Thread::InternalThreadEntry() method
+   will call QThread::exec() to implement its event loop instead of
+   using its own while(WaitForNextMessage()) loop.  This can be useful 
+   if you want to use Qt objects in the thread, and those Qt objects
+   depend on QThread::exec()'s functioning in order to work properly.
+
+-DMUSCLE_AVOID_LINUX_DETECT_NETWORK_HARDWARE_TYPES
+   If set, then NetworkUtilityFunctions.cpp will not attempt to
+   determine network hardware type using SIOCGIFHWADDR when compiled
+   under Linux.
+
+-DMUSCLE_USE_CPLUSPLUS11_THREADS
+   This define is typically defined for you when appropriate, inside
+   MuscleSupport.h  You shouldn't have to define it manually.  It tells
+   the MUSCLE headers to use C++11 APIs as back-ends for the MUSCLE
+   Thread/Mutex/AtomicCounter/etc classes.
+
+-DMUSCLE_USE_DUMMY_DETECT_NETWORK_CONFIG_CHANGES_SESSION
+   Tells the DetectNetworkConfigChangesSession class to build but
+   not do anything useful.
+
+-DMUSCLE_ENABLE_AUTHORIZATION_EXECUTE_WITH_PRIVILEGES
+   If specified, the ChildProcessDataIO class will enable the
+   SetRequestRootAccessForChildProcessEnabled() method and attendant
+   functionality for launching a root-enabled child process under
+   MacOS/X.
+
+-DMUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
+   If specified, the AbstractReflectSession class will use a
+   TemplatingMessageIOGateway by default rather than a
+   MessageIOGateway.  Note that this will break compatibility
+   with other MUSCLE code that does not use the
+   TemplatingMessageIOGateway class, so this flag should be used
+   with caution.
+
+-DMUSCLE_ENABLE_LOCKING_VIOLATIONS_CHECKER
+   If specified, the Mutex class will call the user-provided
+   global function IsOkayToAccessMuscleMutex() any time Lock(),
+   Unlock(), or TryLock() is called on a Mutex, and print an
+   error message to stdout if it returns false.  This is useful
+   e.g. for checking whether or not real-time code is trying
+   to lock a Mutex somewhere, which is often considered a no-no
+   in that context.
+

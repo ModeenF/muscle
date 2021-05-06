@@ -19,10 +19,35 @@ using namespace muscle;
 
 #define DEFAULT_MUSCLED_PORT 2960
 
+static status_t LoadCryptoKey(bool isPublic, const String * optKeyFilePath, ReflectServer & server)
+{
+   if (optKeyFilePath == NULL) return B_NO_ERROR;  // no request == no SSL == no problem
+
+   const char * desc = isPublic?"public":"private";
+
+#ifdef MUSCLE_ENABLE_SSL
+   FileDataIO fdio(muscleFopen(optKeyFilePath->Cstr(), "rb"));
+   ByteBufferRef fileData = GetByteBufferFromPool((uint32)fdio.GetLength());
+   if ((fdio.GetFile())&&(fileData())&&(fdio.ReadFully(fileData()->GetBuffer(), fileData()->GetNumBytes()) == fileData()->GetNumBytes()))
+   {
+      if (isPublic) server.SetSSLPublicKeyCertificate(fileData);
+               else server.SetSSLPrivateKey(fileData);
+
+      LogTime(MUSCLE_LOG_INFO, "Using %s key file [%s] to authenticate with connecting clients\n", desc, optKeyFilePath->Cstr());
+      return B_NO_ERROR;
+   }
+   else LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't load %s key file [%s] (file not found?)\n", desc, optKeyFilePath->Cstr());
+#else
+   (void) server;
+   LogTime(MUSCLE_LOG_CRITICALERROR, "Can't load %s key file [%s], SSL support is not compiled in!\n", desc, optKeyFilePath->Cstr());
+#endif
+   return B_IO_ERROR;
+}
+
 // Aux method; main() without the global stuff.  This is a good method to
 // call if you already have the global stuff set up the way you like it.
 // The third argument can be passed in as NULL, or point to a UsageLimitProxyMemoryAllocator object 
-int muscledmainAux(int argc, char ** argv, void * cookie)
+static int muscledmainAux(int argc, char ** argv, void * cookie)
 {
    TCHECKPOINT;
 
@@ -41,7 +66,7 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    Queue<String> bans;
    Queue<String> requires;
    Message tempPrivs;
-   Hashtable<ip_address, String> tempRemaps;
+   Hashtable<IPAddress, String> tempRemaps;
 
    Message args; (void) ParseArgs(argc, argv, args);
    HandleStandardDaemonArgs(args);
@@ -84,27 +109,27 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    }
 
    {
-      for (int32 i=0; (args.FindString("port", i, &value) == B_NO_ERROR); i++)
+      for (int32 i=0; (args.FindString("port", i, &value).IsOK()); i++)
       {
-         int16 port = atoi(value);
+         const int16 port = (int16) atoi(value);
          if (port >= 0) listenPorts.PutWithDefault(IPAddressAndPort(invalidIP, port));
       }
 
-      for (int32 i=0; (args.FindString("listen", i, &value) == B_NO_ERROR); i++)
+      for (int32 i=0; (args.FindString("listen", i, &value).IsOK()); i++)
       {
-         IPAddressAndPort iap(value, DEFAULT_MUSCLED_PORT, false);
+         const IPAddressAndPort iap(value, DEFAULT_MUSCLED_PORT, false);
          if (iap.GetPort() > 0) listenPorts.PutWithDefault(iap);
                            else LogTime(MUSCLE_LOG_ERROR, "Unable to parse IP/port string [%s]\n", value);
       }
    }
 
    {
-      for (int32 i=0; (args.FindString("remap", i, &value) == B_NO_ERROR); i++)
+      for (int32 i=0; (args.FindString("remap", i, &value).IsOK()); i++)
       {
          StringTokenizer tok(value, ",=");
          const char * from = tok();
          const char * to = tok();
-         ip_address fromIP = from ? Inet_AtoN(from) : 0;
+         const IPAddress fromIP = from ? Inet_AtoN(from) : 0;
          if ((fromIP != invalidIP)&&(to))
          {
             char ipbuf[64]; Inet_NtoA(fromIP, ipbuf);
@@ -116,59 +141,59 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    }
 
 #ifdef MUSCLE_ENABLE_MEMORY_TRACKING
-   if (args.FindString("maxmem", &value) == B_NO_ERROR)
+   if (args.FindString("maxmem", &value).IsOK())
    {
-      int megs = muscleMax(1, atoi(value));
+      const int megs = muscleMax(1, atoi(value));
       LogTime(MUSCLE_LOG_INFO, "Limiting memory usage to %i megabyte%s.\n", megs, (megs==1)?"":"s");
       maxBytes = megs*1024L*1024L;
    }
 #endif
 
-   if (args.FindString("maxmessagesize", &value) == B_NO_ERROR)
+   if (args.FindString("maxmessagesize", &value).IsOK())
    {
-      int k = muscleMax(1, atoi(value));
+      const int k = muscleMax(1, atoi(value));
       LogTime(MUSCLE_LOG_INFO, "Limiting message sizes to %i kilobyte%s.\n", k, (k==1)?"":"s");
       maxMessageSize = k*1024L;
    }
 
-   if (args.FindString("maxsendrate", &value) == B_NO_ERROR)
+   if (args.FindString("maxsendrate", &value).IsOK())
    {
-      float k = (float) atof(value);
+      const float k = (float) atof(value);
       maxSendRate = muscleMax((uint32)0, (uint32)(k*1024.0f));
    }
 
-   if (args.FindString("maxreceiverate", &value) == B_NO_ERROR)
+   if (args.FindString("maxreceiverate", &value).IsOK())
    {
-      float k = (float) atof(value);
+      const float k = (float) atof(value);
       maxReceiveRate = muscleMax((uint32)0, (uint32)(k*1024.0f));
    }
 
-   if (args.FindString("maxcombinedrate", &value) == B_NO_ERROR)
+   if (args.FindString("maxcombinedrate", &value).IsOK())
    {
-      float k = (float) atof(value);
+      const float k = (float) atof(value);
       maxCombinedRate = muscleMax((uint32)0, (uint32)(k*1024.0f));
    }
 
-   if (args.FindString("maxnodespersession", &value) == B_NO_ERROR)
+   if (args.FindString("maxnodespersession", &value).IsOK())
    {
       maxNodesPerSession = atoi(value);
-      LogTime(MUSCLE_LOG_INFO, "Limiting nodes-per-session to " UINT32_FORMAT_SPEC".\n", maxNodesPerSession);
+      LogTime(MUSCLE_LOG_INFO, "Limiting nodes-per-session to " UINT32_FORMAT_SPEC ".\n", maxNodesPerSession);
    }
 
-   if (args.FindString("maxsessions", &value) == B_NO_ERROR)
+   if (args.FindString("maxsessions", &value).IsOK())
    {
       maxSessions = atoi(value);
-      LogTime(MUSCLE_LOG_INFO, "Limiting total session count to " UINT32_FORMAT_SPEC".\n", maxSessions);
+      LogTime(MUSCLE_LOG_INFO, "Limiting total session count to " UINT32_FORMAT_SPEC ".\n", maxSessions);
    }
 
-   if (args.FindString("maxsessionsperhost", &value) == B_NO_ERROR) 
+   if (args.FindString("maxsessionsperhost", &value).IsOK()) 
    {
       maxSessionsPerHost = atoi(value);
-      LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to " UINT32_FORMAT_SPEC".\n", maxSessionsPerHost);
+      LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to " UINT32_FORMAT_SPEC ".\n", maxSessionsPerHost);
    }
 
    {
-      for (int32 i=0; (args.FindString("ban", i, &value) == B_NO_ERROR); i++)
+      for (int32 i=0; (args.FindString("ban", i, &value).IsOK()); i++)
       {
          LogTime(MUSCLE_LOG_INFO, "Banning all clients whose IP addresses match [%s].\n", value);   
          bans.AddTail(value);
@@ -176,7 +201,7 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    }
 
    {
-      for (int32 i=0; (args.FindString("require", i, &value) == B_NO_ERROR); i++)
+      for (int32 i=0; (args.FindString("require", i, &value).IsOK()); i++)
       {
          LogTime(MUSCLE_LOG_INFO, "Allowing only clients whose IP addresses match [%s].\n", value);   
          requires.AddTail(value);
@@ -187,12 +212,11 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
       const char * privNames[] = {"privkick", "privban", "privunban", "privall"};
       for (int p=0; p<=PR_NUM_PRIVILEGES; p++)  // if (p == PR_NUM_PRIVILEGES), that means all privileges
       {
-         for (int32 q=0; (args.FindString(privNames[p], q, &value) == B_NO_ERROR); q++)
+         for (int32 q=0; (args.FindString(privNames[p], q, &value).IsOK()); q++)
          {
             LogTime(MUSCLE_LOG_INFO, "Clients whose IP addresses match [%s] get %s privileges.\n", value, privNames[p]+4);
-            char tt[32]; 
-            muscleSprintf(tt, "priv%i", p);
-            tempPrivs.AddString(tt, value);
+            char tt[32]; muscleSprintf(tt, "priv%i", p);
+            (void) tempPrivs.AddString(tt, value);
          }
       }
    }
@@ -202,7 +226,7 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    int retVal = 0;
    ReflectServer server;
 
-   bool okay = true;
+   status_t ret;
    server.GetAddressRemappingTable() = tempRemaps;
 
    if (maxNodesPerSession != MUSCLE_NO_LIMIT) server.GetCentralState().AddInt32(PR_NAME_MAX_NODES_PER_SESSION, maxNodesPerSession);
@@ -217,8 +241,8 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
       if (inputPolicyRef()) LogTime(MUSCLE_LOG_INFO, "Limiting aggregate I/O bandwidth to %.02f kilobytes/second.\n", ((float)maxCombinedRate/1024.0f));
       else
       {
-         WARN_OUT_OF_MEMORY;
-         okay = false;
+         MWARN_OUT_OF_MEMORY;
+         ret = B_OUT_OF_MEMORY;
       }
    }
    else
@@ -229,8 +253,8 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
          if (inputPolicyRef()) LogTime(MUSCLE_LOG_INFO, "Limiting aggregate receive bandwidth to %.02f kilobytes/second.\n", ((float)maxReceiveRate/1024.0f));
          else
          {
-            WARN_OUT_OF_MEMORY;
-            okay = false;
+            MWARN_OUT_OF_MEMORY;
+            ret = B_OUT_OF_MEMORY;
          }
       }
       if (maxSendRate != MUSCLE_NO_LIMIT)
@@ -239,12 +263,12 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
          if (outputPolicyRef()) LogTime(MUSCLE_LOG_INFO, "Limiting aggregate send bandwidth to %.02f kilobytes/second.\n", ((float)maxSendRate/1024.0f)); 
          else
          {
-            WARN_OUT_OF_MEMORY;
-            okay = false; 
+            MWARN_OUT_OF_MEMORY;
+            ret = B_OUT_OF_MEMORY;
          }
       }
    }
-      
+
    // Set up the Session Factory.  This factory object creates the new StorageReflectSessions
    // as needed when people connect, and also has a filter to keep out the riff-raff.
    StorageReflectSessionFactory factory; factory.SetMaxIncomingMessageSize(maxMessageSize);
@@ -252,34 +276,11 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    filter.SetInputPolicy(inputPolicyRef);
    filter.SetOutputPolicy(outputPolicyRef);
 
-   for (int b=bans.GetNumItems()-1;     ((okay)&&(b>=0)); b--) if (filter.PutBanPattern(bans[b]())         != B_NO_ERROR) okay = false;
-   for (int a=requires.GetNumItems()-1; ((okay)&&(a>=0)); a--) if (filter.PutRequirePattern(requires[a]()) != B_NO_ERROR) okay = false;
+   for (int b=bans.GetNumItems()-1;     ((ret.IsOK())&&(b>=0)); b--) ret |= filter.PutBanPattern(bans[b]());
+   for (int a=requires.GetNumItems()-1; ((ret.IsOK())&&(a>=0)); a--) ret |= filter.PutRequirePattern(requires[a]());
 
-   const String * privateKeyFilePath = args.GetStringPointer("privatekey");
-#ifdef MUSCLE_ENABLE_SSL
-   ByteBufferRef optCryptoBuf;
-   if (privateKeyFilePath)
-   {
-      FileDataIO fdio(muscleFopen(privateKeyFilePath->Cstr(), "rb"));
-      ByteBufferRef fileData = GetByteBufferFromPool((uint32)fdio.GetLength());
-      if ((fdio.GetFile())&&(fileData())&&(fdio.ReadFully(fileData()->GetBuffer(), fileData()->GetNumBytes()) == fileData()->GetNumBytes()))
-      { 
-         LogTime(MUSCLE_LOG_INFO, "Using private key file [%s] to authenticate with connecting clients\n", privateKeyFilePath->Cstr());
-         server.SetSSLPrivateKey(fileData);
-      }
-      else
-      {
-         LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't load private key file [%s] (file not found?)\n", privateKeyFilePath->Cstr());
-         okay = false;
-      }
-   }
-#else
-   if (privateKeyFilePath)
-   {
-      LogTime(MUSCLE_LOG_CRITICALERROR, "Can't load private key file [%s], SSL support is not compiled in!\n", privateKeyFilePath->Cstr());
-      okay = false;
-   }
-#endif
+   ret |= LoadCryptoKey(false, args.GetStringPointer("privatekey"), server);
+   ret |= LoadCryptoKey(true,  args.GetStringPointer("publickey"),  server);
 
    // Set up ports.  We allow multiple ports, mostly just to show how it can be done;
    // they all get the same set of ban/require patterns (since they all do the same thing anyway).
@@ -288,19 +289,18 @@ int muscledmainAux(int argc, char ** argv, void * cookie)
    {
       const IPAddressAndPort & iap = iter.GetKey();
 
-      if (server.PutAcceptFactory(iap.GetPort(), ReflectSessionFactoryRef(&filter, false), iap.GetIPAddress()) != B_NO_ERROR)
+      if (server.PutAcceptFactory(iap.GetPort(), ReflectSessionFactoryRef(&filter, false), iap.GetIPAddress()).IsError(ret))
       {
-         if (iap.GetIPAddress() == invalidIP) LogTime(MUSCLE_LOG_CRITICALERROR, "Error adding port %u, aborting.\n", iap.GetPort());
-                                         else LogTime(MUSCLE_LOG_CRITICALERROR, "Error adding port %u to interface %s, aborting.\n", iap.GetPort(), Inet_NtoA(iap.GetIPAddress())());
-         okay = false;
+         if (iap.GetIPAddress() == invalidIP) LogTime(MUSCLE_LOG_CRITICALERROR, "Error adding port %u, aborting.  [%s]\n", iap.GetPort(), ret());
+                                         else LogTime(MUSCLE_LOG_CRITICALERROR, "Error adding port %u to interface %s, aborting.  [%s]\n", iap.GetPort(), Inet_NtoA(iap.GetIPAddress())(), ret());
          break;
       }
    }
 
-   if (okay)
+   if (ret.IsOK())
    {
-      retVal = (server.ServerProcessLoop() == B_NO_ERROR) ? 0 : 10;
-      if (retVal > 0) LogTime(MUSCLE_LOG_CRITICALERROR, "Server process aborted!\n");
+      retVal = server.ServerProcessLoop().IsOK(ret) ? 0 : 10;
+      if (retVal > 0) LogTime(MUSCLE_LOG_CRITICALERROR, "Server process aborted! [%s]\n", ret());
                  else LogTime(MUSCLE_LOG_INFO,          "Server process exiting.\n");
    }
    else LogTime(MUSCLE_LOG_CRITICALERROR, "Error occurred during setup, aborting!\n");
@@ -331,7 +331,7 @@ int main(int argc, char ** argv)
    UsageLimitProxyMemoryAllocator usageLimitAllocator(MemoryAllocatorRef(&cleanupAllocator, false));
 
    SetCPlusPlusGlobalMemoryAllocator(MemoryAllocatorRef(&usageLimitAllocator, false));
-      int ret = muscledmainAux(argc, argv, &usageLimitAllocator);
+   const int ret = muscledmainAux(argc, argv, &usageLimitAllocator);
    SetCPlusPlusGlobalMemoryAllocator(MemoryAllocatorRef());  // unset, so that none of our allocator objects will be used after they are gone
 
    return ret;

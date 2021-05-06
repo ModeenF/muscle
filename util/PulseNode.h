@@ -15,7 +15,7 @@ class PulseNodeManager;
  *  its PulseNodeManager.   (Typically the PulseNodeManager role is played by
  *  the ReflectServer class)
  */
-class PulseNode : private CountedObject<PulseNode>
+class PulseNode
 {
 public:
    /** Default constructor */
@@ -107,13 +107,13 @@ public:
     *  set of children will have its pulsing needs taken care of by us, but it is
     *  not considered "owned" by this PulseNode--it will not be deleted when we are.
     *  @param child The child to place into our set of child PulseNodes.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory).
+    *  @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t PutPulseChild(PulseNode * child);
 
    /** Attempts to remove the given child from our set of child PulseNodes.
     *  @param child The child to remove
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (child wasn't in our set)
+    *  @returns B_NO_ERROR on success, or B_DATA_NOT_FOUND on failure (i.e. child wasn't in our current-set of pulse-children)
     */
    status_t RemovePulseChild(PulseNode * child);
 
@@ -206,6 +206,8 @@ private:
    bool _timeSlicingSuggested;
 
    friend class PulseNodeManager;
+
+   DECLARE_COUNTED_OBJECT(PulseNode);
 };
 
 /** Subclasses of this class are allowed to manage PulseNode objects by 
@@ -222,16 +224,26 @@ public:
    ~PulseNodeManager() {/* empty */}
 
 protected:
-   /** Passes the call on through to the given PulseNode */
+   /** Passes the call on through to the given PulseNode
+     * @param p the PulseNode to call GetPulseTimeAux() on
+     * @param now the approximate current time in microseconds, as returned by GetRunTime64()
+     * @param min the current minimum time across all our nodes; GetPulseTimeAux() may make this time smaller if necessary.
+     */
    inline void CallGetPulseTimeAux(PulseNode & p, uint64 now, uint64 & min) const {p.GetPulseTimeAux(now, min);}
 
-   /** Passes the call on through to the given PulseNode */
+   /** Passes the call on through to the given PulseNode
+     * @param p the PulseNode to call PulseAux() on
+     * @param now the approximate current time in microseconds, as returned by GetRunTime64()
+     */
    inline void CallPulseAux(PulseNode & p, uint64 now) const {if (now >= p._aggregatePulseTime) p.PulseAux(now);}
 
-   /** Passes the call on through to the given PulseNode */
+   /** Passes the call on through to the given PulseNode
+     * @param p the PulseNode to call SetCycleStartTime() on
+     * @param now the approximate current time in microseconds, as returned by GetRunTime64()
+     */
    inline void CallSetCycleStartTime(PulseNode & p, uint64 now) const {p.SetCycleStartTime(now);}
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -1,9 +1,10 @@
+#include <stdio.h>
+
 #include "winsupport/Win32MessageTransceiverThread.h"
 #include "iogateway/MessageIOGateway.h"
 #include "reflector/StorageReflectConstants.h"
 #include "util/MiscUtilityFunctions.h"
 #include "util/NetworkUtilityFunctions.h"
-#include "util/StringTokenizer.h"
 #include "system/SetupSystem.h"
 
 using namespace muscle;
@@ -24,7 +25,7 @@ int main(int argc, char ** argv)
    Win32MessageTransceiverThread mtt(CreateEvent(0, false, false, 0), true);
 
    printf("Connecting to host=[%s] port=%i\n", hostName, port);
-   if ((mtt.StartInternalThread() == B_NO_ERROR)&&(mtt.AddNewConnectSession(hostName, port) == B_NO_ERROR))
+   if ((mtt.StartInternalThread().IsOK())&&(mtt.AddNewConnectSession(hostName, port).IsOK()))
    {
       // The only thing this example needs to wait for notification on
       // is the MessageTransceiverThread's signal-handle.  A real-life
@@ -36,7 +37,7 @@ int main(int argc, char ** argv)
       while(keepGoing)
       {
          // Wait for next event or timeout
-         int waitResult = WaitForMultipleObjects(ARRAYITEMS(waitObjects), waitObjects, false, 1000);
+         const int waitResult = WaitForMultipleObjects(ARRAYITEMS(waitObjects), waitObjects, false, 1000);
          if (waitResult == WAIT_TIMEOUT)
          {
             MessageRef msg = GetMessageFromPool(PR_COMMAND_GETPARAMETERS);
@@ -98,7 +99,7 @@ int main(int argc, char ** argv)
                   break;
 
                   default:
-                     printf("EVENT: Unknown event code " UINT32_FORMAT_SPEC" from Win32MessageTransceiverThread!?\n", eventCode);
+                     printf("EVENT: Unknown event code " UINT32_FORMAT_SPEC " from Win32MessageTransceiverThread!?\n", eventCode);
                   break;
                }
             }

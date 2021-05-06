@@ -19,7 +19,7 @@ int32 SignalHandlerSession :: DoInput(AbstractGatewayMessageReceiver &, uint32)
    while(1)
    {
       char buf[64];
-      int32 bytesReceived = ReceiveData(GetSessionReadSelectSocket(), buf, sizeof(buf), false);
+      const int32 bytesReceived = ReceiveData(GetSessionReadSelectSocket(), buf, sizeof(buf), false);
       if (bytesReceived > 0)
       {
          byteCount += bytesReceived;
@@ -33,7 +33,7 @@ int32 SignalHandlerSession :: DoInput(AbstractGatewayMessageReceiver &, uint32)
 
 status_t SignalHandlerSession :: AttachedToServer()
 {
-   if (AbstractReflectSession::AttachedToServer() != B_NO_ERROR) return B_ERROR;
+   MRETURN_ON_ERROR(AbstractReflectSession::AttachedToServer());
    return SignalMultiplexer::GetSignalMultiplexer().AddHandler(this);
 }
 
@@ -61,7 +61,7 @@ void SignalHandlerSession :: SignalHandlerFunc(int sigNum)
    if (IsAttachedToServer())
    {
       int nextSigNum;
-      for (uint32 i=0; GetNthSignalNumber(i, nextSigNum) == B_NO_ERROR; i++)
+      for (uint32 i=0; GetNthSignalNumber(i, nextSigNum).IsOK(); i++)
       {
          if (sigNum == nextSigNum)
          {
@@ -74,4 +74,4 @@ void SignalHandlerSession :: SignalHandlerFunc(int sigNum)
    }
 }
 
-}; // end namespace muscle
+} // end namespace muscle

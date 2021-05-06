@@ -8,16 +8,16 @@ ZLIB_CODEC_HEADER_INDEPENDENT = 2053925219  # 'zlic'
 MUSCLE_ZLIB_FIELD_NAME_STRING = "_zlib"
 MUSCLE_ZLIB_HEADER_SIZE       = (2*4)
 
-def DeflateMessage(msg, compressionLevel=6, force=1):
+def DeflateMessage(msg, compressionLevel=6, force=True):
    """ Given a Message object, returns an equivalent Message object with all the data compressed.
        The returned Messages's what-code will be the same as the original Message.
        If the passed-in Message is already compressed, it will be returned unaltered.
        @param msg The Message to compress
        @param compressionLevel Optional zlib compression-level.  May be between 0 and 9; default value is 6.
-       @param force If set to 0, compression will not occur if the compressed Message turns out to be larger
-                    than the original Message.  (instead the original Message will be returned).  Defaults to 1.
+       @param force If set to False, compression will not occur if the compressed Message turns out to be larger
+                    than the original Message.  (instead the original Message will be returned).  Defaults to True.
    """
-   if (msg.GetFieldItem(MUSCLE_ZLIB_FIELD_NAME_STRING, message.B_RAW_TYPE) == None):
+   if (msg.GetFieldItem(MUSCLE_ZLIB_FIELD_NAME_STRING, message.B_RAW_TYPE) is None):
       defMsg = message.Message(msg.what)
       origFlatSize = msg.FlattenedSize()
       headerBuf = cStringIO.StringIO()
@@ -28,7 +28,7 @@ def DeflateMessage(msg, compressionLevel=6, force=1):
       cdata = cobj.compress(bodyBuf.getvalue())
       cdata = cdata + cobj.flush(zlib.Z_SYNC_FLUSH)
       defMsg.PutFieldContents(MUSCLE_ZLIB_FIELD_NAME_STRING, message.B_RAW_TYPE, headerBuf.getvalue()+cdata)
-      if (force == 1) or (defMsg.FlattenedSize() < origFlatSize):
+      if (force) or (defMsg.FlattenedSize() < origFlatSize):
          return defMsg
    return msg
 
@@ -39,7 +39,7 @@ def InflateMessage(msg):
        @param msg The Message to decompress, if it is compressed.
    """
    compStr = msg.GetFieldItem(MUSCLE_ZLIB_FIELD_NAME_STRING, message.B_RAW_TYPE)
-   if compStr != None and len(compStr) >= MUSCLE_ZLIB_HEADER_SIZE:
+   if compStr is not None and len(compStr) >= MUSCLE_ZLIB_HEADER_SIZE:
       header, rawLen = struct.unpack("<2L", compStr[0:MUSCLE_ZLIB_HEADER_SIZE])
       if header == ZLIB_CODEC_HEADER_INDEPENDENT:
          infMsg = message.Message()

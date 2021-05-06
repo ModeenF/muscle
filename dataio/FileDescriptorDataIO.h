@@ -3,7 +3,9 @@
 #ifndef MuscleFileDescriptorDataIO_h
 #define MuscleFileDescriptorDataIO_h
 
-// Might as well include there here, since any code using FileDescriptorDataIO is probably going to need them
+#include "dataio/SeekableDataIO.h"  // keep this above the ifndef WIN32 line below, otherwise WIN32 might not be set appropriately
+
+// Might as well include these here, since any code using FileDescriptorDataIO is probably going to need them
 #ifndef WIN32
 # include <fcntl.h>
 # include <stdio.h>
@@ -11,14 +13,12 @@
 # include <errno.h>
 #endif
 
-#include "dataio/DataIO.h"
-
 namespace muscle {
 
 /**
  *  Data I/O to and from a file descriptor (useful for talking to Linux device drivers and the like)
  */
-class FileDescriptorDataIO : public DataIO, private CountedObject<FileDescriptorDataIO>
+class FileDescriptorDataIO : public SeekableDataIO
 {
 public:
    /**
@@ -62,7 +62,7 @@ public:
     * If this object is to be used by an AbstractMessageIOGateway,
     * then non-blocking I/O is usually better to use.
     * @param blocking If true, file descriptor is set to blocking I/O mode.  Otherwise, non-blocking I/O.
-    * @return B_NO_ERROR on success, B_ERROR on error.
+    * @return B_NO_ERROR on success, or an error code on error.
     */
    status_t SetBlockingIOEnabled(bool blocking);
 
@@ -75,7 +75,7 @@ public:
    /** Seeks to the specified point in the file stream.
     *  @param offset Where to seek to.
     *  @param whence IO_SEEK_SET, IO_SEEK_CUR, or IO_SEEK_END. 
-    *  @return B_NO_ERROR on success, B_ERROR on failure.
+    *  @return B_NO_ERROR on success, or an error code on failure.
     */ 
    virtual status_t Seek(int64 offset, int whence);
    
@@ -97,8 +97,11 @@ private:
    ConstSocketRef _fd;
    bool _blocking;
    bool _dofSyncOnClose;
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(FileDescriptorDataIO);
+};
+DECLARE_REFTYPES(FileDescriptorDataIO);
+
+} // end namespace muscle
 
 #endif

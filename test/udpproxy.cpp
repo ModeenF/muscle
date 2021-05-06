@@ -17,16 +17,16 @@ static status_t ReadIncomingData(const String & desc, DataIO & readIO, const Soc
    if (multiplexer.IsSocketReadyForRead(readIO.GetReadSelectSocket().GetFileDescriptor()))
    {
       uint8 buf[4096];
-      int32 ret = readIO.Read(buf, sizeof(buf));
+      const int32 ret = readIO.Read(buf, sizeof(buf));
       if (ret > 0) 
       {
-         LogTime(MUSCLE_LOG_TRACE, "Read " INT32_FORMAT_SPEC" bytes from %s:\n", ret, desc());
+         LogTime(MUSCLE_LOG_TRACE, "Read " INT32_FORMAT_SPEC " bytes from %s:\n", ret, desc());
          LogHexBytes(MUSCLE_LOG_TRACE, buf, ret);
      
          ByteBufferRef toNetworkBuf = GetByteBufferFromPool(ret, buf);
          if (toNetworkBuf()) (void) outQ.AddTail(toNetworkBuf); 
       }
-      else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, readIO.Read() returned %i\n", ret); return B_ERROR;}
+      else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, readIO.Read() returned %i\n", ret); return B_IO_ERROR;}
    }
    return B_NO_ERROR;
 }
@@ -38,7 +38,7 @@ static status_t WriteOutgoingData(const String & desc, DataIO & writeIO, const S
       while(outQ.HasItems())
       {
          ByteBufferRef & firstBuf = outQ.Head();
-         uint32 bufSize = firstBuf()->GetNumBytes();
+         const uint32 bufSize = firstBuf()->GetNumBytes();
          if (writeIdx >= bufSize) 
          {
             outQ.RemoveHead();
@@ -46,11 +46,11 @@ static status_t WriteOutgoingData(const String & desc, DataIO & writeIO, const S
          }
          else
          {
-            int32 ret = writeIO.Write(firstBuf()->GetBuffer()+writeIdx, firstBuf()->GetNumBytes()-writeIdx);
+            const int32 ret = writeIO.Write(firstBuf()->GetBuffer()+writeIdx, firstBuf()->GetNumBytes()-writeIdx);
             if (ret > 0)
             {
                writeIO.FlushOutput();
-               LogTime(MUSCLE_LOG_TRACE, "Wrote " INT32_FORMAT_SPEC" bytes to %s:\n", ret, desc());
+               LogTime(MUSCLE_LOG_TRACE, "Wrote " INT32_FORMAT_SPEC " bytes to %s:\n", ret, desc());
                LogHexBytes(MUSCLE_LOG_TRACE, firstBuf()->GetBuffer()+writeIdx, ret);
                writeIdx += ret;
             }
@@ -70,10 +70,10 @@ static status_t DoSession(const String aDesc, DataIO & aIO, const String & bDesc
 
    while(true)
    {
-      int aReadFD  = aIO.GetReadSelectSocket().GetFileDescriptor();
-      int bReadFD  = bIO.GetReadSelectSocket().GetFileDescriptor();
-      int aWriteFD = aIO.GetWriteSelectSocket().GetFileDescriptor();
-      int bWriteFD = bIO.GetWriteSelectSocket().GetFileDescriptor();
+      const int aReadFD  = aIO.GetReadSelectSocket().GetFileDescriptor();
+      const int bReadFD  = bIO.GetReadSelectSocket().GetFileDescriptor();
+      const int aWriteFD = aIO.GetWriteSelectSocket().GetFileDescriptor();
+      const int bWriteFD = bIO.GetWriteSelectSocket().GetFileDescriptor();
 
       multiplexer.RegisterSocketForReadReady(aReadFD);
       multiplexer.RegisterSocketForReadReady(bReadFD);
@@ -82,15 +82,16 @@ static status_t DoSession(const String aDesc, DataIO & aIO, const String & bDesc
 
       if (multiplexer.WaitForEvents() >= 0)
       {
-         if (ReadIncomingData( aDesc, aIO, multiplexer, outgoingBData)         != B_NO_ERROR) return B_ERROR;
-         if (ReadIncomingData( bDesc, bIO, multiplexer, outgoingAData)         != B_NO_ERROR) return B_ERROR;
-         if (WriteOutgoingData(aDesc, aIO, multiplexer, outgoingAData, aIndex) != B_NO_ERROR) return B_ERROR;
-         if (WriteOutgoingData(bDesc, bIO, multiplexer, outgoingBData, bIndex) != B_NO_ERROR) return B_ERROR;
+         status_t ret;
+         if (ReadIncomingData( aDesc, aIO, multiplexer, outgoingBData)        .IsError(ret)) return ret;
+         if (ReadIncomingData( bDesc, bIO, multiplexer, outgoingAData)        .IsError(ret)) return ret;
+         if (WriteOutgoingData(aDesc, aIO, multiplexer, outgoingAData, aIndex).IsError(ret)) return ret;
+         if (WriteOutgoingData(bDesc, bIO, multiplexer, outgoingBData, bIndex).IsError(ret)) return ret;
       }
       else 
       {
-         LogTime(MUSCLE_LOG_CRITICALERROR, "Error, WaitForEvents() failed!\n");
-         return B_ERROR;
+         LogTime(MUSCLE_LOG_CRITICALERROR, "Error, WaitForEvents() failed! [%s]\n", B_ERRNO());
+         return B_ERROR("WaitForEvents() failed");
       }
    }
 }
@@ -114,6 +115,8 @@ int main(int argc, char ** argv)
       return 10;
    }
 
+   status_t ret;
+  
    uint16 listenPorts[2] = {DEFAULT_PORT, DEFAULT_PORT+1};
    IPAddressAndPort targets[2];
    {
@@ -121,16 +124,16 @@ int main(int argc, char ** argv)
       String hostNames[2];
       for (uint32 i=0; i<2; i++)
       {
-         if (ParseConnectArg(args, "target", hostNames[i], targetPorts[i], false, i) != B_NO_ERROR)
+         if (ParseConnectArg(args, "target", hostNames[i], targetPorts[i], false, i).IsError(ret))
          {
-            LogTime(MUSCLE_LOG_CRITICALERROR, "Error, couldn't parse target argument #%i\n", i+1);
+            LogTime(MUSCLE_LOG_CRITICALERROR, "Error, couldn't parse target argument #%i [%s]\n", i+1, ret());
             LogUsage();
             return 10;
          }
          (void) ParsePortArg(args, "listen", listenPorts[i], i);
 
          targets[i] = IPAddressAndPort(GetHostByName(hostNames[i]()), targetPorts[i]);
-         if (IsValidAddress(targets[i].GetIPAddress())) LogTime(MUSCLE_LOG_INFO, "Sending to target %s, listening on port %u\n", targets[i].ToString()(), listenPorts[i]);
+         if (targets[i].GetIPAddress().IsValid()) LogTime(MUSCLE_LOG_INFO, "Sending to target %s, listening on port %u\n", targets[i].ToString()(), listenPorts[i]);
          else
          {
             LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't resolve hostname [%s]\n", hostNames[i]());
@@ -148,22 +151,41 @@ int main(int argc, char ** argv)
          LogTime(MUSCLE_LOG_ERROR, "Creating UDP socket failed!\n");
          return 10;
       }
-      if (BindUDPSocket(udpSock, listenPorts[i], &listenPorts[i]) != B_NO_ERROR)
+      if (BindUDPSocket(udpSock, listenPorts[i], &listenPorts[i], invalidIP, true).IsError(ret))
       {
-         LogTime(MUSCLE_LOG_ERROR, "Failed to bind UDP socket to port %u!\n", listenPorts[i]);
+         LogTime(MUSCLE_LOG_ERROR, "Failed to bind UDP socket to port %u! [%s]\n", listenPorts[i], ret());
          return 10;
       }
+
+#ifndef MUSCLE_AVOID_MULTICAST_API
+      const IPAddress & ip = targets[i].GetIPAddress();
+
+      // If it's a multicast address, we need to add ourselves to the multicast group
+      // in order to get packets from the group.
+      if (ip.IsMulticast())
+      {
+         if (AddSocketToMulticastGroup(udpSock, ip).IsOK(ret))
+         {
+            LogTime(MUSCLE_LOG_INFO, "Added UDP socket to multicast group %s!\n", Inet_NtoA(ip)());
+#ifdef DISALLOW_MULTICAST_TO_SELF
+            if (SetSocketMulticastToSelf(udpSock, false).IsError()) LogTime(MUSCLE_LOG_ERROR, "Error disabling multicast-to-self on socket\n");
+#endif
+         }
+         else LogTime(MUSCLE_LOG_ERROR, "Error adding UDP socket to multicast group %s! [%s]\n", Inet_NtoA(ip)(), ret());
+      }
+#endif
+
       UDPSocketDataIO * dio = newnothrow UDPSocketDataIO(udpSock, false);
       if (dio == NULL)
       {
-         WARN_OUT_OF_MEMORY;
+         MWARN_OUT_OF_MEMORY;
          return 10;
       }
-      dio->SetSendDestination(targets[i]);
+      (void) dio->SetPacketSendDestination(targets[i]);
       udpIOs[i].SetRef(dio);
    }
 
-   status_t ret = DoSession(targets[0].ToString(), *udpIOs[0](), targets[1].ToString(), *udpIOs[1]());
-   LogTime(MUSCLE_LOG_INFO, "udpproxy exiting%s!\n", (ret==B_NO_ERROR)?"":" with an error");
+   ret = DoSession(targets[0].ToString(), *udpIOs[0](), targets[1].ToString(), *udpIOs[1]());
+   LogTime(MUSCLE_LOG_INFO, "udpproxy exiting:  %s!\n", ret());
    return 0;
 }

@@ -16,25 +16,25 @@ import sys
 import cStringIO
 
 # Standard MUSCLE field type-constants
-B_ANY_TYPE     = 1095653716 # 'ANYT',  // wild card
-B_BOOL_TYPE    = 1112493900 # 'BOOL',
-B_DOUBLE_TYPE  = 1145195589 # 'DBLE',
-B_FLOAT_TYPE   = 1179406164 # 'FLOT',
-B_INT64_TYPE   = 1280069191 # 'LLNG',
-B_INT32_TYPE   = 1280265799 # 'LONG',
-B_INT16_TYPE   = 1397248596 # 'SHRT',
-B_INT8_TYPE    = 1113150533 # 'BYTE',
-B_MESSAGE_TYPE = 1297303367 # 'MSGG',
-B_POINTER_TYPE = 1347310674 # 'PNTR',
-B_POINT_TYPE   = 1112559188 # 'BPNT',
-B_RECT_TYPE    = 1380270932 # 'RECT',
-B_STRING_TYPE  = 1129534546 # 'CSTR',
-B_OBJECT_TYPE  = 1330664530 # 'OPTR',  // used for flattened objects
-B_RAW_TYPE     = 1380013908 # 'RAWT',  // used for raw byte arrays
+B_ANY_TYPE     = 1095653716 # 'ANYT' : wild card
+B_BOOL_TYPE    = 1112493900 # 'BOOL'
+B_DOUBLE_TYPE  = 1145195589 # 'DBLE'
+B_FLOAT_TYPE   = 1179406164 # 'FLOT'
+B_INT64_TYPE   = 1280069191 # 'LLNG'
+B_INT32_TYPE   = 1280265799 # 'LONG'
+B_INT16_TYPE   = 1397248596 # 'SHRT'
+B_INT8_TYPE    = 1113150533 # 'BYTE'
+B_MESSAGE_TYPE = 1297303367 # 'MSGG'
+B_POINTER_TYPE = 1347310674 # 'PNTR'
+B_POINT_TYPE   = 1112559188 # 'BPNT'
+B_RECT_TYPE    = 1380270932 # 'RECT'
+B_STRING_TYPE  = 1129534546 # 'CSTR'
+B_OBJECT_TYPE  = 1330664530 # 'OPTR' : used for flattened objects
+B_RAW_TYPE     = 1380013908 # 'RAWT' : used for raw byte arrays
 
 CURRENT_PROTOCOL_VERSION = 1347235888 # 'PM00' -- our magic number
 
-_dataNeedsSwap = not ord(array.array("i",[1]).tostring()[0])
+_dataNeedsSwap = (sys.byteorder != 'little')  # MUSCLE's serialized-bytes-protocol expected little-endian data
 _hasStruct64   = (((sys.version_info[0]*10) + sys.version_info[1]) >= 22)
 _longIs64Bits  = (array.array('l').itemsize > 4)
 
@@ -68,7 +68,7 @@ class Message:
 
    def HasFieldName(self, fieldName, fieldTypeCode=B_ANY_TYPE):
       """Returns 1 if the given fieldName exists and is of the given type, or 0 otherwise."""
-      if self.GetFieldContents(fieldName, fieldTypeCode) != None:
+      if self.GetFieldContents(fieldName, fieldTypeCode) is not None:
          return 1
       else:
          return 0
@@ -81,8 +81,7 @@ class Message:
       (fieldContents) should be the field's contents (either an item or a list or array of items)
       Returns None.
       """
-      ctype = type(fieldContents)
-      if ctype == types.ListType or ctype == array.ArrayType:
+      if isinstance(fieldContents, (list, array.array)):
          self.__fields[fieldName] = (fieldTypeCode, fieldContents)
       else:
          self.__fields[fieldName] = (fieldTypeCode, [fieldContents])
@@ -121,8 +120,8 @@ class Message:
       the field doesn't exist or is of the wrong type, or if the index isn't
       a valid one for that list.
       """
-      ret = self.GetFieldContents(fieldName, fieldTypeCode);
-      if ret != None:
+      ret = self.GetFieldContents(fieldName, fieldTypeCode)
+      if ret is not None:
          num = len(ret)
          if index < -num or index >= num:
             ret = None
@@ -175,98 +174,101 @@ class Message:
          ret += self.GetFieldContentsLength(fieldType, fieldContents)
       return ret
 
-   def Unflatten(self, file):
+   def Unflatten(self, inFile):
       """Reads in the new contents of this Message from the given file object."""
       global _dataNeedsSwap
       self.Clear()
-      protocolVersion, self.what, numFields = struct.unpack("<3L", file.read(3*4))
+      protocolVersion, self.what, numFields = struct.unpack("<3L", inFile.read(3*4))
       if protocolVersion != CURRENT_PROTOCOL_VERSION:
          raise IOError, "Bad flattened-Message Protocol version ", protocolVersion
       for dummy in range(numFields):
-         fieldName = file.read(struct.unpack("<L", file.read(4))[0]-1)
-         file.read(1)  # throw away the NUL terminator byte, we don't need it
-         fieldTypeCode, fieldDataLength = struct.unpack("<2L", file.read(2*4))
+         fieldName = inFile.read(struct.unpack("<L", inFile.read(4))[0]-1)
+         inFile.read(1)  # throw away the NUL terminator byte, we don't need it
+         fieldTypeCode, fieldDataLength = struct.unpack("<2L", inFile.read(2*4))
          if fieldTypeCode == B_BOOL_TYPE:
             fieldContents = array.array('b')
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_DOUBLE_TYPE:
             fieldContents = array.array('d')
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_FLOAT_TYPE:
             fieldContents = array.array('f')
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_INT32_TYPE: 
             fieldContents = array.array('i')  # 'i' is 32 bits, 'l' could be 64 bits so we don't use it
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_INT16_TYPE:
             fieldContents = array.array('h')
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_INT8_TYPE:
             fieldContents = array.array('b')
-            fieldContents.fromstring(file.read(fieldDataLength))
+            fieldContents.fromstring(inFile.read(fieldDataLength))
          elif fieldTypeCode == B_INT64_TYPE:
             global _longIs64Bits
             if _longIs64Bits == 1:
                fieldContents = array.array('l')
-               fieldContents.fromstring(file.read(fieldDataLength))
+               fieldContents.fromstring(inFile.read(fieldDataLength))
             else:
                global _dataNeedsSwap, _hasStruct64
                fieldContents = []
                if _hasStruct64:
                   for dummy in range(fieldDataLength/8):
-                     fieldContents.append(struct.unpack("<q", file.read(8))[0])
+                     fieldContents.append(struct.unpack("<q", inFile.read(8))[0])
                else:
                   # Old versions of Python don't have <q, so we'll do it ourself
                   for dummy in range(fieldDataLength/8):
-                     lo, hi = struct.unpack('<Ll', file.read(8))
+                     lo, hi = struct.unpack('<Ll', inFile.read(8))
                      fieldContents.append((long(hi)<<32)|lo)
          elif fieldTypeCode == B_MESSAGE_TYPE:
             fieldContents = []
             while fieldDataLength > 0:
-               subMessageLength = struct.unpack("<L", file.read(4))[0]
+               subMessageLength = struct.unpack("<L", inFile.read(4))[0]
                subMsg = Message()
-               subMsg.Unflatten(file)
+               subMsg.Unflatten(inFile)
                fieldContents.append(subMsg)
                fieldDataLength = fieldDataLength-(subMessageLength+4)
          elif fieldTypeCode == B_POINT_TYPE:
             fieldContents = []
             for dummy in range(fieldDataLength/8):
-               fieldContents.append(struct.unpack("<2f", file.read(8)))
+               fieldContents.append(struct.unpack("<2f", inFile.read(8)))
          elif fieldTypeCode == B_RECT_TYPE:
             fieldContents = []
             for dummy in range(fieldDataLength/16):
-               fieldContents.append(struct.unpack("<4f", file.read(16)))
+               fieldContents.append(struct.unpack("<4f", inFile.read(16)))
          elif fieldTypeCode == B_STRING_TYPE:
             fieldContents = []
-            numItems = struct.unpack("<L", file.read(4))[0]
+            numItems = struct.unpack("<L", inFile.read(4))[0]
             for dummy in range(numItems):
-               fieldContents.append(file.read(struct.unpack("<L", file.read(4))[0]-1))
-               file.read(1)  # throw away the NUL byte, we don't need it
+               fieldContents.append(inFile.read(struct.unpack("<L", inFile.read(4))[0]-1))
+               inFile.read(1)  # throw away the NUL byte, we don't need it
          else:
             fieldContents = []
-            numItems = struct.unpack("<L", file.read(4))[0]
+            numItems = struct.unpack("<L", inFile.read(4))[0]
             for dummy in range(numItems):
-               fieldContents.append(file.read(struct.unpack("<L", file.read(4))[0]))
+               fieldContents.append(inFile.read(struct.unpack("<L", inFile.read(4))[0]))
 
-         if _dataNeedsSwap and type(fieldContents) == array.ArrayType:
+         if _dataNeedsSwap and isinstance(fieldContents, array.array):
             fieldContents.byteswap()
 
          self.PutFieldContents(fieldName, fieldTypeCode, fieldContents)
           
-   def Flatten(self, file):
+   def Flatten(self, outFile):
       """Writes the state of this Message out to the given file object, in the standard platform-neutral flattened represenation."""
       global _dataNeedsSwap, _longIs64Bits
-      file.write(struct.pack("<3L", CURRENT_PROTOCOL_VERSION, self.what, len(self.__fields)))
+      outFile.write(struct.pack("<3L", CURRENT_PROTOCOL_VERSION, self.what, len(self.__fields)))
       for fieldName in self.__fields.keys():
-         file.write(struct.pack("<L", len(fieldName)+1))
-         file.write(fieldName)
-         file.write("\0")
+         outFile.write(struct.pack("<L", len(fieldName)+1))
+         outFile.write(fieldName)
+         outFile.write("\0")
          fieldContents = self.GetFieldContents(fieldName)
          fieldType = self.GetFieldType(fieldName)
-         file.write(struct.pack("<2L", fieldType, self.GetFieldContentsLength(fieldType, fieldContents)))
+         outFile.write(struct.pack("<2L", fieldType, self.GetFieldContentsLength(fieldType, fieldContents)))
 
          # Convert to array form and byte swap, if necessary
-         if _dataNeedsSwap or type(fieldContents) != array.ArrayType:
+         isFieldContentsArray = isinstance(fieldContents, array.array)
+         if _dataNeedsSwap or (not isFieldContentsArray):
+            wasFieldContentsArray = isFieldContentsArray
+            isFieldContentsArray = True
             if fieldType == B_BOOL_TYPE:
                fieldContents = array.array('b', fieldContents)
             elif fieldType == B_DOUBLE_TYPE:
@@ -281,14 +283,16 @@ class Message:
                fieldContents = array.array('h', fieldContents)
             elif fieldType == B_INT8_TYPE:
                fieldContents = array.array('b', fieldContents)
+            else:
+               isFieldContentsArray = wasFieldContentsArray  # roll back!
 
-            if _dataNeedsSwap and type(fieldContents) == array.ArrayType:
+            if _dataNeedsSwap and isFieldContentsArray:
                fieldContents.byteswap()
 
          # Add the actual data for this field's contents
-         if type(fieldContents) == array.ArrayType:
+         if isFieldContentsArray:
             if fieldType == B_BOOL_TYPE or fieldType == B_DOUBLE_TYPE or fieldType == B_FLOAT_TYPE or fieldType == B_INT32_TYPE or fieldType == B_INT16_TYPE or fieldType == B_INT8_TYPE or fieldType == B_INT64_TYPE:
-               file.write(fieldContents.tostring())
+               outFile.write(fieldContents.tostring())
             else:
                raise ValueError, "Array fieldContents found for non-Array type in field ", fieldName
          else:
@@ -296,32 +300,32 @@ class Message:
                global _hasStruct64
                if _hasStruct64:
                   for fieldItem in fieldContents:
-                     file.write(struct.pack("<q", fieldItem))
+                     outFile.write(struct.pack("<q", fieldItem))
                else:
                   # Old versions of Python don't have <q, so we'll do it ourself
                   for fieldItem in fieldContents:
-                     file.write(struct.pack('<Ll', fieldItem & 0xffffffffL, fieldItem >> 32))
+                     outFile.write(struct.pack('<Ll', fieldItem & 0xffffffffL, fieldItem >> 32))
             elif fieldType == B_MESSAGE_TYPE:
                for fieldItem in fieldContents:
-                  file.write(struct.pack("<L", fieldItem.FlattenedSize())) 
-                  fieldItem.Flatten(file)
+                  outFile.write(struct.pack("<L", fieldItem.FlattenedSize())) 
+                  fieldItem.Flatten(outFile)
             elif fieldType == B_POINT_TYPE:
                for fieldItem in fieldContents:
-                  file.write(struct.pack("<2f", fieldItem[0], fieldItem[1]))
+                  outFile.write(struct.pack("<2f", fieldItem[0], fieldItem[1]))
             elif fieldType == B_RECT_TYPE:
                for fieldItem in fieldContents:
-                  file.write(struct.pack("<4f", fieldItem[0], fieldItem[1], fieldItem[2], fieldItem[3]))
+                  outFile.write(struct.pack("<4f", fieldItem[0], fieldItem[1], fieldItem[2], fieldItem[3]))
             elif fieldType == B_STRING_TYPE:
-               file.write(struct.pack("<L", len(fieldContents)))
+               outFile.write(struct.pack("<L", len(fieldContents)))
                for fieldItem in fieldContents:
-                  file.write(struct.pack("<L", len(fieldItem)+1))
-                  file.write(fieldItem)
-                  file.write("\0")
+                  outFile.write(struct.pack("<L", len(fieldItem)+1))
+                  outFile.write(fieldItem)
+                  outFile.write("\0")
             else:
-               file.write(struct.pack("<L", len(fieldContents)))
+               outFile.write(struct.pack("<L", len(fieldContents)))
                for fieldItem in fieldContents:
-                  file.write(struct.pack("<L", len(fieldItem))) 
-                  file.write(fieldItem)
+                  outFile.write(struct.pack("<L", len(fieldItem))) 
+                  outFile.write(fieldItem)
    
    def GetFlattenedBuffer(self):
       """Convenience method:  returns a binary buffer that is the platform-neutral flattened representation of this Message."""
@@ -392,6 +396,24 @@ class Message:
    def PutBool(self, fieldName, fieldContents):
       """Convenience method; identical to PutFieldContents(fieldName, B_BOOL_TYPE, fieldContents)"""
       return self.PutFieldContents(fieldName, B_BOOL_TYPE, fieldContents)
+
+   def PutFlat(self, fieldName, fieldContents):
+      """Flattens the specified Flattenable object (or objects) and places it/them into a field of its specified type
+         Note that objects passed to this method must have their TypeCode() and Flatten() method defined appropriately.
+      """
+      ctype = type(fieldContents)
+      if ctype == list or ctype == array.ArrayType:
+         vals = []
+         for obj in fieldContents:
+            bio = cStringIO.StringIO()
+            obj.Flatten(bio)
+            vals.append(bio.getvalue())
+         if (len(vals) > 0):
+            return self.PutFieldContents(fieldName, fieldContents[0].TypeCode(), vals)
+      else:
+         bio = cStringIO.StringIO()
+         fieldContents.Flatten(bio)
+         return self.PutFieldContents(fieldName, fieldContents.TypeCode(), bio.getvalue())
 
    def PutFloat(self, fieldName, fieldContents):
       """Convenience method; identical to PutFieldContents(fieldName, B_FLOAT_TYPE, fieldContents)"""
@@ -464,47 +486,55 @@ class Message:
 
    def GetString(self, fieldName, index=0):
       """Convenience method; returns the (index)th String item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_STRING_TYPE, index);
+      return self.GetFieldItem(fieldName, B_STRING_TYPE, index)
 
    def GetInt8(self, fieldName, index=0):
       """Convenience method; returns the (index)th Int8 item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_INT8_TYPE, index);
+      return self.GetFieldItem(fieldName, B_INT8_TYPE, index)
 
    def GetInt16(self, fieldName, index=0):
       """Convenience method; returns the (index)th Int16 item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_INT16_TYPE, index);
+      return self.GetFieldItem(fieldName, B_INT16_TYPE, index)
 
    def GetInt32(self, fieldName, index=0):
       """Convenience method; returns the (index)th Int32 item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_INT32_TYPE, index);
+      return self.GetFieldItem(fieldName, B_INT32_TYPE, index)
 
    def GetInt64(self, fieldName, index=0):
       """Convenience method; returns the (index)th Int64 item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_INT64_TYPE, index);
+      return self.GetFieldItem(fieldName, B_INT64_TYPE, index)
 
    def GetBool(self, fieldName, index=0):
       """Convenience method; returns the (index)th Bool item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_BOOL_TYPE, index);
+      return self.GetFieldItem(fieldName, B_BOOL_TYPE, index)
+
+   def GetFlat(self, fieldName, flattenableObject, index=0):
+      """Convenience method; Unflattens the the (index)th Flattenable item under (fieldName) into (flattenableObject) and then return it, or None."""
+      blob = self.GetFieldItem(fieldName, flattenableObject.TypeCode(), index)
+      if (blob != None):
+         flattenableObject.Unflatten(cStringIO.StringIO(blob))
+         return flattenableObject
+      return None
 
    def GetFloat(self, fieldName, index=0):
       """Convenience method; returns the (index)th Float item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_FLOAT_TYPE, index);
+      return self.GetFieldItem(fieldName, B_FLOAT_TYPE, index)
 
    def GetDouble(self, fieldName, index=0):
       """Convenience method; returns the (index)th Double item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_DOUBLE_TYPE, index);
+      return self.GetFieldItem(fieldName, B_DOUBLE_TYPE, index)
 
    def GetMessage(self, fieldName, index=0):
       """Convenience method; returns the (index)th Message item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_MESSAGE_TYPE, index);
+      return self.GetFieldItem(fieldName, B_MESSAGE_TYPE, index)
 
    def GetPoint(self, fieldName, index=0):
       """Convenience method; returns the (index)th Point item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_POINT_TYPE, index);
+      return self.GetFieldItem(fieldName, B_POINT_TYPE, index)
 
    def GetRect(self, fieldName, index=0):
       """Convenience method; returns the (index)th Rect item under (fieldName), or None."""
-      return self.GetFieldItem(fieldName, B_RECT_TYPE, index);
+      return self.GetFieldItem(fieldName, B_RECT_TYPE, index)
 		
 
 # --------------------------------------------------------------------------------------------
@@ -512,7 +542,7 @@ class Message:
 # Silly little test stub.  Just writes a flattened Message out to a file, then reads in back in.
 if __name__ == "__main__":
    tm = Message(666)
-   tm.PutBool("bool", [1,0])
+   tm.PutBool("bool", [True,False])
    tm.PutInt8("int8", [8,9,10])
    tm.PutInt16("int16", [16,18,19])
    tm.PutInt32("int32", [32,31,30])
@@ -528,13 +558,13 @@ if __name__ == "__main__":
    tm.PutMessage("submsg", subMsg)
 
    tm.PrintToStream()
-   outfile = open('test.msg', 'wb')
-   tm.Flatten(outfile)
-   outfile.close()
+   outFile = open('test.msg', 'wb')
+   tm.Flatten(outFile)
+   outFile.close()
 
    print "Unflattening..."
-   infile = open('test.msg', 'rb')
+   inFile = open('test.msg', 'rb')
    m2 = Message()
-   m2.Unflatten(infile);
-   infile.close()
+   m2.Unflatten(inFile)
+   inFile.close()
    m2.PrintToStream()

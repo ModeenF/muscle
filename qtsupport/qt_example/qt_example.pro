@@ -2,7 +2,7 @@ greaterThan(QT_MAJOR_VERSION, 4) {
    QT += widgets
 }
 win32:LIBS     += shlwapi.lib ws2_32.lib winmm.lib User32.lib Advapi32.lib shell32.lib iphlpapi.lib version.lib
-unix:!mac:LIBS += -lutil -lrt
+#unix:!mac:LIBS += -lutil -lrt
 mac:LIBS       += -framework IOKit -framework SystemConfiguration -framework Carbon
 OBJECTS_DIR = objects
 MUSCLE_DIR = ../..
@@ -11,22 +11,31 @@ FLAGSDIR   = .
 exists($$FLAGSDIR/muscle_enable_ssl) {
    DEFINES           += MUSCLE_ENABLE_SSL
    unix:LIBS         += -lssl -lcrypto
-   win32:LIBS        += libeay32.lib ssleay32.lib
+   win32:LIBS        += libcrypto.lib libssl.lib
    win32:QMAKE_FLAGS += /LIBPATH:../../../openssl/out32dll
    win32:INCLUDEPATH += ../../../openssl/include
+   mac:INCLUDEPATH   += /usr/local/include   # For openssl, if it's installed there
+   mac:QMAKE_LFLAGS  += -L/usr/local/lib     # For openssl, if it's installed there
+}
+
+exists($$FLAGSDIR/muscle_enable_templating_message_io_gateway) {
+   warning("muscle_enable_templating_message_io_gateway file detected:  forcing the use of TemplatingMessageIOGateway!");
+   DEFINES += MUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
 }
 
 win32:DEFINES += _WIN32_WINNT=0x0501
 
 INCLUDEPATH += $$MUSCLE_DIR
 
-#DEFINES += MUSCLE_USE_CPLUSPLUS11
-#unix:mac:QMAKE_CXXFLAGS += -std=c++11 -stdlib=libc++
+unix:mac:QMAKE_CXXFLAGS += -std=c++11 -stdlib=libc++
 
 win32:INCLUDEPATH += $$MUSCLE_DIR/regex/regex 
 
-MUSCLE_SOURCES = $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
+MUSCLE_SOURCES = $$MUSCLE_DIR/dataio/FileDataIO.cpp                   \
+                 $$MUSCLE_DIR/dataio/TCPSocketDataIO.cpp              \
+                 $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
                  $$MUSCLE_DIR/iogateway/MessageIOGateway.cpp          \
+                 $$MUSCLE_DIR/iogateway/TemplatingMessageIOGateway.cpp \
                  $$MUSCLE_DIR/iogateway/RawDataMessageIOGateway.cpp   \
                  $$MUSCLE_DIR/message/Message.cpp                     \
                  $$MUSCLE_DIR/qtsupport/QMessageTransceiverThread.cpp \
@@ -54,6 +63,7 @@ MUSCLE_SOURCES = $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
                  $$MUSCLE_DIR/util/NetworkUtilityFunctions.cpp        \
                  $$MUSCLE_DIR/util/SocketMultiplexer.cpp              \
                  $$MUSCLE_DIR/util/String.cpp                         \
+                 $$MUSCLE_DIR/util/StringTokenizer.cpp                \
                  $$MUSCLE_DIR/util/PulseNode.cpp
 
 win32:MUSCLE_SOURCES += $$MUSCLE_DIR/regex/regex/regcomp.c            \

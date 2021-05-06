@@ -1,5 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#include <stdio.h>
+
 #include "system/SetupSystem.h"
 #include "util/BatchOperator.h"
 
@@ -30,7 +32,12 @@ protected:
 class TestArgsA
 {
 public:
-   TestArgsA() : _s(NULL), _i(0) {/* empty */}
+   TestArgsA()
+      : _s(NULL)
+      , _i(0) 
+   {
+      // empty
+   }
    TestArgsA(const char * s, int i) : _s(s), _i(i) {/* empty */}
 
    void PrintToStream() const {printf("TestArgsA:  [%s] %i\n", _s, _i);}
@@ -54,7 +61,12 @@ protected:
 class TestArgsB
 {
 public:
-   TestArgsB() : _s(NULL), _i(0) {/* empty */}
+   TestArgsB()
+      : _s(NULL)
+      , _i(0) 
+   {
+      // empty
+   }
    TestArgsB(const char * s, int i) : _s(s), _i(i) {/* empty */}
 
    void PrintToStream() const {printf("TestArgsB:  [%s] %i\n", _s, _i);}

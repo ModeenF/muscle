@@ -1,9 +1,9 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
-#include <time.h>
-
+#include "dataio/StdinDataIO.h"
 #include "dataio/TCPSocketDataIO.h"
 #include "iogateway/MessageIOGateway.h"
+#include "iogateway/PlainTextMessageIOGateway.h"
 #include "reflector/StorageReflectConstants.h"
 #include "regex/PathMatcher.h"
 #include "util/NetworkUtilityFunctions.h"
@@ -99,7 +99,7 @@ static MessageRef GenerateSetLocalUserStatus(const char * name)
 static String GetUserName(Hashtable<String, String> & users, const String & sessionID)
 {
    String ret;
-   String * userName = users.Get(sessionID);
+   const String * userName = users.Get(sessionID);
    return sessionID + "/" + (userName ? (*userName) : String("<unknown>"));
 }
 
@@ -115,7 +115,7 @@ int main(int argc, char ** argv)
    const char * userName   = "clyde";                     (void) args.FindString("nick", &userName);
    const char * userStatus = "here";                      (void) args.FindString("status", &userStatus);
    const char * tempStr;
-   uint16 port = 0; if (args.FindString("port", &tempStr) == B_NO_ERROR) port = (uint16) atoi(tempStr);
+   uint16 port = 0; if (args.FindString("port", &tempStr).IsOK()) port = (uint16) atoi(tempStr);
    if (port == 0) port = 2960;
       
    // Connect to the server
@@ -128,78 +128,97 @@ int main(int argc, char ** argv)
    gw.AddOutgoingMessage(GenerateSetLocalUserStatus(userStatus));
    gw.AddOutgoingMessage(GenerateServerSubscription("SUBSCRIBE:beshare/*", false));
  
+   StdinDataIO stdinIO(false);
+   QueueGatewayMessageReceiver stdinInQueue;
+   PlainTextMessageIOGateway stdinGateway;
+   stdinGateway.SetDataIO(DataIORef(&stdinIO, false));
+   const int stdinFD = stdinIO.GetReadSelectSocket().GetFileDescriptor();
+
    // Our event loop
-   char buf[2048] = "";
    Hashtable<String, String> _users;
    QueueGatewayMessageReceiver inQueue;
    SocketMultiplexer multiplexer;
    while(s())
    {
-      int fd = s.GetFileDescriptor();
+      const int fd = s.GetFileDescriptor();
       multiplexer.RegisterSocketForReadReady(fd);
-
       if (gw.HasBytesToOutput()) multiplexer.RegisterSocketForWriteReady(fd);
-
-      String text;
-      multiplexer.RegisterSocketForReadReady(STDIN_FILENO);
+      multiplexer.RegisterSocketForReadReady(stdinFD);
 
       while(s()) 
       {
          if (multiplexer.WaitForEvents() < 0)
          {
-            LogTime(MUSCLE_LOG_CRITICALERROR, "WaitForEvents() failed!\n");
+            LogTime(MUSCLE_LOG_CRITICALERROR, "WaitForEvents() failed! [%s]\n", B_ERRNO());
             s.Reset();
             break;
          }
-         if (multiplexer.IsSocketReadyForRead(STDIN_FILENO))
-         {
-            if (fgets(buf, sizeof(buf), stdin) == NULL) buf[0] = '\0';
-            char * ret = strchr(buf, '\n'); if (ret) *ret = '\0';
-            text = buf;
-         }
 
-         text = text.Trim();
-         StringTokenizer tok(text());
-         if (text.StartsWith("/msg "))
+         if (multiplexer.IsSocketReadyForRead(stdinFD))
          {
-            (void) tok();
-            const char * targetSessionID = tok();
-            String sendText = String(tok.GetRemainderOfString()).Trim();
-            if (sendText.HasChars()) gw.AddOutgoingMessage(GenerateChatMessage(targetSessionID, sendText()));
-         }
-         else if (text.StartsWith("/nick "))
-         {
-            (void) tok();
-            String name = String(tok.GetRemainderOfString()).Trim();
-            if (name.HasChars()) 
+            while(1)
             {
-               LogTime(MUSCLE_LOG_INFO, "Setting local user name to [%s]\n", name());
-               gw.AddOutgoingMessage(GenerateSetLocalUserName(name()));
+               const int32 bytesRead = stdinGateway.DoInput(stdinInQueue);
+               if (bytesRead < 0)
+               {
+                  printf("Stdin closed, exiting!\n");
+                  s.Reset();  // break us out of the outer loop
+                  break;
+               }
+               else if (bytesRead == 0) break;  // no more to read
+            }
+
+            MessageRef msgFromStdin;
+            while(stdinInQueue.RemoveHead(msgFromStdin).IsOK())
+            {
+               const String * st;
+               for (int32 i=0; msgFromStdin()->FindString(PR_NAME_TEXT_LINE, i, &st).IsOK(); i++)
+               {
+                  const String & text = *st;
+                  printf("Sending: [%s]\n", text());
+
+                  StringTokenizer tok(text());
+                  if (text.StartsWith("/msg "))
+                  {
+                     (void) tok();
+                     const char * targetSessionID = tok();
+                     String sendText = String(tok.GetRemainderOfString()).Trim();
+                     if (sendText.HasChars()) gw.AddOutgoingMessage(GenerateChatMessage(targetSessionID, sendText()));
+                  }
+                  else if (text.StartsWith("/nick "))
+                  {
+                     (void) tok();
+                     String name = String(tok.GetRemainderOfString()).Trim();
+                     if (name.HasChars())
+                     {
+                        LogTime(MUSCLE_LOG_INFO, "Setting local user name to [%s]\n", name());
+                        gw.AddOutgoingMessage(GenerateSetLocalUserName(name()));
+                     }
+                  }
+                  else if (text.StartsWith("/status "))
+                  {
+                     (void) tok();
+                     String status = String(tok.GetRemainderOfString()).Trim();
+                     if (status.HasChars())
+                     {
+                        LogTime(MUSCLE_LOG_INFO, "Setting local user status to [%s]\n", status());
+                        gw.AddOutgoingMessage(GenerateSetLocalUserStatus(status()));
+                     }
+                  }
+                  else if (text.StartsWith("/help"))
+                  {
+                     LogTime(MUSCLE_LOG_INFO, "Available commands are:  /nick, /msg, /status, /help, and /quit\n");
+                  }
+                  else if (text.StartsWith("/quit")) s.Reset();
+                  else if (strlen(text()) > 0) gw.AddOutgoingMessage(GenerateChatMessage("*", text()));
+               }
             }
          }
-         else if (text.StartsWith("/status "))
-         {
-            (void) tok();
-            String status = String(tok.GetRemainderOfString()).Trim();
-            if (status.HasChars())
-            {
-               LogTime(MUSCLE_LOG_INFO, "Setting local user status to [%s]\n", status());
-               gw.AddOutgoingMessage(GenerateSetLocalUserStatus(status()));
-            }
-         }
-         else if (text.StartsWith("/help"))
-         {
-            LogTime(MUSCLE_LOG_INFO, "Available commands are:  /nick, /msg, /status, /help, and /quit\n");
-         }
-         else if (text.StartsWith("/quit")) s.Reset();
-         else if (strlen(text()) > 0) gw.AddOutgoingMessage(GenerateChatMessage("*", text()));
 
-         text.Clear();
-
-         bool reading = multiplexer.IsSocketReadyForRead(fd);
-         bool writing = multiplexer.IsSocketReadyForWrite(fd);
-         bool writeError = ((writing)&&(gw.DoOutput() < 0));
-         bool readError  = ((reading)&&(gw.DoInput(inQueue) < 0));
+         const bool reading = multiplexer.IsSocketReadyForRead(fd);
+         const bool writing = multiplexer.IsSocketReadyForWrite(fd);
+         const bool writeError = ((writing)&&(gw.DoOutput() < 0));
+         const bool readError  = ((reading)&&(gw.DoInput(inQueue) < 0));
          if ((readError)||(writeError))
          {
             LogTime(MUSCLE_LOG_ERROR, "Connection closed, exiting.\n");
@@ -207,14 +226,14 @@ int main(int argc, char ** argv)
          }
 
          MessageRef msg;
-         while(inQueue.RemoveHead(msg) == B_NO_ERROR)
+         while(inQueue.RemoveHead(msg).IsOK())
          {
             switch(msg()->what)
             {
                case NET_CLIENT_PING:  // respond to other clients' pings
                {
                   String replyTo;
-                  if (msg()->FindString("session", replyTo) == B_NO_ERROR)
+                  if (msg()->FindString("session", replyTo).IsOK())
                   {
                      msg()->what = NET_CLIENT_PONG;
 
@@ -241,7 +260,7 @@ int main(int argc, char ** argv)
                   // Someone has sent a line of chat text to display
                   const char * text;
                   const char * session;
-                  if ((msg()->FindString("text", &text) == B_NO_ERROR)&&(msg()->FindString("session", &session) == B_NO_ERROR)) 
+                  if ((msg()->FindString("text", &text).IsOK())&&(msg()->FindString("session", &session).IsOK())) 
                   {
                      if (strncmp(text, "/me ", 4) == 0) LogTime(MUSCLE_LOG_INFO, "<ACTION>: %s %s\n", GetUserName(_users, session)(), &text[4]); 
                                                    else LogTime(MUSCLE_LOG_INFO, "%s(%s): %s\n", msg()->HasName("private") ? "<PRIVATE>: ":"", GetUserName(_users, session)(), text);
@@ -253,9 +272,9 @@ int main(int argc, char ** argv)
                {
                   // Look for sub-messages that indicate that nodes were removed from the tree
                   String nodepath;
-                  for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, nodepath) == B_NO_ERROR); i++)
+                  for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, nodepath).IsOK()); i++)
                   {
-                     int pathDepth = GetPathDepth(nodepath.Cstr());
+                     const int pathDepth = GetPathDepth(nodepath.Cstr());
                      if (pathDepth >= USER_NAME_DEPTH)
                      {
                         String sessionID = GetPathClause(SESSION_ID_DEPTH, nodepath.Cstr());
@@ -266,8 +285,8 @@ int main(int argc, char ** argv)
                            case USER_NAME_DEPTH:
                            if (strncmp(GetPathClause(USER_NAME_DEPTH, nodepath.Cstr()), "name", 4) == 0) 
                            {
-                              String userName = GetUserName(_users, sessionID);
-                              if (_users.Remove(sessionID) == B_NO_ERROR) LogTime(MUSCLE_LOG_INFO, "User [%s] has disconnected.\n", userName());
+                              String userNameString = GetUserName(_users, sessionID);
+                              if (_users.Remove(sessionID).IsOK()) LogTime(MUSCLE_LOG_INFO, "User [%s] has disconnected.\n", userNameString());
                            }
                            break;
                         }
@@ -278,11 +297,11 @@ int main(int argc, char ** argv)
                   for (MessageFieldNameIterator iter = msg()->GetFieldNameIterator(B_MESSAGE_TYPE); iter.HasData(); iter++)
                   {
                      const String & np = iter.GetFieldName();
-                     int pathDepth = GetPathDepth(np());
+                     const int pathDepth = GetPathDepth(np());
                      if (pathDepth == USER_NAME_DEPTH)
                      {
                         MessageRef tempRef;
-                        if (msg()->FindMessage(np, tempRef) == B_NO_ERROR)
+                        if (msg()->FindMessage(np, tempRef).IsOK())
                         {
                            const Message * pmsg = tempRef();
                            String sessionID = GetPathClause(SESSION_ID_DEPTH, np());
@@ -291,14 +310,14 @@ int main(int argc, char ** argv)
                            {
                               case USER_NAME_DEPTH:
                               {
-                                 String hostName = GetPathClause(HOST_NAME_DEPTH, np());
-                                 hostName = hostName.Substring(0, hostName.IndexOf('/'));
+                                 String hostNameString = GetPathClause(HOST_NAME_DEPTH, np());
+                                 hostNameString = hostNameString.Substring(0, hostNameString.IndexOf('/'));
 
                                  const char * nodeName = GetPathClause(USER_NAME_DEPTH, np());
                                  if (strncmp(nodeName, "name", 4) == 0)
                                  {
                                     const char * name;
-                                    if (pmsg->FindString("name", &name) == B_NO_ERROR)
+                                    if (pmsg->FindString("name", &name).IsOK())
                                     {
                                        if (_users.ContainsKey(sessionID) == false) LogTime(MUSCLE_LOG_INFO, "User #%s has connected\n", sessionID());
                                        _users.Put(sessionID, name);
@@ -308,7 +327,7 @@ int main(int argc, char ** argv)
                                  else if (strncmp(nodeName, "userstatus", 9) == 0)
                                  {
                                     const char * status;
-                                    if (pmsg->FindString("userstatus", &status) == B_NO_ERROR) LogTime(MUSCLE_LOG_INFO, "%s is now [%s]\n", GetUserName(_users, sessionID)(), status);
+                                    if (pmsg->FindString("userstatus", &status).IsOK()) LogTime(MUSCLE_LOG_INFO, "%s is now [%s]\n", GetUserName(_users, sessionID)(), status);
                                  }
                               }
                               break;
@@ -322,7 +341,7 @@ int main(int argc, char ** argv)
 
          if ((reading == false)&&(writing == false)) break;
 
-         multiplexer.RegisterSocketForReadReady(STDIN_FILENO);
+         multiplexer.RegisterSocketForReadReady(stdinFD);
          multiplexer.RegisterSocketForReadReady(fd);
          if (gw.HasBytesToOutput()) multiplexer.RegisterSocketForWriteReady(fd);
       }

@@ -45,9 +45,9 @@ static DIR * opendir(const char *name)
    DIR * dir = NULL;
    if((name)&&(name[0]))
    {
-      size_t base_length = strlen(name);
+      const size_t base_length = strlen(name);
       const char *all = strchr("/\\", name[base_length - 1]) ? "*" : "/*";
-      size_t nameLen = base_length + strlen(all) + 1;
+      const size_t nameLen = base_length + strlen(all) + 1;
       if (((dir = (DIR *)malloc(sizeof *dir)) != NULL) && ((dir->name = (char *) malloc(nameLen)) != NULL))
       {
          muscleStrncpy(dir->name, name, nameLen);
@@ -114,7 +114,7 @@ static void rewinddir(DIR *dir)
 void Directory :: operator++(int)
 {
    DIR * dir = (DIR *) _dirPtr;
-   struct dirent * entry = dir ? readdir(dir) : NULL;
+   const struct dirent * entry = dir ? readdir(dir) : NULL;
    _currentFileName = entry ? entry->d_name : NULL;
 }
 
@@ -141,7 +141,7 @@ void Directory :: Reset()
 bool Directory :: Exists(const char * dirPath)
 {
    Directory d;
-   return ((dirPath)&&(d.SetDir(dirPath) == B_NO_ERROR));
+   return ((dirPath)&&(d.SetDir(dirPath).IsOK()));
 }
 
 status_t Directory :: SetDir(const char * dirPath)
@@ -149,13 +149,13 @@ status_t Directory :: SetDir(const char * dirPath)
    Reset();
    if (dirPath)
    {
-      int pathLen = (int) strlen(dirPath);
+      const int pathLen = (int) strlen(dirPath);
       const char * sep = GetFilePathSeparator();
-      int sepLen = (int) strlen(sep);
-      int extraBytes = ((pathLen<sepLen)||(strcmp(dirPath+pathLen-sepLen, sep) != 0)) ? sepLen : 0;
-      int allocLen = pathLen+extraBytes+1;
+      const int sepLen = (int) strlen(sep);
+      const int extraBytes = ((pathLen<sepLen)||(strcmp(dirPath+pathLen-sepLen, sep) != 0)) ? sepLen : 0;
+      const int allocLen = pathLen+extraBytes+1;
       _path = newnothrow_array(char, allocLen);
-      if (_path == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+      MRETURN_OOM_ON_NULL(_path);
       muscleStrncpy(_path, dirPath, allocLen);
       if (extraBytes != 0) muscleStrncpy(_path+pathLen, sep, allocLen-pathLen);
 
@@ -163,13 +163,12 @@ status_t Directory :: SetDir(const char * dirPath)
       if (_dirPtr == NULL) 
       {
          Reset();  // to free and null-out _path
-         return B_ERROR;
+         return B_ERRNO;
       }
 
       (*this)++;   // make the first entry in the directory the current entry.
-      return B_NO_ERROR;
    }
-   else return B_NO_ERROR;
+   return B_NO_ERROR;
 }
 
 status_t Directory :: MakeDirectory(const char * dirPath, bool forceCreateParentDirsIfNecessary, bool errorIfAlreadyExists)
@@ -180,18 +179,19 @@ status_t Directory :: MakeDirectory(const char * dirPath, bool forceCreateParent
       const char * lastSlash = strrchr(dirPath+((dirPath[0]==sep)?1:0), sep);
       if (lastSlash)
       {
-         uint32 subLen = (uint32)(lastSlash-dirPath);
+         const uint32 subLen = (uint32)(lastSlash-dirPath);
          char * temp = newnothrow_array(char, subLen+1);
-         if (temp == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+         MRETURN_OOM_ON_NULL(temp);
 
          memcpy(temp, dirPath, subLen);
          temp[subLen] = '\0';
 
          Directory pd(temp);
-         if ((pd.IsValid() == false)&&(Directory::MakeDirectory(temp, true, false) != B_NO_ERROR))
+         status_t ret;
+         if ((pd.IsValid() == false)&&(Directory::MakeDirectory(temp, true, false).IsError(ret)))
          {
             delete [] temp;
-            return B_ERROR;
+            return ret;
          }
          else delete [] temp;
       }
@@ -199,22 +199,22 @@ status_t Directory :: MakeDirectory(const char * dirPath, bool forceCreateParent
 
    // base case!
 #ifdef WIN32
-   return ((CreateDirectoryA(dirPath, NULL))||((errorIfAlreadyExists==false)&&(GetLastError()==ERROR_ALREADY_EXISTS))) ? B_NO_ERROR : B_ERROR;
+   return ((CreateDirectoryA(dirPath, NULL))||((errorIfAlreadyExists==false)&&(GetLastError()==ERROR_ALREADY_EXISTS))) ? B_NO_ERROR : B_ERRNO;
 #else
-   return ((mkdir(dirPath, S_IRWXU|S_IRWXG|S_IRWXO) == 0)||((errorIfAlreadyExists==false)&&(errno==EEXIST))) ? B_NO_ERROR : B_ERROR;
+   return ((mkdir(dirPath, S_IRWXU|S_IRWXG|S_IRWXO) == 0)||((errorIfAlreadyExists==false)&&(errno==EEXIST))) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
 status_t Directory :: MakeDirectoryForFile(const char * filePath)
 {
-   int pathLen = (int) strlen(filePath);
+   const int pathLen = (int) strlen(filePath);
    char * p = newnothrow_array(char, pathLen+1);
-   if (p == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+   MRETURN_OOM_ON_NULL(p);
 
    muscleStrncpy(p, filePath, pathLen+1);
    char * lastSep = strrchr(p, GetFilePathSeparator()[0]);
    if (lastSep) *lastSep = '\0';  // truncate the file name 
-   status_t ret = lastSep ? MakeDirectory(p, true) : B_NO_ERROR;  // No directory clauses?  then there's nothing for us to do.
+   const status_t ret = lastSep ? MakeDirectory(p, true) : B_NO_ERROR;  // No directory clauses?  then there's nothing for us to do.
    delete [] p;
    return ret;
 }
@@ -223,12 +223,14 @@ status_t Directory :: DeleteDirectory(const char * dirPath, bool forceDeleteSubI
 {
    if (forceDeleteSubItemsIfNecessary)
    {
-      Directory d;
-      if ((dirPath==NULL)||(d.SetDir(dirPath) != B_NO_ERROR)) return B_ERROR;
+      if (dirPath == NULL) return B_BAD_ARGUMENT;
 
-      const char * sep = GetFilePathSeparator();
-      int sepLen       = (int) strlen(sep);
-      int dirPathLen   = (int) strlen(dirPath);
+      Directory d;
+      MRETURN_ON_ERROR(d.SetDir(dirPath));
+
+      const char * sep       = GetFilePathSeparator();
+      const int dirPathLen   = (int) strlen(dirPath);
+      int sepLen             = (int) strlen(sep);
 
       // No point in including a separator if (dirPath) already ends in one
       if ((dirPathLen >= sepLen)&&(strcmp(&dirPath[dirPathLen-sepLen], sep) == 0)) {sep = ""; sepLen=0;}
@@ -237,10 +239,10 @@ status_t Directory :: DeleteDirectory(const char * dirPath, bool forceDeleteSubI
       {
          if ((strcmp(fn, ".") != 0)&&(strcmp(fn, "..") != 0))
          {
-            int fnLen = (int) strlen(fn);
-            int catLen = dirPathLen+sepLen+fnLen+1;
-            char * catStr = newnothrow_array(char, catLen);
-            if (catStr == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+            const int fnLen  = (int) strlen(fn);
+            const int catLen = dirPathLen+sepLen+fnLen+1;
+            char * catStr    = newnothrow_array(char, catLen);
+            MRETURN_OOM_ON_NULL(catStr);
 
             // Compose the sub-item's full path
             muscleStrncpy(catStr,                   dirPath, catLen);
@@ -249,21 +251,21 @@ status_t Directory :: DeleteDirectory(const char * dirPath, bool forceDeleteSubI
 
             // First, try to delete the sub-item as a file; if not, as a directory
 #ifdef _MSC_VER
-            int unlinkRet = _unlink(catStr);  // stupid MSVC!
+            const int unlinkRet = _unlink(catStr);  // stupid MSVC!
 #else
-            int unlinkRet = unlink(catStr);
+            const int unlinkRet = unlink(catStr);
 #endif
-            status_t ret = (unlinkRet == 0) ? B_NO_ERROR : Directory::DeleteDirectory(catStr, true);
+            const status_t ret = (unlinkRet == 0) ? B_NO_ERROR : Directory::DeleteDirectory(catStr, true);
             delete [] catStr;
-            if (ret != B_NO_ERROR) return ret;
+            if (ret.IsError()) return ret;
          }
       }
    }
 #ifdef WIN32
-   return RemoveDirectoryA(dirPath) ? B_NO_ERROR : B_ERROR;
+   return RemoveDirectoryA(dirPath) ? B_NO_ERROR : B_ERRNO;
 #else
-   return (rmdir(dirPath) == 0) ? B_NO_ERROR : B_ERROR;
+   return (rmdir(dirPath) == 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
-}; // end namespace muscle
+} // end namespace muscle

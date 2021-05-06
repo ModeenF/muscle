@@ -14,7 +14,6 @@
 #include "system/GlobalMemoryAllocator.h"
 #include "system/SetupSystem.h"
 #include "util/MiscUtilityFunctions.h"
-#include "util/StringTokenizer.h"
 
 #define STR_MUSCLE_DEAMON_NAME "application/x-vnd.Haiku-MuscleDaemon"
 
@@ -48,7 +47,7 @@ private:
    Hashtable<IPAddressAndPort, Void> listenPorts;
    Queue<String> bans;
    Queue<String> requires;
-   Hashtable<ip_address, String> tempRemaps;
+   Hashtable<IPAddress, String> tempRemaps;
    Message tempPrivs;
 };
 };

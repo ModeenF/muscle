@@ -16,7 +16,7 @@ namespace muscle {
   * object (and thereby automatically close its held file descriptor) when the file 
   * descriptor is no longer needed for anything.
   */
-class Socket : public RefCountable, public CountedObject<Socket>, private NotCopyable
+class Socket : public RefCountable, private NotCopyable
 {
 public:
    /** Default constructor. */
@@ -62,6 +62,8 @@ private:
 
    int _fd;
    bool _okayToClose;
+
+   DECLARE_COUNTED_OBJECT(Socket);
 };
 
 /** ConstSocketRef is subclassed rather than typedef'd so that I can override the == and != operators
@@ -82,10 +84,10 @@ public:
    ConstSocketRef(const Socket * item, bool doRefCount = true) : ConstRef<Socket>(item, doRefCount) {/* empty */}
 
    /** Copy constructor
-     * @param copyMe The ConstSocketRef to become a copy of.  Note that this doesn't copy (copyMe)'s underlying Socket object, but instead
-     *               only adds one to its reference count.
+     * @param rhs The ConstSocketRef to become a copy of.  Note that this doesn't copy (rhs)'s underlying Socket object, but instead
+     *            only adds one to its reference count.
      */
-   ConstSocketRef(const ConstSocketRef & copyMe) : ConstRef<Socket>(copyMe) {/* empty */}
+   ConstSocketRef(const ConstSocketRef & rhs) : ConstRef<Socket>(rhs) {/* empty */}
 
    /** Downcast constructor
      * @param ref A RefCountableRef object that hopefully holds a Socket object
@@ -93,10 +95,17 @@ public:
      */
    ConstSocketRef(const RefCountableRef & ref, bool junk) : ConstRef<Socket>(ref, junk) {/* empty */}
 
-   /** Comparison operator.  Returns true iff (this) and (rhs) both contain the same file descriptor. */
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &) */
+   inline ConstSocketRef & operator = (const ConstSocketRef & rhs) {(void) ConstRef<Socket>::operator=(rhs); return *this;}
+
+   /** Comparison operator.  Returns true iff (this) and (rhs) both contain the same file descriptor.
+     * @param rhs the ConstSocketRef to compare file descriptors with
+     */
    inline bool operator ==(const ConstSocketRef &rhs) const {return GetFileDescriptor() == rhs.GetFileDescriptor();}
 
-   /** Comparison operator.  Returns false iff (this) and (rhs) both contain the same file descriptor. */
+   /** Comparison operator.  Returns true iff (this) and (rhs) don't both contain the same file descriptor.
+     * @param rhs the ConstSocketRef to compare file descriptors with
+     */
    inline bool operator !=(const ConstSocketRef &rhs) const {return GetFileDescriptor() != rhs.GetFileDescriptor();}
 
    /** Convenience method.  Returns the file descriptor we are holding, or -1 if we are a NULL reference. */
@@ -125,6 +134,6 @@ inline const ConstSocketRef & GetNullSocket() {return GetDefaultObjectForType<Co
 /** Convenience method:  Returns a reference to an invalid Socket (i.e. a Socket object with a negative file descriptor).  Note the difference between what this function returns and what GetNullSocket() returns!  If you're not sure which of these two functions to use, then GetNullSocket() is probably the one you want. */
 const ConstSocketRef & GetInvalidSocket();
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -38,6 +38,36 @@ if os.name == 'nt':
 else:
     from errno import EALREADY, EINPROGRESS, EWOULDBLOCK, ECONNRESET, ENOTCONN, ESHUTDOWN 
 
+def CreateConnectedSocketPair(blockingMode, preferIPv6=True):
+   """Returns a pair (2-tuple) of stream-oriented sockets that are connected to each other
+      This can be useful for inter-thread signalling, etc.
+      (blockingMode) Set to True if you want blocking I/O semantics, or False for non-blocking
+      (preferIPv6) Set to True if you prefer IPv6 transport, or False for IPv4 (this is used
+                   only when socket.sockepair() isn't available; it probably doesn't matter which you use)
+   """
+   if (hasattr(socket, 'socketpair')):
+      socketA, socketB = socket.socketpair()
+      socketB.setblocking(blockingMode)
+      socketA.setblocking(blockingMode)
+      return (socketA, socketB)
+   else:
+      if (preferIPv6):
+         family = socket.AF_INET6
+         tempAcceptSock = socket.socket(family, socket.SOCK_STREAM)
+         tempAcceptSock.bind(("::1", 0))
+      else:
+         family = socket.AF_INET
+         tempAcceptSock = socket.socket(family, socket.SOCK_STREAM)
+         tempAcceptSock.bind(("127.0.0.1", 0))
+      tempAcceptSock.listen(1)
+      socketA = socket.socket(family, socket.SOCK_STREAM)
+      socketA.connect(tempAcceptSock.getsockname())
+      socketB = tempAcceptSock.accept()[0]
+      tempAcceptSock.close()
+      socketB.setblocking(blockingMode)
+      socketA.setblocking(blockingMode)
+      return (socketA, socketB)
+
 class MessageTransceiverThread(threading.Thread):
    """Python implementation of the MUSCLE MessageTransceiverThread class.
 
@@ -48,7 +78,7 @@ class MessageTransceiverThread(threading.Thread):
    you will get a Message object as your notification.  (See GetNextIncomingEvent() for details on notification).
    """
 
-   def __init__(self, hostname, port, acceptFrom=None, preferIPv6=0):
+   def __init__(self, hostname, port, acceptFrom=None, preferIPv6=False):
       """This constructor creates a MessageTransceiverThread that does an outgoing TCP connection.
 
       (hostname) is the hostname (or IP address string) of the host to connect to (e.g. "www.meyersound.com"
@@ -60,7 +90,7 @@ class MessageTransceiverThread(threading.Thread):
       (acceptfrom) is only relevant if you are accepting incoming connections, i.e. if (hostname) was None.
                    If specified, it is the only IP address that is allowed to connect to you.  If left as
                    None, however, any IP address is allowed to connect to you.
-      (preferIPv6) if set to 1, we'll use IPv6 networking instead of IPv4
+      (preferIPv6) if set to True, we'll use IPv6 networking instead of IPv4
 
       Note that you will need to also call start() before the internal TCP connection thread will start executing."""
 
@@ -78,28 +108,17 @@ class MessageTransceiverThread(threading.Thread):
       self._endSession = IOError()
 
       # Set up for accepting incoming TCP connections, if necessary
-      if self.__hostname == None:
-         if acceptFrom == None:
+      if self.__hostname is None:
+         if acceptFrom is None:
             acceptFrom = ""
          self.__acceptsocket = socket.socket(self.__getSocketFamily(), socket.SOCK_STREAM)
          self.__acceptsocket.bind((acceptFrom, port))
          self.__acceptsocket.listen(1)
-         self.__acceptsocket.setblocking(0)
+         self.__acceptsocket.setblocking(False)
          self.__port = self.__acceptsocket.getsockname()[1]
 
       # Set up our internal socket-based thread notification/wakeup system
-      acceptsock = socket.socket(self.__getSocketFamily(), socket.SOCK_STREAM)
-      if (self.__preferIPv6):
-         acceptsock.bind(("::1", 0))
-      else:
-         acceptsock.bind(("127.0.0.1", 0))
-      acceptsock.listen(1)
-      self.__mainsocket = socket.socket(self.__getSocketFamily(), socket.SOCK_STREAM)
-      self.__mainsocket.connect(acceptsock.getsockname())
-      self.__threadsocket = acceptsock.accept()[0]
-      acceptsock.close()
-      self.__threadsocket.setblocking(0)
-      self.__mainsocket.setblocking(0)
+      (self.__mainsocket, self.__threadsocket) = CreateConnectedSocketPair(False, self.__preferIPv6)
 
    def SendOutgoingMessage(self, msg):
       """Call this to queue up the given Message object to be sent out across the network.
@@ -117,23 +136,23 @@ class MessageTransceiverThread(threading.Thread):
 
          Call this method when you are done using this object forever and want it to go away.  
          This method is typically called by your main thread of execution."""
-      if (self.__outQ != None):
+      if (self.__outQ is not None):
          self.SendOutgoingMessage(self._endSession)  # special 'please die' code
-         self.join()                            # wait for the internal thread to go away
+         self.join()                                 # wait for the internal thread to go away
          self.__outQ = None
          self.__inQ  = None
-         if self.__mainsocket != None:
+         if self.__mainsocket is not None:
             self.__mainsocket.close()
-         if self.__threadsocket != None:
+         if self.__threadsocket is not None:
             self.__threadsocket.close()
-         if self.__acceptsocket != None:
+         if self.__acceptsocket is not None:
             self.__acceptsocket.close()
 
    def GetPort(self):
       """Returns the port this MessageTransceiverThread is connecting or accepting connections on."""
       return self.__port
 
-   def GetNextIncomingEvent(self, block=0):
+   def GetNextIncomingEvent(self, block=False):
       """Returns the next incoming event object, or None if the incoming-event-queue is empty.  
 
          Incoming event objects will be one of the following three things:
@@ -172,8 +191,8 @@ class MessageTransceiverThread(threading.Thread):
       """Entry point for the internal thread.  Don't call this method; call start() instead."""
       toremote = None
       try:
-         self._connectStillInProgress = 0
-         if self.__acceptsocket == None:
+         self._connectStillInProgress = False
+         if self.__acceptsocket is None:
             try:
                toremote = self.__createConnectingSocket(False)  # FogBugz 10491:  if we can't connect with our preferred protocol (e.g. IPv6)...
             except socket.error:
@@ -188,11 +207,11 @@ class MessageTransceiverThread(threading.Thread):
 
          inHeader, inBody, inBodySize = "", "", 0
          outHeader, outBody = self.__getNextMessageFromMain()
-         while 1:
+         while True:
             try:
-               waitingForAccept = self.__acceptsocket != None and toremote == None
+               waitingForAccept = self.__acceptsocket is not None and toremote is None
 
-               if (outHeader != None or outBody != None or self._connectStillInProgress) and waitingForAccept == 0:
+               if (outHeader is not None or outBody is not None or self._connectStillInProgress) and waitingForAccept is False:
                   useoutlist = outlist
                else:
                   useoutlist = emptylist
@@ -213,9 +232,9 @@ class MessageTransceiverThread(threading.Thread):
                   self.__sendReplyToMainThread(MTT_EVENT_CONNECTED)
 
                if toremote in inready:
-                  if inHeader != None:
+                  if inHeader is not None:
                      newbytes = toremote.recv(8-len(inHeader))
-                     if len(newbytes) == 0:
+                     if not newbytes:
                         raise socket.error
                      inHeader = inHeader + newbytes
                      if len(inHeader) == 8:   # full header size is 2*sizeof(int32)
@@ -226,7 +245,7 @@ class MessageTransceiverThread(threading.Thread):
                         inHeader = None    # signal that we are now ready to read the inBody
                   else:
                      newbytes = toremote.recv(inBodySize-len(inBody))
-                     if len(newbytes) == 0:
+                     if not newbytes:
                         raise socket.error
                      inBody = inBody + newbytes
                      if len(inBody) == inBodySize:
@@ -237,32 +256,32 @@ class MessageTransceiverThread(threading.Thread):
 
                # Note that we don't need to do anything with the data we read from
                # threadsocket; it's enough that it woke us up so we can check the out-queue.
-               if self.__threadsocket in inready and len(self.__threadsocket.recv(1024)) == 0:
-                     raise self._endSession
+               if self.__threadsocket in inready and not self.__threadsocket.recv(1024):
+                  raise self._endSession
 
                if toremote in outready:
                   if self._connectStillInProgress:
                      toremote.send("") # finalize the connect          # everyone else can get by with just this
                      self.__sendReplyToMainThread(MTT_EVENT_CONNECTED)
-                     self._connectStillInProgress = 0
+                     self._connectStillInProgress = False 
                   else:
-                     if outHeader != None:
+                     if outHeader is not None:
                         numSent = toremote.send(outHeader)
                         if numSent > 0:
                            outHeader = outHeader[numSent:]
-                           if len(outHeader) == 0:
+                           if not outHeader:
                               outHeader = None
-                     elif outBody != None:
+                     elif outBody is not None:
                         numSent = toremote.send(outBody)
                         if numSent > 0:
                            outBody = outBody[numSent:]
-                           if len(outBody) == 0:
+                           if not outBody:
                               outBody = None
 
-               if outHeader == None and outBody == None:
+               if outHeader is None and outBody is None:
                   outHeader, outBody = self.__getNextMessageFromMain()
             except socket.error:
-               if self.__acceptsocket != None:
+               if self.__acceptsocket is not None:
                   self.__sendReplyToMainThread(MTT_EVENT_DISCONNECTED)
                   toremote = None # for accepting sessions, we can disconnect and then go back to waiting for an accept
                else:
@@ -275,7 +294,7 @@ class MessageTransceiverThread(threading.Thread):
          else:
             raise
 
-      if toremote != None:
+      if toremote is not None:
          toremote.close()
 
    def __sendReplyToMainThread(self, what):
@@ -294,7 +313,7 @@ class MessageTransceiverThread(threading.Thread):
          return None, None  # oops, nothing more to send for the moment
 
    def __getSocketFamily(self):
-      if (self.__preferIPv6 == 1):
+      if (self.__preferIPv6):
          return socket.AF_INET6
       else:
          return socket.AF_INET
@@ -308,20 +327,20 @@ class MessageTransceiverThread(threading.Thread):
             family = socket.AF_INET6
 
       remoteSocket = socket.socket(family, socket.SOCK_STREAM)
-      remoteSocket.setblocking(0)
+      remoteSocket.setblocking(False)
       try:
          r = socket.getaddrinfo(self.__hostname, self.__port, family, socket.SOCK_STREAM, socket.IPPROTO_IP, socket.AI_CANONNAME)
-         if ((r != None) and (len(r) > 0)):   # paranoia
+         if ((r is not None) and (r)):   # paranoia
             remoteSocket.connect(r[0][4])
          else:
             raise socket.error
       except socket.error, why:
          if why[0] in (EINPROGRESS, EALREADY, EWOULDBLOCK):
-            self._connectStillInProgress = 1
+            self._connectStillInProgress = True
          else:
             raise
 
-      if self._connectStillInProgress == 0:
+      if self._connectStillInProgress is False:
          self.__sendReplyToMainThread(MTT_EVENT_CONNECTED)
 
       return remoteSocket
@@ -330,9 +349,9 @@ class MessageTransceiverThread(threading.Thread):
 #
 # Test stub below: exercises basic sending and receiving of Message objects.
 # Easiest way to test this is to open two shell windows, and in the first type:
-#   python MessageTransceiverThread.py accept 9999
+#   python message_transceiver_thread.py accept 9999
 # and then in the other shell window, type:
-#   python MessageTransceiverThread.py localhost 9999
+#   python message_transceiver_thread.py localhost 9999
 # Then the two programs should connect to each other, and typing anything into
 # one window should result in output being printed to the other.  Fun!
 #
@@ -354,7 +373,7 @@ if __name__ == "__main__":
       # handle them locally, instead.  But this will do, for testing.
       # (see pythonchat.py for an example of a program that does things the right way)
       def NotifyMainThread(self):
-         while 1:
+         while True:
             nextEvent = self.GetNextIncomingEvent()
             if nextEvent == MTT_EVENT_CONNECTED:
                print ""
@@ -362,7 +381,7 @@ if __name__ == "__main__":
             elif nextEvent == MTT_EVENT_DISCONNECTED:
                print ""
                print "TCP Connection failed or was disconnected!"
-            elif nextEvent == None:
+            elif nextEvent is None:
                break  # If we got here, the Queue is empty, nothing more to show
             else:
                print ""
@@ -370,8 +389,8 @@ if __name__ == "__main__":
                nextEvent.PrintToStream()
 
    if len(sys.argv) < 2:
-      print "Usage:  python MessageTransceiverThread.py accept [port=0]"
-      print "   or:  python MessageTransceiverThread.py <hostname> [port=2960]"
+      print "Usage:  python message_transceiver_thread.py accept [port=0]"
+      print "   or:  python message_transceiver_thread.py <hostname> [port=2960]"
       sys.exit(5)
 
    if sys.argv[1] == "accept":
@@ -388,10 +407,10 @@ if __name__ == "__main__":
       mtt = TestMTT(hostname, int(port))
       print "Attempting to connect to", hostname, "port", port, "..."
 
-   mtt.start();  # important!  Otherwise nothing will happen :^)
-   while 1:
+   mtt.start()  # important!  Otherwise nothing will happen :^)
+   while True:
       nextline = sys.stdin.readline().strip()
-      if nextline == "q":
+      if (not nextline) or (nextline == "q"):
          mtt.Destroy()
          print "Bye bye!"
          sys.exit()

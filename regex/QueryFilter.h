@@ -3,6 +3,10 @@
 #ifndef MuscleQueryFilter_h
 #define MuscleQueryFilter_h
 
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+# include <initializer_list>
+#endif
+
 #include "util/Queue.h"
 #include "util/ByteBuffer.h"
 #include "message/Message.h"
@@ -28,9 +32,10 @@ enum {
    QUERY_FILTER_TYPE_STRING,                /**< filter on the contents of a String in the Message */
    QUERY_FILTER_TYPE_MESSAGE,               /**< filter on the contents of a sub-Message in the Message */
    QUERY_FILTER_TYPE_RAWDATA,               /**< filter on the raw bytes of a field in the Message */
-   QUERY_FILTER_TYPE_NANDNOT,               /**< combine the results of two or more child filters using a NAND or NOR operator  */
-   QUERY_FILTER_TYPE_ANDOR,                 /**< combine the results of two or more child filters using an AND or OR operator  */
-   QUERY_FILTER_TYPE_XOR,                   /**< combine the results of two or more child filters using an XOR operator  */
+   QUERY_FILTER_TYPE_MAXMATCH,              /**< filter matches iff at no more than (n) of its children match */
+   QUERY_FILTER_TYPE_MINMATCH,              /**< filter matches iff at least (n) of its children match */
+   QUERY_FILTER_TYPE_XOR,                   /**< combine the results of two or more child filters using an XOR operator */
+   QUERY_FILTER_TYPE_CHILDCOUNT,            /**< filter based on the number of child nodes the DataNode in question has */
    // add more codes here...
    LAST_QUERY_FILTER_TYPE                   /**< guard value */
 };
@@ -45,20 +50,16 @@ public:
    QueryFilter() {/* empty */}
 
    /** Destructor */
-   virtual ~QueryFilter();
+   virtual ~QueryFilter() {/* empty */}
 
-   /** Dumps our state into the given (archive).   Default implementation
-    *  just writes our TypeCode() into the 'what' of the Message
-    *  and returns B_NO_ERROR.
-    *  @param archive the Message to write our state into.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure.
+   /** @copydoc DoxyTemplate::SaveToArchive(Message &) const
+    *  @note the base-class implementation just copies the value returned by our TypeCode() method into the 'what' of the Message, and returns B_NO_ERROR.
     */
    virtual status_t SaveToArchive(Message & archive) const;
 
-   /** Restores our state from the given (archive).  Default implementation
-    *  returns B_NO_ERROR iff the archive's what code matches our TypeCode().
-    *  @param archive The archive to restore our state from.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure.
+   /** @copydoc DoxyTemplate::SetFromArchive(const Message &)
+    *  @note the base-class implementation returns B_NO_ERROR if the archive's 'what'-code causes our AcceptTypeCode() method 
+    *        to return true, or B_TYPE_MISMATCH otherwise.  Other than that it does nothing.
     */     
    virtual status_t SetFromArchive(const Message & archive);
 
@@ -77,6 +78,7 @@ public:
    /** Returns true iff we can be instantiated using a Message with the given
      * 'what' code.  Default implementation returns true iff (what) equals the
      * value returned by our own TypeCode() method.
+     * @param what the type-code to check for acceptability
      */
    virtual bool AcceptsTypeCode(uint32 what) const {return TypeCode() == what;}
 };
@@ -106,6 +108,7 @@ private:
    uint32 _minWhatCode;
    uint32 _maxWhatCode;
 };
+DECLARE_REFTYPES(WhatCodeQueryFilter);
 
 /** Semi-abstract base class for all query filters that test a single item in a Message */
 class ValueQueryFilter : public QueryFilter
@@ -123,13 +126,17 @@ public:
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
 
-   /** Sets our index-in-field setting. */
+   /** Sets our index-in-field setting.
+     * @param index the new index of the value we want to look up inside our target field-name.  (0==first value, 1==second value, etc)
+     */
    void SetIndex(uint32 index) {_index = index;}
 
    /** Returns our current index-in-field setting, as set by SetIndex() or in our constructor */
    uint32 GetIndex() const {return _index;}
 
-   /** Sets the field name to use. */
+   /** Sets the field name to use.
+     * @param fieldName the new field name to use in our query
+     */
    void SetFieldName(const String & fieldName) {_fieldName = fieldName;}
 
    /** Returns the current field name, as set by SetFieldName() or in our constructor. */
@@ -139,6 +146,7 @@ private:
    String _fieldName;
    uint32 _index;
 };
+DECLARE_REFTYPES(ValueQueryFilter);
 
 /** This filter merely checks to see if the specified value exists in the target Message. */
 class ValueExistsQueryFilter : public ValueQueryFilter
@@ -159,7 +167,7 @@ public:
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
    virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_VALUEEXISTS;}
-   virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const {(void) optNode; const void * junk; return (msg()->FindData(GetFieldName(), _typeCode, &junk, NULL) == B_NO_ERROR);}
+   virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const {(void) optNode; const void * junk; return (msg()->FindData(GetFieldName(), _typeCode, &junk, NULL).IsOK());}
 
    /** Sets the type code that we will look for in the target Message.
      * @param typeCode the type code to look for.  Use B_ANY_TYPE to indicate that you don't care what the type code is.
@@ -174,7 +182,7 @@ public:
 private:
    uint32 _typeCode;
 };
-
+DECLARE_REFTYPES(ValueExistsQueryFilter);
 
 /** Enumeration of mask operations available to NumericQueryFilter classes */
 enum {
@@ -233,7 +241,7 @@ public:
    /** Default constructor.  Sets our value to its default (usually zero), and the operator to OP_EQUAL_TO. */
    NumericQueryFilter() : _value(), _mask(), _op(OP_EQUAL_TO), _maskOp(NQF_MASK_OP_NONE), _assumeDefault(false) {/* empty */}
 
-   /** Constructor.  This constructor will create a QueryFilter that only returns true from Match()
+   /** Constructor.  This constructor will create a QueryFilter that only returns true from Matches()
      * If the matched Message has the field item with the specified value in it.
      * @param fieldName Field name to look under.
      * @param op The operator to use (should be one of the OP_* values enumerated below)
@@ -258,47 +266,51 @@ public:
 
    virtual status_t SaveToArchive(Message & archive) const
    {
-      return ((ValueQueryFilter::SaveToArchive(archive)                                                      == B_NO_ERROR)&&
-              (archive.CAddInt8("op", _op)                                                                   == B_NO_ERROR)&&
-              (archive.CAddInt8("mop", _maskOp)                                                              == B_NO_ERROR)&&
-              (archive.AddData("val", DataTypeCode, &_value, sizeof(_value))                                 == B_NO_ERROR)&&
-              (archive.AddData("msk", DataTypeCode, &_mask,  sizeof(_mask))                                  == B_NO_ERROR)&&
-              ((_assumeDefault == false)||(archive.AddData("val", DataTypeCode, &_default, sizeof(_default)) == B_NO_ERROR))) ? B_NO_ERROR : B_ERROR;
+      status_t ret;
+      return ((ValueQueryFilter::SaveToArchive(archive)                                                     .IsOK(ret))&&
+              (archive.CAddInt8("op", _op)                                                                  .IsOK(ret))&&
+              (archive.CAddInt8("mop", _maskOp)                                                             .IsOK(ret))&&
+              (archive.AddData("val", DataTypeCode, &_value, sizeof(_value))                                .IsOK(ret))&&
+              (archive.AddData("msk", DataTypeCode, &_mask,  sizeof(_mask))                                 .IsOK(ret))&&
+              ((_assumeDefault == false)||(archive.AddData("val", DataTypeCode, &_default, sizeof(_default)).IsOK(ret)))) ? B_NO_ERROR : ret;
    }
 
    virtual status_t SetFromArchive(const Message & archive)
    {
       _assumeDefault = false;
 
-      const void * dt;
-      uint32 numBytes;
-      if ((ValueQueryFilter::SetFromArchive(archive) == B_NO_ERROR)&&(archive.FindData("val", DataTypeCode, &dt, &numBytes) == B_NO_ERROR)&&(numBytes == sizeof(_value)))
+      status_t ret;
+      const void * dt = NULL;  // dt doesn't really need to be set to NULL here, but doing so avoids a compiler-warning --jaf
+      uint32 numBytes = 0;  // set to zero to avoid compiler warning
+      if ((ValueQueryFilter::SetFromArchive(archive).IsOK(ret))&&(archive.FindData("val", DataTypeCode, &dt, &numBytes).IsOK(ret)))
       {
+         if (numBytes != sizeof(_value)) return B_BAD_DATA;
+
          _op     = archive.GetInt8("op");
          _value  = *((DataType *)dt);
          _maskOp = archive.GetInt8("mop");
-         _mask   = ((archive.FindData("msk", DataTypeCode, &dt, &numBytes) == B_NO_ERROR)&&(numBytes == sizeof(_mask))) ? *((DataType *)dt) : DataType();
+         _mask   = ((archive.FindData("msk", DataTypeCode, &dt, &numBytes).IsOK())&&(numBytes == sizeof(_mask))) ? *((DataType *)dt) : DataType();
          
-         if (archive.FindData("val", DataTypeCode, 1, &dt, &numBytes) == B_NO_ERROR)
+         if (archive.FindData("val", DataTypeCode, 1, &dt, &numBytes).IsOK())
          {
             _assumeDefault = true;
             _default = *((DataType *)dt);
          }
          return B_NO_ERROR;
       }
-      return B_ERROR;
+      else return ret;
    }
 
    virtual uint32 TypeCode() const {return ClassTypeCode;}
 
    virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const
    {
-      (void) optNode;  // shut compiler and DOxygen up
+      (void) optNode;  // shut compiler and Doxygen up
 
       const DataType * valueInMsg;
      
       const void * p;
-           if (msg()->FindData(GetFieldName(), DataTypeCode, GetIndex(), &p, NULL) == B_NO_ERROR) valueInMsg = (const DataType *)p;
+           if (msg()->FindData(GetFieldName(), DataTypeCode, GetIndex(), &p, NULL).IsOK()) valueInMsg = (const DataType *)p;
       else if (_assumeDefault) valueInMsg = &_default;
       else return false;
 
@@ -340,7 +352,7 @@ public:
      */
    void SetAssumedDefault(const DataType & d) {_default = d; _assumeDefault = true;}
 
-   /** Unsets the assumed default.  After calling this, our Match() method will simply always
+   /** Unsets the assumed default.  After calling this, our Matches() method will simply always
      * return false if the specified data item is not found in the Message.
      */
    void UnsetAssumedDefault() {_default = DataType(); _assumeDefault = false;}
@@ -382,22 +394,51 @@ private:
    DataType _default;
 };
 
-typedef NumericQueryFilter<bool,   B_BOOL_TYPE,   QUERY_FILTER_TYPE_BOOL>   BoolQueryFilter;
-typedef NumericQueryFilter<double, B_DOUBLE_TYPE, QUERY_FILTER_TYPE_DOUBLE> DoubleQueryFilter;
-typedef NumericQueryFilter<float,  B_FLOAT_TYPE,  QUERY_FILTER_TYPE_FLOAT>  FloatQueryFilter;
-typedef NumericQueryFilter<int64,  B_INT64_TYPE,  QUERY_FILTER_TYPE_INT64>  Int64QueryFilter;
-typedef NumericQueryFilter<int32,  B_INT32_TYPE,  QUERY_FILTER_TYPE_INT32>  Int32QueryFilter;
-typedef NumericQueryFilter<int16,  B_INT16_TYPE,  QUERY_FILTER_TYPE_INT16>  Int16QueryFilter;
-typedef NumericQueryFilter<int8,   B_INT8_TYPE,   QUERY_FILTER_TYPE_INT8>   Int8QueryFilter;
-typedef NumericQueryFilter<Point,  B_POINT_TYPE,  QUERY_FILTER_TYPE_POINT>  PointQueryFilter;
-typedef NumericQueryFilter<Point,  B_RECT_TYPE,   QUERY_FILTER_TYPE_RECT>   RectQueryFilter;
+typedef NumericQueryFilter<bool,   B_BOOL_TYPE,   QUERY_FILTER_TYPE_BOOL>   BoolQueryFilter;   DECLARE_REFTYPES(BoolQueryFilter);
+typedef NumericQueryFilter<double, B_DOUBLE_TYPE, QUERY_FILTER_TYPE_DOUBLE> DoubleQueryFilter; DECLARE_REFTYPES(DoubleQueryFilter);
+typedef NumericQueryFilter<float,  B_FLOAT_TYPE,  QUERY_FILTER_TYPE_FLOAT>  FloatQueryFilter;  DECLARE_REFTYPES(FloatQueryFilter);
+typedef NumericQueryFilter<int64,  B_INT64_TYPE,  QUERY_FILTER_TYPE_INT64>  Int64QueryFilter;  DECLARE_REFTYPES(Int64QueryFilter);
+typedef NumericQueryFilter<int32,  B_INT32_TYPE,  QUERY_FILTER_TYPE_INT32>  Int32QueryFilter;  DECLARE_REFTYPES(Int32QueryFilter);
+typedef NumericQueryFilter<int16,  B_INT16_TYPE,  QUERY_FILTER_TYPE_INT16>  Int16QueryFilter;  DECLARE_REFTYPES(Int16QueryFilter);
+typedef NumericQueryFilter<int8,   B_INT8_TYPE,   QUERY_FILTER_TYPE_INT8>   Int8QueryFilter;   DECLARE_REFTYPES(Int8QueryFilter);
+typedef NumericQueryFilter<Point,  B_POINT_TYPE,  QUERY_FILTER_TYPE_POINT>  PointQueryFilter;  DECLARE_REFTYPES(PointQueryFilter);
+typedef NumericQueryFilter<Point,  B_RECT_TYPE,   QUERY_FILTER_TYPE_RECT>   RectQueryFilter;   DECLARE_REFTYPES(RectQueryFilter);
 
-/** A semi-abstract base class for any QueryFilter that holds a list of references to child filters. */
+/** This QueryFilter makes decisions about a node based on the number of child-nodes the node currently has.
+  * It doesn't pay any attention to the node's Message-payload.
+  */
+class ChildCountQueryFilter : public NumericQueryFilter<int32, B_INT32_TYPE, QUERY_FILTER_TYPE_CHILDCOUNT>
+{
+public:
+   /** Default constructor -- creates a query filter that matches only nodes with no child-nodes. */
+   ChildCountQueryFilter() {/* empty */}
+
+   /** Constructor.
+     * @param op a NumericQueryFilter::OP_* value indicating which logical operator to use when testing the number-of-children count.
+     * @param value the number of children to test against using (op)
+     */
+   ChildCountQueryFilter(uint8 op, uint32 value) : NumericQueryFilter<int32, B_INT32_TYPE, QUERY_FILTER_TYPE_CHILDCOUNT>(GetEmptyString(), op, value) {/* empty */}
+
+   virtual bool Matches(ConstMessageRef & /*msg*/, const DataNode * optNode) const;
+};
+DECLARE_REFTYPES(ChildCountQueryFilter);
+
+/** A semi-abstract base class for any QueryFilter that holds a list of references to "child" QueryFilters.
+  * Subclasses of this class typically compute the output of their Matches() method by calling Matches() on
+  * each of their child QueryFilters and then aggregating those values together in some way.
+  */
 class MultiQueryFilter : public QueryFilter
 {
 public:
    /** Default constructor. */
    MultiQueryFilter() {/* empty */}
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   MultiQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) {_children.AddTailMulti(childrenList);}
+#endif
 
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
@@ -411,55 +452,40 @@ public:
 private:
    Queue<ConstQueryFilterRef> _children;
 };
+DECLARE_REFTYPES(MultiQueryFilter);
 
-/** This class matches iff at least (n) of its children match.  As such, it can be used as an OR operator,
-  * an AND operator, or something in-between the two.
+/** This class matches iff more than (n) of its children match.  As such, it can be used as an OR operator,
+  * an AND operator, or as something in-between the two (e.g. "match iff at least N children match")
+  * @note For a slightly simpler interface to AND and OR operators, you can instantiate an AndQueryFilter or an OrQueryFilter instead.
   */
-class AndOrQueryFilter : public MultiQueryFilter
+class MinimumThresholdQueryFilter : public MultiQueryFilter
 {
 public:
    /** Default constructor.  Creates an AND filter with no children. 
-     * @param minMatches The minimum number of children that must match before this filter considers
-     *                   the match to be valid.  Default to MUSCLE_NO_LIMIT, meaning all children must match.
+     * @param minMatches The threshold value -- our Matches() method will return true iff more than this-many
+     *                   of our children's Matches() methods return true.  If this value is greater than the
+     *                   number of child QueryFilters in our list, then it will be treated as if it was equal
+     *                   to (numKids-1) (which means you can pass in MUSCLE_NO_LIMIT here to get traditional
+     *                   AND behavior regardless of how many child QueryFilters you add, or alternatively
+     *                   you can pass in 0 to get traditional OR behavior)
+     * @note For a slightly simpler interface to AND and OR operators, you can instantiate an AndQueryFilter or an OrQueryFilter instead.
      */
-   AndOrQueryFilter(uint32 minMatches = MUSCLE_NO_LIMIT) : _minMatches(minMatches) {/* empty */}
+   MinimumThresholdQueryFilter(uint32 minMatches) : _minMatches(minMatches) {/* empty */}
 
-   /** Convenience constructor.  Note that you usually want to manually add at least one more child as well.
-     * @param isAnd If true, the operation will be an 'and' operation.  Otherwise it will be an 'or' operation.
-     * @param child First argument to the operation
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param minMatches See the previous constructor's docs for description of this argument.
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
      */
-   AndOrQueryFilter(bool isAnd, const ConstQueryFilterRef & child) : _minMatches(isAnd ? MUSCLE_NO_LIMIT : 1)
+   MinimumThresholdQueryFilter(uint32 minMatches, const std::initializer_list<ConstQueryFilterRef> & childrenList) : MultiQueryFilter(childrenList), _minMatches(minMatches)
    {
-      GetChildren().AddTail(child);
+      // empty
    }
-
-   /** Convenience constructor for simple binary 'or' or 'and' operations.
-     * @param isAnd If true, the operation will be an 'and' operation.  Otherwise it will be an 'or' operation.
-     * @param child1 First argument to the operation
-     * @param child2 Second argument to the operation
-     */
-   AndOrQueryFilter(bool isAnd, const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : _minMatches(isAnd ? MUSCLE_NO_LIMIT : 1)
-   {
-      GetChildren().AddTail(child1);
-      GetChildren().AddTail(child2);
-   }
-
-   /** Convenience constructor for simple ternary 'or' or 'and' operations.
-     * @param isAnd If true, the operation will be an 'and' operation.  Otherwise it will be an 'or' operation.
-     * @param child1 First argument to the operation
-     * @param child2 Second argument to the operation
-     * @param child3 Third argument to the operation
-     */
-   AndOrQueryFilter(bool isAnd, const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : _minMatches(isAnd ? MUSCLE_NO_LIMIT : 1)
-   {
-      GetChildren().AddTail(child1);
-      GetChildren().AddTail(child2);
-      GetChildren().AddTail(child3);
-   }
+#endif
 
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
-   virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_ANDOR;}
+   virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_MINMATCH;}
    virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const;
 
    /** Set the minimum number of children that must match the target Message in order for this
@@ -476,52 +502,39 @@ public:
 private:
    uint32 _minMatches;
 };
+DECLARE_REFTYPES(MinimumThresholdQueryFilter);
 
-/** This class matches iff at most (n) of its children match.  As such, it can be used as a NAND operator,
-  * a NOT operator, or something in-between the two.
+/** This class matches iff no more than (n) of its children match.  As such, it can be used as a NOT operator,
+  * a NOR operator, a NAND operator, or something in-between.
+  * @note For a slightly simpler interface to the NOT, NOR, or NAND operators, you can instantiate a NandQueryFilter or a NorQueryFilter instead.
   */
-class NandNotQueryFilter : public MultiQueryFilter
+class MaximumThresholdQueryFilter : public MultiQueryFilter
 {
 public:
-   /** Default constructor.  Creates an NAND filter with no children. 
-     * @param maxMatches The maximum number of children that may match before this filter considers
-     *                   the match to be invalid.  Defaults to 0, meaning no children may match.
+   /** Constructor.
+     * @param maxMatches The threshold value -- our Matches() method will return true iff no more than this-many
+     *                   of our childrens' Matches() methods return true.  If this value is equal to or greater than
+     *                   the number of child QueryFilters in our list, then it will be treated as if it was equal
+     *                   to (numKids-1).  That means that you can pass in MUSCLE_NO_LIMIT to get NAND behavior,
+     *                   or 0 to get NOT/NOR behavior.
+     * @note For a slightly simpler interface to the NOT, NOR, or NAND operators, you can instantiate a NandQueryFilter or a NorQueryFilter instead.
      */
-   NandNotQueryFilter(uint32 maxMatches = 0) : _maxMatches(maxMatches) {/* empty */}
+   MaximumThresholdQueryFilter(uint32 maxMatches) : _maxMatches(maxMatches) {/* empty */}
 
-   /** Convenience constructor for simple unary 'not' operation.
-     * @param child Child whose logic we should negate.  This child is added to our child list, and the MaxMatchCount is set to zero. 
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param maxMatches See the previous constructor's docs for description of this argument.
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
      */
-   NandNotQueryFilter(const ConstQueryFilterRef & child) : _maxMatches(0)
+   MaximumThresholdQueryFilter(uint32 maxMatches, const std::initializer_list<ConstQueryFilterRef> & childrenList) : MultiQueryFilter(childrenList), _maxMatches(maxMatches)
    {
-      GetChildren().AddTail(child);
+      // empty
    }
-
-   /** Convenience constructor for simple binary 'nand' operation.  MaxMatchCount is set to one.
-     * @param child1 First argument to the operation
-     * @param child2 Second argument to the operation
-     */
-   NandNotQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : _maxMatches(1)
-   {
-      GetChildren().AddTail(child1);
-      GetChildren().AddTail(child2);
-   }
-
-   /** Convenience constructor for simple ternary 'nand' operation.  MaxMatchCount is set to one.
-     * @param child1 First argument to the operation
-     * @param child2 Second argument to the operation
-     * @param child3 Third argument to the operation
-     */
-   NandNotQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : _maxMatches(1)
-   {
-      GetChildren().AddTail(child1);
-      GetChildren().AddTail(child2);
-      GetChildren().AddTail(child3);
-   }
+#endif
 
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
-   virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_NANDNOT;}
+   virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_MAXMATCH;}
    virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const;
 
    /** Set the maximum number of children that may match the target Message in order for this
@@ -538,12 +551,289 @@ public:
 private:
    uint32 _maxMatches;
 };
+DECLARE_REFTYPES(MaximumThresholdQueryFilter);
+
+/** Convenience class for specifying QueryFilters that represent the logical AND of two or more child QueryFilters. */
+class AndQueryFilter : public MinimumThresholdQueryFilter
+{
+public:
+   /** Default constructor.  Creates an AND filter with no children.  The Matches() method of an AndQueryFilter with
+     * no children will always return true, so you'll probably want to call GetChildren().AddTail() or similar before using it.
+     */
+   AndQueryFilter() : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT) {/* empty */}
+
+   /** Convenience constructor to specify a unary AND operator.
+     * This really just makes us a pass-through/decorator object to the child QueryFilter.
+     * @param child The child QueryFilter
+     */
+   AndQueryFilter(const ConstQueryFilterRef & child) : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child);
+   }
+
+   /** Convenience constructor to specify a binary AND operator.
+     * That is, our Matches() method will only return true if both of our childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     */
+   AndQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+   }
+
+   /** Convenience constructor to specify a ternary AND operator.
+     * That is, our Matches() method will only return true if all three of our childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     */
+   AndQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+   }
+
+   /** Convenience constructor to specify a quaternary AND operator.
+     * That is, our Matches() method will only return true if all four of our childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     * @param child4 Fourth argument to the operation
+     */
+   AndQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3, const ConstQueryFilterRef & child4) : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+      (void) GetChildren().AddTail(child4);
+   }
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   AndQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) : MinimumThresholdQueryFilter(MUSCLE_NO_LIMIT, childrenList)
+   {
+      // empty
+   }
+#endif
+};
+DECLARE_REFTYPES(AndQueryFilter);
+
+/** Convenience class for specifying QueryFilters that represent the logical OR of two or more child QueryFilters. */
+class OrQueryFilter : public MinimumThresholdQueryFilter
+{
+public:
+   /** Default constructor.  Creates an OR filter with no children.  The Matches() method of an OrQueryFilter with
+     * no children will always return true, so you'll probably want to call GetChildren().AddTail() or similar before using it.
+     */
+   OrQueryFilter() : MinimumThresholdQueryFilter(0) {/* empty */}
+
+   /** Convenience constructor to specify a unary OR operator.
+     * This really just makes us a pass-through/decorator object to the child QueryFilter.
+     * @param child The child QueryFilter
+     */
+   OrQueryFilter(const ConstQueryFilterRef & child) : MinimumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child);
+   }
+
+   /** Convenience constructor to specify a binary OR operator.
+     * That is, our Matches() method will only return true if at least one of childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     */
+   OrQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : MinimumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+   }
+
+   /** Convenience constructor to specify a ternary OR operator.
+     * That is, our Matches() method will only return true if at least one of childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     */
+   OrQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : MinimumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+   }
+
+   /** Convenience constructor to specify a quaternary OR operator.
+     * That is, our Matches() method will only return true if at least one of childrens' Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     * @param child4 Fourth argument to the operation
+     */
+   OrQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3, const ConstQueryFilterRef & child4) : MinimumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+      (void) GetChildren().AddTail(child4);
+   }
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   OrQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) : MinimumThresholdQueryFilter(0, childrenList)
+   {
+      // empty
+   }
+#endif
+};
+DECLARE_REFTYPES(OrQueryFilter);
+
+/** Convenience class for specifying a QueryFilter that will match in every case EXCEPT when all of its children match */
+class NandQueryFilter : public MaximumThresholdQueryFilter
+{
+public:
+   /** Default constructor.  Creates an NAND filter with no children.  The Matches() method of an NandQueryFilter with
+     * no children will always return false, so you'll probably want to call GetChildren().AddTail() or similar before using it.
+     */
+   NandQueryFilter() : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT) {/* empty */}
+
+   /** Convenience constructor to specify a unary NOT operator.
+     * @param child QueryFilter whose Matches() method we will always return the opposite of
+     */
+   NandQueryFilter(const ConstQueryFilterRef & child) : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child);
+   }
+
+   /** Convenience constructor to specify a binary NAND operator.
+     * That is, our Matches() method will only return false unless both children's Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     */
+   NandQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+   }
+
+   /** Convenience constructor to specify a ternary NAND operator.
+     * That is, our Matches() method will only return false unless all three of our children's Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     */
+   NandQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+   }
+
+   /** Convenience constructor to specify a quaternary NAND operator.
+     * That is, our Matches() method will only return false unless all four of our children's Matches() methods return true.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     * @param child4 Fourth argument to the operation
+     */
+   NandQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3, const ConstQueryFilterRef & child4) : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+      (void) GetChildren().AddTail(child4);
+   }
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   NandQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) : MaximumThresholdQueryFilter(MUSCLE_NO_LIMIT, childrenList)
+   {
+      // empty
+   }
+#endif
+};
+DECLARE_REFTYPES(NandQueryFilter);
+
+/** Convenience class for specifying a QueryFilter that will match only if ALL of its children do NOT match */
+class NorQueryFilter : public MaximumThresholdQueryFilter
+{
+public:
+   /** Default constructor.  Creates an NOR filter with no children.  The Matches() method of an NorQueryFilter with
+     * no children will always return false, so you'll probably want to call GetChildren().AddTail() or similar before using it.
+     */
+   NorQueryFilter() : MaximumThresholdQueryFilter(0) {/* empty */}
+
+   /** Convenience constructor to specify a unary NOT operator.
+     * @param child QueryFilter whose Matches() method we will always return the opposite of
+     */
+   NorQueryFilter(const ConstQueryFilterRef & child) : MaximumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child);
+   }
+
+   /** Convenience constructor to specify a binary NOR operator.
+     * That is, our Matches() method will only return true iff both childrens' Matches() methods returned false.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     */
+   NorQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2) : MaximumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+   }
+
+   /** Convenience constructor to specify a ternary NOR operator.
+     * That is, our Matches() method will only return true iff all three of our childrens' Matches() methods returned false.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     */
+   NorQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3) : MaximumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+   }
+
+   /** Convenience constructor to specify a quaternary NOR operator.
+     * That is, our Matches() method will only return true iff all four of our childrens' Matches() methods returned false.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     * @param child4 Fourth argument to the operation
+     */
+   NorQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3, const ConstQueryFilterRef & child4) : MaximumThresholdQueryFilter(0)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+      (void) GetChildren().AddTail(child4);
+   }
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   NorQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) : MaximumThresholdQueryFilter(0, childrenList)
+   {
+      // empty
+   }
+#endif
+};
+DECLARE_REFTYPES(NorQueryFilter);
 
 /** This class matches only if an odd number of its children match. */
 class XorQueryFilter : public MultiQueryFilter
 {
 public:
-   /** Default constructor.  You'll want to add children to this object manually. */
+   /** Default constructor.  Creates an XOR filter with no children.  The Matches() method of an XorQueryFilter with
+     * no children will always return false, so you'll probably want to call GetChildren().AddTail() or similar before using it.
+     */
    XorQueryFilter() {/* empty */}
 
    /** Convenience constructor for simple binary 'xor' operation.
@@ -556,9 +846,46 @@ public:
       GetChildren().AddTail(child2);
    }
 
+   /** Convenience constructor to specify a ternary 'xor' operator.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     */
+   XorQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+   }
+
+   /** Convenience constructor to specify a quaternary 'xor' operator.
+     * @param child1 First argument to the operation
+     * @param child2 Second argument to the operation
+     * @param child3 Third argument to the operation
+     * @param child4 Fourth argument to the operation
+     */
+   XorQueryFilter(const ConstQueryFilterRef & child1, const ConstQueryFilterRef & child2, const ConstQueryFilterRef & child3, const ConstQueryFilterRef & child4)
+   {
+      (void) GetChildren().AddTail(child1);
+      (void) GetChildren().AddTail(child2);
+      (void) GetChildren().AddTail(child3);
+      (void) GetChildren().AddTail(child4);
+   }
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param childrenList the initializer-list of child QueryFilters to add to our set of children.
+     */
+   XorQueryFilter(const std::initializer_list<ConstQueryFilterRef> & childrenList) : MultiQueryFilter(childrenList)
+   {
+      // empty
+   }
+#endif
+
    virtual uint32 TypeCode() const {return QUERY_FILTER_TYPE_XOR;}
    virtual bool Matches(ConstMessageRef & msg, const DataNode * optNode) const;
 };
+DECLARE_REFTYPES(XorQueryFilter);
 
 /** This class matches iff the specified sub-Message exists in our target Message,
   * and (optionally) our child ConstQueryFilterRef can match that sub-Message.
@@ -592,6 +919,7 @@ public:
 private:
    ConstQueryFilterRef _childFilter;
 };
+DECLARE_REFTYPES(MessageQueryFilter);
 
 /** This class matches on string field values.  */
 class StringQueryFilter : public ValueQueryFilter
@@ -646,6 +974,7 @@ public:
    /** Returns the currently specified value, as specified in the constructor or in SetValue() */
    const String & GetValue() const {return _value;}
  
+   /** Enumeration of operators that may be used by the StringQueryFilter */
    enum {
       OP_EQUAL_TO = 0,                         /**< This token represents '==', e.g. nextValue==myValue (case sensitive) */
       OP_LESS_THAN,                            /**< This token represents '<',  e.g. nextValue<myValue  (case sensitive) */
@@ -684,7 +1013,7 @@ public:
      */
    void SetAssumedDefault(const String & d) {_default = d; _assumeDefault = true;}
 
-   /** Unsets the assumed default.  After calling this, our Match() method will simply always
+   /** Unsets the assumed default.  After calling this, our Matches() method will simply always
      * return false if the specified data item is not found in the Message.
      */
    void UnsetAssumedDefault() {_default.Clear(); _assumeDefault = false;}
@@ -701,6 +1030,7 @@ private:
 
    mutable StringMatcher * _matcher;
 };
+DECLARE_REFTYPES(StringQueryFilter);
 
 /** This class matches on raw data buffers.  */
 class RawDataQueryFilter : public ValueQueryFilter
@@ -716,7 +1046,7 @@ public:
      * @param typeCode Typecode to look for in the target Message.  Default is B_ANY_TYPE, indicating that any type code is acceptable.
      * @param index Optional index of the item within the field.  Defaults to zero.
      */
-   RawDataQueryFilter(const String & fieldName, uint8 op, const ByteBufferRef & value, uint32 typeCode = B_ANY_TYPE, uint32 index = 0) : ValueQueryFilter(fieldName, index), _value(value), _op(op), _typeCode(typeCode) {/* empty */}
+   RawDataQueryFilter(const String & fieldName, uint8 op, const ConstByteBufferRef & value, uint32 typeCode = B_ANY_TYPE, uint32 index = 0) : ValueQueryFilter(fieldName, index), _value(value), _op(op), _typeCode(typeCode) {/* empty */}
 
    /** Constructor.  This constructor is similar to the constructor shown above,
      * except that when this constructor is used, if the specified item does not exist in 
@@ -731,7 +1061,7 @@ public:
      * @param index Optional index of the item within the field.  Defaults to zero.
      * @param assumedValue The value to use if no actual value is found at the specified location in the Message we are filtering.
      */
-   RawDataQueryFilter(const String & fieldName, uint8 op, const ByteBufferRef & value, uint32 typeCode, uint32 index, const ByteBufferRef & assumedValue) : ValueQueryFilter(fieldName, index), _value(value), _op(op), _typeCode(typeCode), _default(assumedValue) {/* empty */}
+   RawDataQueryFilter(const String & fieldName, uint8 op, const ConstByteBufferRef & value, uint32 typeCode, uint32 index, const ConstByteBufferRef & assumedValue) : ValueQueryFilter(fieldName, index), _value(value), _op(op), _typeCode(typeCode), _default(assumedValue) {/* empty */}
 
    virtual status_t SaveToArchive(Message & archive) const;
    virtual status_t SetFromArchive(const Message & archive);
@@ -749,7 +1079,7 @@ public:
    /** Set the value to compare against.
      * @param value The new value.
      */
-   void SetValue(const ByteBufferRef & value) {_value = value;}
+   void SetValue(const ConstByteBufferRef & value) {_value = value;}
 
    /** Sets the type code that we will look for in the target Message.
      * @param typeCode the type code to look for.  Use B_ANY_TYPE to indicate that you don't care what the type code is.
@@ -762,8 +1092,9 @@ public:
    uint32 GetTypeCode() const {return _typeCode;}
 
    /** Returns the currently specified value, as specified in the constructor or in SetValue() */
-   ByteBufferRef GetValue() const {return _value;}
+   ConstByteBufferRef GetValue() const {return _value;}
  
+   /** Enumeration of operators that may be used by the RawDataQueryFilter */
    enum {
       OP_EQUAL_TO = 0,              /**< This token represents '==' */
       OP_LESS_THAN,                 /**< This token represents '<'  */
@@ -783,18 +1114,20 @@ public:
    /** Call this to specify an assumed default value that should be used when the
      * Message we are matching against doesn't have an actual value itself. 
      * Call this with a NULL reference if you don't want to use an assumed default value.
+     * @param bufRef the buffer to use as an assumed-default value
      */ 
-   void SetAssumedDefault(const ByteBufferRef & bufRef) {_default = bufRef;}
+   void SetAssumedDefault(const ConstByteBufferRef & bufRef) {_default = bufRef;}
 
    /** Returns the current assumed default value, or a NULL reference if there is none. */
-   const ByteBufferRef & GetAssumedDefault() const {return _default;}
+   const ConstByteBufferRef & GetAssumedDefault() const {return _default;}
 
 private:
-   ByteBufferRef _value;
+   ConstByteBufferRef _value;
    uint8 _op;
    uint32 _typeCode;
-   ByteBufferRef _default;
+   ConstByteBufferRef _default;
 };
+DECLARE_REFTYPES(RawDataQueryFilter);
 
 /** Interface for any object that knows how to instantiate QueryFilter objects */
 class QueryFilterFactory : public RefCountable
@@ -814,7 +1147,7 @@ public:
 
    /** Convenience method:  Attempts to create, populate, and return a QueryFilter object from 
      *                      the given Message, by first calling CreateQueryFilter(msg.what),
-     *                      and then calling SetFromArchive(msg) on the return QueryFilter object.
+     *                      and then calling SetFromArchive(msg) on the returned QueryFilter object.
      * @param msg A Message object that was previously filled out by the SaveToArchive() method
      *            of a QueryFilter object.
      * @returns Reference to the new QueryFilter object on success, or a NULL reference on failure.
@@ -836,11 +1169,12 @@ public:
 
    virtual QueryFilterRef CreateQueryFilter(uint32 typeCode) const;
 };
+DECLARE_REFTYPES(MuscleQueryFilterFactory);
 
 /** Returns a reference to the globally installed QueryFilterFactory object
   * that is used to create QueryFilter objects.  This method is guaranteed
   * never to return a NULL reference -- even if you call 
-  * SetglobalQueryFilterFactory(QueryFilterFactoryRef()), this method
+  * SetGlobalQueryFilterFactory(QueryFilterFactoryRef()), this method
   * will fall back to returning a reference to a MuscleQueryFilterFactory
   * object (which is also what it does by default).
   */
@@ -853,6 +1187,6 @@ QueryFilterFactoryRef GetGlobalQueryFilterFactory();
   */
 void SetGlobalQueryFilterFactory(const QueryFilterFactoryRef & newFactory);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

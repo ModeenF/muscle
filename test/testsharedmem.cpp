@@ -1,7 +1,5 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
-#include <stdio.h>
-
 #include "system/SharedMemory.h"
 #include "util/NetworkUtilityFunctions.h"
 
@@ -18,14 +16,16 @@ int main(int argc, char ** argv)
    uint8 base = 0;
    LogTime(MUSCLE_LOG_INFO, deleteArea ? "Deleting shared memory area!\n" : "Beginning shared memory test!\n");
 
+   status_t ret;
+
    SharedMemory m;
-   if (m.SetArea(TEST_KEY, TEST_AREA_SIZE, true) == B_NO_ERROR)
+   if (m.SetArea(TEST_KEY, TEST_AREA_SIZE, true).IsOK(ret))
    {
-      if (deleteArea) LogTime(MUSCLE_LOG_INFO, "Deletion of area %s %s\n", m.GetAreaName()(), (m.DeleteArea() == B_NO_ERROR) ? "succeeded" : "failed");
+      if (deleteArea) LogTime(MUSCLE_LOG_INFO, "Deletion of area:  %s %s\n", m.GetAreaName()(), m.DeleteArea()());
       else
       {
          uint8 * a = m.GetAreaPointer();
-         uint32 s = m.GetAreaSize();
+         const uint32 s = m.GetAreaSize();
 
          if (m.IsCreatedLocally()) 
          {
@@ -34,7 +34,7 @@ int main(int argc, char ** argv)
          }
          else LogTime(MUSCLE_LOG_INFO, "Found existing shared memory area %s\n", m.GetAreaName()());
 
-         LogTime(MUSCLE_LOG_INFO, "Area is " UINT32_FORMAT_SPEC" bytes long, starting at address %p\n", s, a);
+         LogTime(MUSCLE_LOG_INFO, "Area is " UINT32_FORMAT_SPEC " bytes long, starting at address %p\n", s, a);
 
          m.UnlockArea();
 
@@ -44,15 +44,15 @@ int main(int argc, char ** argv)
             if (OnceEvery(MICROS_PER_SECOND, lastTime)) LogTime(MUSCLE_LOG_INFO, "Still going... base=%u\n", base);
 
             // Test out the read/write exclusive lock
-            if (m.LockAreaReadWrite() == B_NO_ERROR)
+            if (m.LockAreaReadWrite().IsOK(ret))
             {
-               uint32 s = m.GetAreaSize();
-               if (s > 0)
+               const uint32 sas = m.GetAreaSize();
+               if (sas > 0)
                {
-                  uint8 * a = m.GetAreaPointer();
-                  {for (uint32 i=1; i<s; i++) if (a[i-1] != a[i]) LogTime(MUSCLE_LOG_ERROR, "A. ERROR@" UINT32_FORMAT_SPEC"\n",i);}
-                  {for (uint32 i=0; i<s; i++) a[i] = base;}
-                  {for (uint32 i=0; i<s; i++) if (a[i] != base) LogTime(MUSCLE_LOG_ERROR, "B. ERROR@" UINT32_FORMAT_SPEC"\n",i);}
+                  uint8 * ap = m.GetAreaPointer();
+                  {for (uint32 i=1; i<sas; i++) if (ap[i-1] != ap[i]) LogTime(MUSCLE_LOG_ERROR, "A. ERROR@" UINT32_FORMAT_SPEC "\n",i);}
+                  {for (uint32 i=0; i<sas; i++) ap[i] = base;}
+                  {for (uint32 i=0; i<sas; i++) if (ap[i] != base) LogTime(MUSCLE_LOG_ERROR, "B. ERROR@" UINT32_FORMAT_SPEC "\n",i);}
                }
                else LogTime(MUSCLE_LOG_ERROR, "Area size is zero!?\n");
 
@@ -60,18 +60,18 @@ int main(int argc, char ** argv)
             }
             else 
             {
-               LogTime(MUSCLE_LOG_ERROR, "Exclusive Lock failed!  Maybe the area was deleted!\n");
+               LogTime(MUSCLE_LOG_ERROR, "Exclusive Lock failed!  (Maybe the area was deleted?)  [%s]\n", ret());
                break;
             }
 
             // Also test out the read-only lock
-            if (m.LockAreaReadOnly() == B_NO_ERROR)
+            if (m.LockAreaReadOnly().IsOK(ret))
             {
-               uint32 s = m.GetAreaSize();
+               const uint32 sas = m.GetAreaSize();
                if (s > 0)
                {
-                  const uint8 * a = m.GetAreaPointer();
-                  {for (uint32 i=1; i<s; i++) if (a[i-1] != a[i]) LogTime(MUSCLE_LOG_ERROR, "C. ERROR@" UINT32_FORMAT_SPEC"\n",i);}
+                  const uint8 * ap = m.GetAreaPointer();
+                  {for (uint32 i=1; i<sas; i++) if (ap[i-1] != ap[i]) LogTime(MUSCLE_LOG_ERROR, "C. ERROR@" UINT32_FORMAT_SPEC "\n",i);}
                }
                else LogTime(MUSCLE_LOG_ERROR, "Area size is zero!?\n");
 
@@ -79,7 +79,7 @@ int main(int argc, char ** argv)
             }
             else 
             {
-               LogTime(MUSCLE_LOG_ERROR, "Read-Only Lock failed!  Maybe the area was deleted!\n");
+               LogTime(MUSCLE_LOG_ERROR, "Read-Only Lock failed!  (Maybe the area was deleted?)  [%s]\n", ret());
                break;
             }
 
@@ -87,7 +87,7 @@ int main(int argc, char ** argv)
          }
       }
    }
-   else LogTime(MUSCLE_LOG_ERROR, "SetArea() failed, exiting!\n");
+   else LogTime(MUSCLE_LOG_ERROR, "SetArea() failed, exiting! [%s]\n", ret());
 
    return 0;
 }

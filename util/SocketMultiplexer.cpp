@@ -17,7 +17,7 @@ static Mutex _multiplexersListMutex;
 static SocketMultiplexer * _headMultiplexer = NULL;
 void NotifySocketMultiplexersThatSocketIsClosed(int fd)
 {
-   if (_multiplexersListMutex.Lock() == B_NO_ERROR)
+   if (_multiplexersListMutex.Lock().IsOK())
    {
       SocketMultiplexer * sm = _headMultiplexer;
       while(sm)
@@ -58,7 +58,7 @@ SocketMultiplexer :: ~SocketMultiplexer()
 
 int SocketMultiplexer :: WaitForEvents(uint64 optTimeoutAtTime)
 {
-   int ret = GetCurrentFDState().WaitForEvents(optTimeoutAtTime);
+   const int ret = GetCurrentFDState().WaitForEvents(optTimeoutAtTime);
 #if !defined(MUSCLE_USE_KQUEUE) && !defined(MUSCLE_USE_EPOLL)
    _curFDState = _curFDState?0:1;
 #endif
@@ -73,7 +73,7 @@ int SocketMultiplexer :: FDState :: WaitForEvents(uint64 optTimeoutAtTime)
    if (optTimeoutAtTime == MUSCLE_TIME_NEVER) waitTimeMicros = MUSCLE_TIME_NEVER;
    else
    {
-      uint64 now = GetRunTime64();
+      const uint64 now = GetRunTime64();
       waitTimeMicros = (optTimeoutAtTime>now) ? (optTimeoutAtTime-now) : 0;
    }
 
@@ -100,7 +100,7 @@ int SocketMultiplexer :: FDState :: WaitForEvents(uint64 optTimeoutAtTime)
 #endif
    {
 #if defined(MUSCLE_USE_KQUEUE)
-      if (ComputeStateBitsChangeRequests() != B_NO_ERROR) return B_ERROR;
+      MRETURN_ON_ERROR(ComputeStateBitsChangeRequests());
 
       struct timespec waitTime;
       struct timespec * pWaitTime;
@@ -140,7 +140,7 @@ int SocketMultiplexer :: FDState :: WaitForEvents(uint64 optTimeoutAtTime)
          }
       }
 #elif defined(MUSCLE_USE_EPOLL)
-      if (ComputeStateBitsChangeRequests() != B_NO_ERROR) return B_ERROR;
+      MRETURN_ON_ERROR(ComputeStateBitsChangeRequests());
 
       int ret = epoll_wait(_kernelFD, _scratchEvents.HeadPointer(), _scratchEvents.GetNumItems(), (waitTimeMicros==MUSCLE_TIME_NEVER)?-1:(int)(muscleMin(MicrosToMillis(waitTimeMicros), (int64)INT_MAX)));
       if (ret >= 0)
@@ -159,7 +159,7 @@ int SocketMultiplexer :: FDState :: WaitForEvents(uint64 optTimeoutAtTime)
          }
       }
 #elif defined(MUSCLE_USE_POLL)
-      int timeoutMillis = (waitTimeMicros == MUSCLE_TIME_NEVER) ? -1 : ((int) muscleMin(MicrosToMillis(waitTimeMicros), (int64)(INT_MAX)));
+      const int timeoutMillis = (waitTimeMicros == MUSCLE_TIME_NEVER) ? -1 : ((int) muscleMin(MicrosToMillis(waitTimeMicros), (int64)(INT_MAX)));
 # ifdef WIN32
       int ret = WSAPoll(_pollFDArray.GetItemAt(0), _pollFDArray.GetNumItems(), timeoutMillis);
 # else
@@ -174,7 +174,7 @@ int SocketMultiplexer :: FDState :: WaitForEvents(uint64 optTimeoutAtTime)
          Convert64ToTimeVal(waitTimeMicros, waitTime);
          pWaitTime = &waitTime;
       }
-      int ret = select(maxFD+1, sets[0], sets[1], sets[2], pWaitTime);
+      int ret = select(maxFD+1, sets[FDSTATE_SET_READ], sets[FDSTATE_SET_WRITE], sets[FDSTATE_SET_EXCEPT], pWaitTime);
 #endif
       if ((ret < 0)&&(PreviousOperationWasInterrupted())) ret = 0;  // on interruption we'll just go round gain
       return ret;
@@ -213,10 +213,10 @@ status_t SocketMultiplexer :: FDState :: PollRegisterNewSocket(int fd, uint32 wh
       p->fd      = fd;
       p->events  = GetPollBitsForFDSet(whichSet, true);
       p->revents = 0;
-      if (_pollFDToArrayIndex.Put(fd, _pollFDArray.GetNumItems()-1) == B_NO_ERROR) return B_NO_ERROR;
-                                                                              else _pollFDArray.RemoveTail();  // roll back!
+      if (_pollFDToArrayIndex.Put(fd, _pollFDArray.GetNumItems()-1).IsOK()) return B_NO_ERROR;
+                                                                       else _pollFDArray.RemoveTail();  // roll back!
    }
-   return B_ERROR;
+   return B_OUT_OF_MEMORY;
 }
 #endif
 
@@ -249,11 +249,11 @@ status_t SocketMultiplexer :: FDState :: AddKQueueChangeRequest(int fd, uint32 w
       case FDSTATE_SET_READ:   filter = EVFILT_READ;  break;
       case FDSTATE_SET_WRITE:  filter = EVFILT_WRITE; break;
       case FDSTATE_SET_EXCEPT: return B_NO_ERROR;  // not sure how kqueue handles exception-sets:  nerf them for now, since MUSCLE only uses them under Windows anyway
-      default:                 return B_ERROR;     // bad set type!?
+      default:                 return B_BAD_ARGUMENT; // bad set type!?
    }
 
    struct kevent * kevt = _scratchChanges.AddTailAndGet();
-   if (kevt == NULL) return B_ERROR;  // wtf?
+   if (kevt == NULL) return B_OUT_OF_MEMORY;
 
    EV_SET(kevt, fd, filter, add?EV_ADD:EV_DELETE, 0, 0, NULL);
    return B_NO_ERROR;
@@ -294,6 +294,7 @@ status_t SocketMultiplexer :: FDState :: ComputeStateBitsChangeRequests()
    }
 
    // Generate change requests to the kernel, based on how the userBits differ from the kernelBits
+   status_t ret;
    for (HashtableIterator<int, uint16> iter(_bits); iter.HasData(); iter++)
    {
       uint16 & bits  = iter.GetValue();
@@ -307,7 +308,7 @@ status_t SocketMultiplexer :: FDState :: ComputeStateBitsChangeRequests()
          {
             const bool hasBit = ((userBits&(1<<i)) != 0);
             const bool hadBit = ((kernBits&(1<<i)) != 0);
-            if ((hasBit != hadBit)&&(AddKQueueChangeRequest(iter.GetKey(), i, hasBit) != B_NO_ERROR)) return B_ERROR;
+            if (hasBit != hadBit) MRETURN_ON_ERROR(AddKQueueChangeRequest(iter.GetKey(), i, hasBit));
          }
 #else
          struct epoll_event evt; memset(&evt, 0, sizeof(evt));  // paranoia
@@ -316,7 +317,7 @@ status_t SocketMultiplexer :: FDState :: ComputeStateBitsChangeRequests()
          if (userBits & (1<<FDSTATE_SET_WRITE))  evt.events |= EPOLLOUT;
          if (userBits & (1<<FDSTATE_SET_EXCEPT)) evt.events |= EPOLLERR;
          int op = ((userBits==0)&&(kernBits != 0)) ? EPOLL_CTL_DEL : (((userBits!=0)&&(kernBits==0)) ? EPOLL_CTL_ADD : EPOLL_CTL_MOD);
-         if ((epoll_ctl(_kernelFD, op, iter.GetKey(), &evt) != 0)&&(op != EPOLL_CTL_DEL)) return B_ERROR;  // DEL may fail if fd was already closed, that's okay
+         if ((epoll_ctl(_kernelFD, op, iter.GetKey(), &evt) != 0)&&(op != EPOLL_CTL_DEL)) return B_ERRNO;  // DEL may fail if fd was already closed, that's okay
 #endif
       }
 
@@ -330,4 +331,4 @@ status_t SocketMultiplexer :: FDState :: ComputeStateBitsChangeRequests()
 
 #endif
 
-}; // end namespace muscle
+} // end namespace muscle

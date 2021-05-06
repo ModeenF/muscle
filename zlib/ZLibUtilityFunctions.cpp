@@ -2,6 +2,7 @@
 
 #ifdef MUSCLE_ENABLE_ZLIB_ENCODING
 
+#include "dataio/DataIO.h"
 #include "message/Message.h"
 #include "system/SetupSystem.h"
 #include "zlib/ZLibCodec.h"
@@ -29,7 +30,7 @@ static ThreadLocalStorage<ZLibCodec> _codecs[10];  // using ThreadLocalStorage =
 #ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
 static void FreeZLibCodecs()
 {
-   if (_zlibLock.Lock() == B_NO_ERROR)  // probably isn't necessary since this only gets called during shutdown... but just in case
+   if (_zlibLock.Lock().IsOK())  // probably isn't necessary since this only gets called during shutdown... but just in case
    {
       for (uint32 i=0; i<ARRAYITEMS(_codecs); i++) 
       { 
@@ -45,7 +46,7 @@ static void EnsureCleanupCallbackInstalled()
    if (_cleanupCallbackInstalled == false)  // check once without locking, to avoid locking every time
    {
       const Mutex * m = GetGlobalMuscleLock();
-      if ((m)&&(m->Lock() == B_NO_ERROR))
+      if ((m)&&(m->Lock().IsOK()))
       {
          if (_cleanupCallbackInstalled == false)  // in case we got scooped before could aquire the lock
          {
@@ -53,7 +54,7 @@ static void EnsureCleanupCallbackInstalled()
             if (css)
             {
                static FunctionCallback _freeCodecsCallback(FreeZLibCodecs);
-               if (css->GetCleanupCallbacks().AddTail(GenericCallbackRef(&_freeCodecsCallback, false)) == B_NO_ERROR) _cleanupCallbackInstalled = true;
+               if (css->GetCleanupCallbacks().AddTail(GenericCallbackRef(&_freeCodecsCallback, false)).IsOK()) _cleanupCallbackInstalled = true;
             }
          }
          m->Unlock();
@@ -69,7 +70,7 @@ static ZLibCodec * GetZLibCodec(int level)
    if (_codecs[level] == NULL) 
    {
       _codecs[level] = newnothrow ZLibCodec(level);  // demand-allocate
-      if (_codecs[level] == NULL) WARN_OUT_OF_MEMORY;
+      if (_codecs[level] == NULL) MWARN_OUT_OF_MEMORY;
    }
    return _codecs[level];
 #else
@@ -86,7 +87,7 @@ ByteBufferRef DeflateByteBuffer(const uint8 * buf, uint32 numBytes, int compress
 {
    ByteBufferRef ret;
 #ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
-   if (_zlibLock.Lock() == B_NO_ERROR)  // serialize so that it's thread safe!
+   if (_zlibLock.Lock().IsOK())  // serialize so that it's thread safe!
    {
       ZLibCodec * codec = GetZLibCodec(compressionLevel);
       if (codec) ret = codec->Deflate(buf, numBytes, true, addHeaderBytes, addFooterBytes);
@@ -104,7 +105,7 @@ ByteBufferRef InflateByteBuffer(const uint8 * buf, uint32 numBytes)
 {
    ByteBufferRef ret;
 #ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
-   if (_zlibLock.Lock() == B_NO_ERROR)  // serialize so that it's thread safe!
+   if (_zlibLock.Lock().IsOK())  // serialize so that it's thread safe!
    {
       ZLibCodec * codec = GetZLibCodec(6);  // doesn't matter which compression-level/codec we use, any of them can inflate anything
       if (codec) ret = codec->Inflate(buf, numBytes);
@@ -130,7 +131,7 @@ MessageRef DeflateMessage(const MessageRef & msgRef, int compressionLevel, bool 
       if ((defMsg())&&(buf()))
       {
          buf = DeflateByteBuffer(*buf(), compressionLevel);
-         if ((buf())&&(defMsg()->AddFlat(MUSCLE_ZLIB_FIELD_NAME_STRING, FlatCountableRef(buf.GetRefCountableRef(), false)) == B_NO_ERROR)&&((force)||(defMsg()->FlattenedSize() < msgRef()->FlattenedSize()))) ret = defMsg;
+         if ((buf())&&(defMsg()->AddFlat(MUSCLE_ZLIB_FIELD_NAME_STRING, buf).IsOK())&&((force)||(defMsg()->FlattenedSize() < msgRef()->FlattenedSize()))) ret = defMsg;
       }
    }
    return ret;
@@ -142,13 +143,13 @@ MessageRef InflateMessage(const MessageRef & msgRef)
 
    MessageRef ret;
    ByteBufferRef bufRef;
-   if ((msgRef())&&(msgRef()->FindFlat(MUSCLE_ZLIB_FIELD_NAME_STRING, bufRef) == B_NO_ERROR))
+   if ((msgRef())&&(msgRef()->FindFlat(MUSCLE_ZLIB_FIELD_NAME_STRING, bufRef).IsOK()))
    {
       MessageRef infMsg = GetMessageFromPool();
       if (infMsg())
       {
          bufRef = InflateByteBuffer(*bufRef());
-         if ((bufRef())&&(infMsg()->UnflattenFromByteBuffer(bufRef) == B_NO_ERROR)) 
+         if ((bufRef())&&(infMsg()->UnflattenFromByteBuffer(bufRef).IsOK())) 
          {
             infMsg()->what = msgRef()->what;  // do this after UnflattenFromByteBuffer(), so that the outer 'what' is the one that gets used
             ret = infMsg;
@@ -160,6 +161,28 @@ MessageRef InflateMessage(const MessageRef & msgRef)
    return ret;
 }
 
-}; // end namespace muscle
+status_t ReadAndDeflateAndWrite(DataIO & sourceRawIO, DataIO & destDeflatedIO, bool independent, uint32 numBytesToRead, int compressionLevel)
+{
+#ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
+   ZLibCodec codec(compressionLevel);   // no sense dealing with global locks on shared codecs, since this operation is likely to be slow anyway
+   return codec.ReadAndDeflateAndWrite(sourceRawIO, destDeflatedIO, independent, numBytesToRead);
+#else
+   ZLibCodec * codec = GetZLibCodec(compressionLevel);
+   return codec ? codec->ReadAndDeflateAndWrite(sourceRawIO, destDeflatedIO, independent, numBytesToRead) : B_BAD_ARGUMENT;
+#endif
+}
+
+status_t ReadAndInflateAndWrite(DataIO & sourceDeflatedIO, DataIO & destInflatedIO)
+{
+#ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
+   ZLibCodec codec;   // no sense dealing with global locks on shared codecs, since this operation is likely to be slow anyway
+   return codec.ReadAndInflateAndWrite(sourceDeflatedIO, destInflatedIO);
+#else
+   ZLibCodec * codec = GetZLibCodec(6);  // doesn't matter which one we use, any of them can inflate anything
+   return codec ? codec->ReadAndInflateAndWrite(sourceDeflatedIO, destInflatedIO) : B_BAD_ARGUMENT;
+#endif
+}
+
+} // end namespace muscle
 
 #endif

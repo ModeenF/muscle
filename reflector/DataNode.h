@@ -11,15 +11,18 @@
 namespace muscle {
 
 class StorageReflectSession;
-class DataNode;
 
+class DataNode;
 DECLARE_REFTYPES(DataNode);
+
+class DataNodeSubscribersTable;
 
 /** Iterator type for our child objects */
 typedef HashtableIterator<const String *, DataNodeRef> DataNodeRefIterator;
+DECLARE_REFTYPES(DataNodeSubscribersTable);
 
 /** Each object of this class represents one node in the server-side data-storage tree.  */
-class DataNode MUSCLE_FINAL_CLASS : public RefCountable, private CountedObject<DataNode>, private NotCopyable
+class DataNode MUSCLE_FINAL_CLASS : public RefCountable, private NotCopyable
 {
 public:
    /** Default Constructor.  Don't create DataNode objects yourself though, call StorageReflectSession::GetNewDataNode() instead!  */
@@ -33,7 +36,7 @@ public:
     * @param child Reference to the child to accept into our list of children
     * @param optNotifyWithOnSetParent If non-NULL, a StorageReflectSession to use to notify subscribers that the new node has been added
     * @param optNotifyWithOnChangedData If non-NULL, a StorageReflectSession to use to notify subscribers when the node's data has been alterered
-    * @return B_NO_ERROR on success, B_ERROR if out of memory
+    * @return B_NO_ERROR on success, B_OUT_OF_MEMORY if out of memory
     */
    status_t PutChild(const DataNodeRef & child, StorageReflectSession * optNotifyWithOnSetParent, StorageReflectSession * optNotifyWithOnChangedData);
 
@@ -45,7 +48,7 @@ public:
     * @param optNotifyWithOnSetParent If non-NULL, a StorageReflectSession to use to notify subscribers that the new node has been added
     * @param optNotifyWithOnChangedData If non-NULL, a StorageReflectSession to use to notify subscribers when the node's data has been alterered
     * @param optAddNewChildren If non-NULL, any newly formed nodes will be added to this hashtable, keyed on their absolute node path.
-    * @return B_NO_ERROR on success, B_ERROR if out of memory
+    * @return B_NO_ERROR on success, B_OUT_OF_MEMORY if out of memory
     */
    status_t InsertOrderedChild(const MessageRef & data, const String * optInsertBefore, const String * optNodeName, StorageReflectSession * optNotifyWithOnSetParent, StorageReflectSession * optNotifyWithOnChangedData, Hashtable<String, DataNodeRef> * optAddNewChildren);
  
@@ -58,19 +61,21 @@ public:
     *                         not found in our index, we'll move (child) to the end of the index.
     * @param optNotifyWith If non-NULL, this will be used to sent INDEXUPDATE message to the
     *                      interested clients, notifying them of the change.
-    * @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    * @return B_NO_ERROR on success, B_OUT_OF_MEMORY on failure (out of memory)
     */
    status_t ReorderChild(const DataNodeRef & child, const String * moveToBeforeThis, StorageReflectSession * optNotifyWith);
 
-   /** Returns true iff we have a child with the given name */
+   /** Returns true iff we have a child with the given name
+     * @param key node-name that we should check our child-nodes-table for (it's an O(1) lookup)
+     */
    bool HasChild(const String & key) const {return ((_children)&&(_children->ContainsKey(&key)));}
 
    /** Retrieves the child with the given name.
     *  @param key The name of the child we wish to retrieve
     *  @param returnChild On success, a reference to the retrieved child is written into this object.
-    *  @return B_NO_ERROR if a child node was successfully retrieved, or B_ERROR if it was not found.
+    *  @return B_NO_ERROR if a child node was successfully retrieved, or B_DATA_NOT_FOUND if it was not found.
     */
-   status_t GetChild(const String & key, DataNodeRef & returnChild) const {return ((_children)&&(_children->Get(&key, returnChild) == B_NO_ERROR)) ? B_NO_ERROR : B_ERROR;}
+   status_t GetChild(const String & key, DataNodeRef & returnChild) const {return ((_children)&&(_children->Get(&key, returnChild).IsOK())) ? B_NO_ERROR : B_DATA_NOT_FOUND;}
 
    /** As above, except the reference to the child is returned as the return value rather than in a parameter.
     *  @param key The name of the child we wish to retrieve
@@ -90,7 +95,7 @@ public:
     *  @param optNotifyWith If non-NULL, the StorageReflectSession that should be used to notify subscribers that the given node has been removed
     *  @param recurse if true, the removed child's children will be removed from it, and so on, and so on...
     *  @param optCounter if non-NULL, this value will be incremented whenever a child is removed (recursively)
-    *  @return B_NO_ERROR if the given child is found and removed, or B_ERROR if it could not be found.
+    *  @return B_NO_ERROR if the given child was found and removed, or B_DATA_NOT_FOUND if it could not be found.
     */
    status_t RemoveChild(const String & key, StorageReflectSession * optNotifyWith, bool recurse, uint32 * optCounter);
 
@@ -114,7 +119,7 @@ public:
      *                   Values greater than zero will return a partial path (e.g. a startDepth of 1 in the
      *                   above example would return "12.18.240.15/1234/beshare/files/joe", and a startDepth
      *                   of 2 would return "1234/beshare/files/joe")
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+     * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    status_t GetNodePath(String & retPath, uint32 startDepth = 0) const;
 
@@ -134,13 +139,20 @@ public:
      */
    const String * GetPathClause(uint32 depth) const;
 
+   /// Flags that may be passed to DataNode::SetData() to modify its behavior
+   enum {
+      SET_DATA_FLAG_ISBEINGCREATED = 0, ///< if set, the specified DataNode is being created as part of this call
+      SET_DATA_FLAG_ENABLESUPERCEDE,    ///< if set, the user has specified that this node-update should implicitly cancel any currently-queued earlier updates regarding this node
+      NUM_SET_DATA_FLAGS                ///< Guard value
+   };
+   DECLARE_BITCHORD_FLAGS_TYPE(SetDataFlags, NUM_SET_DATA_FLAGS);
+
    /** Replaces this node's payload message with that of (data).
     *  @param data the new Message to associate with this node.
     *  @param optNotifyWith if non-NULL, this StorageReflectSession will be used to notify subscribers that this node's data has changed.
-    *  @param isBeingCreated Should be set true only if this is the first time SetData() was called on this node after its creation.
-    *                        Which is to say, this should almost always be false.
+    *  @param setDataFlags Flags to influence the behavior of this call.  Defaults to no-flags-set.
     */
-   void SetData(const MessageRef & data, StorageReflectSession * optNotifyWith, bool isBeingCreated);
+   void SetData(const MessageRef & data, StorageReflectSession * optNotifyWith, SetDataFlags setDataFlags = SetDataFlags());
 
    /** Returns a reference to this node's Message payload. */
    const MessageRef & GetData() const {return _data;}
@@ -154,16 +166,8 @@ public:
    /** Returns us to our virgin, pre-Init() state, by clearing all our children, subscribers, parent, etc.  */
    void Reset();  
 
-   /**
-    * Modifies the refcount for the given sessionID.
-    * Any sessionID's with (refCount > 0) will be in the GetSubscribers() list.
-    * @param sessionID the sessionID whose reference count is to be modified
-    * @param delta the amount to add to the reference count.
-    */
-   void IncrementSubscriptionRefCount(const String & sessionID, long delta);
-
-   /** Returns an iterator that can be used to iterate over our list of active subscribers */
-   HashtableIterator<const String *, uint32> GetSubscribers() const {return _subscribers ? _subscribers->GetIterator() : HashtableIterator<const String *, uint32>();}
+   /** Returns a read-only reference to this DataNode's current subscribers-table. */
+   inline const Hashtable<String, uint32> & GetSubscribers() const;
 
    /** Returns a pointer to our ordered-child index */
    const Queue<DataNodeRef> * GetIndex() const {return _orderedIndex;}
@@ -174,7 +178,7 @@ public:
     *  @param optNotifyWith Session to use to inform everybody that the index has been changed.
     *  @param key Name of an existing child of this node that should be associated with the given entry.
     *             This child must not already be in the ordered-entry index!
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (bad index or unknown child).
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT if (insertIndex) was invalid, or B_OUT_OF_MEMORY.
     */
    status_t InsertIndexEntryAt(uint32 insertIndex, StorageReflectSession * optNotifyWith, const String & key);
 
@@ -182,19 +186,21 @@ public:
     *  Don't call this function unless you really know what you are doing!
     *  @param removeIndex Offset into the array to remove
     *  @param optNotifyWith Session to use to inform everybody that the index has been changed.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure.
+    *  @return B_NO_ERROR on success, or B_DATA_NOT_FOUND there was no index-entry at position (removeIndex).
     */
    status_t RemoveIndexEntryAt(uint32 removeIndex, StorageReflectSession * optNotifyWith);
 
    /** Returns the largest ID value that this node has seen in one of its children, since the
      * time it was created or last cleared.  Note that child nodes' names are assumed to include
-     * their ID value in ASCII format, possible with a preceding letter "I" (for indexed nodes).
+     * their ID value in ASCII format, possibly with a preceding letter "I" (for indexed nodes).
      * Child nodes whose names aren't in this format will be counted having ID zero.
      * This value can be useful as a hint for generating new IDs.
      */
    uint32 GetMaxKnownChildIDHint() const {return _maxChildIDHint;}
 
-   /** You can manually set the max-known-child-ID hint here if you want to. */
+   /** You can manually set the max-known-child-ID hint here if you want to.
+     * @param maxID maximum-current-used-child-ID hint, gives us some clue about where to start searching for an unused ID
+     */
    void SetMaxKnownChildIDHint(uint32 maxID) {_maxChildIDHint = maxID;}
 
    /** Convenience method:  Returns true iff (ancestor) exists
@@ -282,10 +288,12 @@ private:
    friend class ObjectPool<DataNode>;
    DataNodeRef GetDescendantAux(const char * subPath) const;
 
-   /** Assignment operator.  Note that this operator is only here to assist with ObjectPool recycling operations, and doesn't actually
-     * make this DataNode into a copy of (rhs)... that's why we have it marked private, so that it won't be accidentally used in the traditional manner.
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &)
+     * @note this operator is only here to assist with ObjectPool recycling operations, and doesn't actually
+     * make this DataNode into a copy of (rhs)... that's why we have it marked private, so that it won't be 
+     * accidentally used in the traditional manner.
      */
-   DataNode & operator = (const DataNode & /*rhs*/) {Reset(); return *this;}
+   DataNode & operator = (const DataNode & rhs) {(void) rhs; Reset(); return *this;}
 
    void Init(const String & nodeName, const MessageRef & initialValue);
    void SetParent(DataNode * _parent, StorageReflectSession * optNotifyWith);
@@ -301,9 +309,63 @@ private:
    uint32 _depth;  // number of ancestors our node has (e.g. root's _depth is zero)
    uint32 _maxChildIDHint;  // keep track of the largest child ID, for easier allocation of non-conflicting future child IDs
 
-   Hashtable<const String *, uint32> * _subscribers;  // lazy-allocated
+   DataNodeSubscribersTableRef _subscribers;  // NULL ref means no subscribers
+
+   DECLARE_COUNTED_OBJECT(DataNode);
 };
 
-}; // end namespace muscle
+#ifndef DOXYGEN_SHOULD_IGNORE_THIS
+/** This class is an internal implementation detail; please ignore it. */
+class DataNodeSubscribersTable MUSCLE_FINAL_CLASS : public RefCountable
+{
+public:
+    /** Default constructor.  Creates an empty table. */
+    DataNodeSubscribersTable() : _hashCode(0) {/* empty */}
+
+    /** Relative constructor.  Creates a table that is the same as (copyMe), except with (delta) added to the specified key.
+      * @param optCopyMe if non-NULL, the table whose state we should copy before making our specified modification.  If NULL, we'll start with an empty table.
+      * @param sessionIDString the key to modify relative to (copyMe)
+      * @param delta the number of reference-count points to add to (sessionIDString).  If the pos-add value is 0, the key will be removed from the new table.
+      */
+    DataNodeSubscribersTable(const DataNodeSubscribersTable * optCopyMe, const String & sessionIDString, int32 delta);
+
+    /** Returns our pre-computed hash-code for a table with this state */ 
+    uint32 HashCode() const {return _hashCode;}
+    
+    /** Efficiently computes what the hash-code would be of a table with (the specified modification) done to it relative to our own state.
+      * @param sessionIDString the key to modify relative to (copyMe)
+      * @param delta the number of reference-count points to add to (sessionIDString).
+      */ 
+    static uint32 HashCodeAfterModification(uint32 curHashCode, const String & sessionIDString, int32 delta) {return curHashCode+((delta!=0)?(sessionIDString.HashCode()*delta):0);}
+
+    /** Returns true iff the contents of our table would be equal to the contents of (rhs) after the specified modification.
+      * @param sessionIDString the key to modify relative to (copyMe)
+      * @param delta the number of reference-count points to add to (sessionIDString)'s record.  
+      */ 
+    bool IsEqualToAfterModification(const DataNodeSubscribersTable & toMe, const String & sessionIDString, int32 delta) const;
+
+    /** Returns a read-only reference to our subscribers-table */
+    const Hashtable<String, uint32> & GetSubscribers() const {return _subscribers;}
+
+    /** Returns true iff (*this) is equal to (rhs).
+      * @param rhs the object to compare to.
+      */
+    bool operator == (const DataNodeSubscribersTable & rhs) const {return ((_hashCode == rhs._hashCode)&&(_subscribers == rhs._subscribers));}
+
+private:
+    bool IsEqualToAfterModificationAux(const DataNodeSubscribersTable & toMe, const String & sessionIDString, int32 delta) const;
+
+    uint32 _hashCode;
+    Hashtable<String, uint32> _subscribers;
+};
+DECLARE_REFTYPES(DataNodeSubscribersTable);
+#endif
+
+inline const Hashtable<String, uint32> & DataNode :: GetSubscribers() const
+{
+   return _subscribers() ? _subscribers()->GetSubscribers() : GetDefaultObjectForType<Hashtable<String, uint32> >();
+}
+
+} // end namespace muscle
 
 #endif

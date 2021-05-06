@@ -11,13 +11,14 @@
 namespace muscle {
 
 #ifndef MUSCLE_DEFAULT_TCP_STALL_TIMEOUT
+/** The default number of microseconds that MUSCLE should allow a TCP connection to remain in a "stalled" state for, before giving up and closing it.  Defaults to three minutes, but the default may be overridden at compile-time via e.g. -DMUSCLE_DEFAULT_TCP_STALL_TIMEOUT=MinutesToMicros(5) or similar. */
 # define MUSCLE_DEFAULT_TCP_STALL_TIMEOUT MinutesToMicros(3)  // 3 minutes is our default timeout period
 #endif
 
 /**
  *  Data I/O to and from a TCP socket! 
  */
-class TCPSocketDataIO : public DataIO, private CountedObject<TCPSocketDataIO>
+class TCPSocketDataIO : public DataIO
 {
 public:
    /**
@@ -27,29 +28,15 @@ public:
     *  If you will be using this object with a AbstractMessageIOGateway,
     *  and/or select(), then it's usually better to set blocking to false.
     */
-   TCPSocketDataIO(const ConstSocketRef & sock, bool blocking) : _sock(sock), _blocking(true), _naglesEnabled(true), _stallLimit(MUSCLE_DEFAULT_TCP_STALL_TIMEOUT)
-   {
-      (void) SetBlockingIOEnabled(blocking);
-   }
+   TCPSocketDataIO(const ConstSocketRef & sock, bool blocking);
 
    /** Destructor.
     *  Closes the socket descriptor, if necessary.
     */
-   virtual ~TCPSocketDataIO() 
-   {
-      Shutdown();
-   }
+   virtual ~TCPSocketDataIO();
 
    virtual int32 Read(void * buffer, uint32 size) {return ReceiveData(_sock, buffer, size, _blocking);}
    virtual int32 Write(const void * buffer, uint32 size) {return SendData(_sock, buffer, size, _blocking);}
-
-   /**
-    *  This method implementation always returns B_ERROR, because you can't seek on a socket!
-    */
-   virtual status_t Seek(int64 /*seekOffset*/, int /*whence*/) {return B_ERROR;}
-
-   /** Always returns -1, since a socket has no position to speak of */
-   virtual int64 GetPosition() const {return -1;}
 
    /**
     * Stall limit for TCP streams is 180000000 microseconds (aka 3 minutes) by default.
@@ -57,24 +44,16 @@ public:
     */
    virtual uint64 GetOutputStallLimit() const {return _stallLimit;}
 
-   /** Set a new output stall time limit.  Set to MUSCLE_TIME_NEVER to disable stall limiting.  */
+   /** Set a new output stall time limit.  Set to MUSCLE_TIME_NEVER to disable stall limiting.
+     * @param limit the new time-limit, in microseconds, or MUSCLE_TIME_NEVER
+     */
    void SetOutputStallLimit(uint64 limit) {_stallLimit = limit;}
 
    /**
     * Flushes the output buffer by turning off Nagle's Algorithm and then turning it back on again.
     * If Nagle's Algorithm is disabled, then this call is a no-op (since there is never anything to flush)
     */
-   virtual void FlushOutput()
-   {
-      if ((_sock())&&(_naglesEnabled))
-      {
-         SetSocketNaglesAlgorithmEnabled(_sock, false);
-#ifndef __linux__
-         (void) SendData(_sock, NULL, 0, _blocking);  // Force immediate buffer flush (not necessary under Linux)
-#endif
-         SetSocketNaglesAlgorithmEnabled(_sock, true);
-      }
-   }
+   virtual void FlushOutput();
    
    /**
     * Closes our socket connection
@@ -89,27 +68,17 @@ public:
     * If this object is to be used by an AbstractMessageIOGateway,
     * then non-blocking I/O is usually better to use.
     * @param blocking If true, socket is set to blocking I/O mode.  Otherwise, non-blocking I/O.
-    * @return B_NO_ERROR on success, B_ERROR on error.
+    * @return B_NO_ERROR on success, or an error code on error.
     */
-   status_t SetBlockingIOEnabled(bool blocking)
-   {
-      status_t ret = SetSocketBlockingEnabled(_sock, blocking);
-      if (ret == B_NO_ERROR) _blocking = blocking;
-      return ret;
-   }
+   status_t SetBlockingIOEnabled(bool blocking);
 
    /**
     * Turns Nagle's algorithm (output packet buffering/coalescing) on or off.
     * @param enabled If true, data will be held momentarily before sending, to allow for bigger packets.
     *                If false, each Write() call will cause a new packet to be sent immediately.
-    * @return B_NO_ERROR on success, B_ERROR on error.
+    * @return B_NO_ERROR on success, or an error code on error.
     */
-   status_t SetNaglesAlgorithmEnabled(bool enabled)
-   {
-      status_t ret = SetSocketNaglesAlgorithmEnabled(_sock, enabled);
-      if (ret == B_NO_ERROR) _naglesEnabled = enabled;
-      return ret;
-   }
+   status_t SetNaglesAlgorithmEnabled(bool enabled);
 
    /** Returns true iff our socket is set to use blocking I/O (as specified in
     *  the constructor or in our SetBlockingIOEnabled() method)
@@ -126,8 +95,11 @@ private:
    bool _blocking;
    bool _naglesEnabled;
    uint64 _stallLimit;
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(TCPSocketDataIO);
+};
+DECLARE_REFTYPES(TCPSocketDataIO);
+
+} // end namespace muscle
 
 #endif

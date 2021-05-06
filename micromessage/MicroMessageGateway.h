@@ -14,6 +14,12 @@ extern "C" {
  *  @{
  */
 
+#ifndef DOXYGEN_SHOULD_IGNORE_THIS
+
+/** This struct represents the state of the gateway we use to flatten/send and receive/unflatten messages.
+  * Fields in this struct should be considered private; use the UG* functions in MicroMessageGateway.h
+  * rather than accessing these fields directly.
+  */
 typedef struct _UMessageGateway {
    uint8 * _inputBuffer;
    uint32 _inputBufferSize;
@@ -25,6 +31,8 @@ typedef struct _UMessageGateway {
    uint32 _numValidOutputBytes;
    UBool _preparingOutgoingMessage;
 } UMessageGateway;
+
+#endif
 
 /** Initializes the specified UMessageGateway struct to point to the specified memory buffers.
   * @param gateway the UMessageGateway to initialize.
@@ -71,7 +79,7 @@ UMessage UGGetOutgoingMessage(UMessageGateway * gateway, uint32 whatCode);
 /** Call this when you have finished adding data to a UMessage that was returned to you via UGGetOutgoingMessage().
   * This function tells the UMessageGateway that it is now okay to start sending the UMessage.
   * @param gateway The same gateway object that you previously passed to UGGetOutgoingMessage().
-  * @param msg A pointer to the UMesage that you previously received from UGGetOutgoingMessage().
+  * @param msg A pointer to the UMessage that you previously received from UGGetOutgoingMessage().
   */
 void UGOutgoingMessagePrepared(UMessageGateway * gateway, const UMessage * msg);
 
@@ -79,7 +87,7 @@ void UGOutgoingMessagePrepared(UMessageGateway * gateway, const UMessage * msg);
   * (e.g. because the UMessage returned by UGGetOutgoingMessage() was too small, or something).
   * This will set the gateway back into its pre-UGGetOutgoingMessage() state.
   * @param gateway The same gateway object that you previously passed to UGGetOutgoingMessage().
-  * @param msg A pointer to the UMesage that you previously received from UGGetOutgoingMessage().
+  * @param msg A pointer to the UMessage that you previously received from UGGetOutgoingMessage().
   */
 void UGOutgoingMessageCancelled(UMessageGateway * gateway, const UMessage * msg);
 

@@ -5,6 +5,12 @@
 
 #include "support/MuscleSupport.h"
 
+#ifdef __clang_analyzer__
+# ifndef MUSCLE_AVOID_BITSTUFFING
+#  define MUSCLE_AVOID_BITSTUFFING // poor ClangSA just can't handle the bit-stuffing
+# endif
+#endif
+
 namespace muscle {
 
 /** This class abuses the fact that objects are word-aligned on most hardware to allow us to store
@@ -12,7 +18,7 @@ namespace muscle {
   * space a class object takes up -- on a 64-bit system it saves 7 and 7/8ths bytes for each 
   * pointer+boolean pair used.  If you are compiling on a system where pointers-to-objects are not 
   * required to be aligned to even addresses, you can define MUSCLE_AVOID_BITSTUFFING to force the 
-  * boolean to declared as a separate member variable (at the cost of increased memory usage, of course).
+  * boolean to be declared as a separate member variable (at the cost of increased memory usage, of course).
   */
 template <class T> class PointerAndBool
 {
@@ -94,7 +100,9 @@ public:
 #endif
    }
 
-   /** Swaps this object's state with the state of (rhs) */
+   /** Swaps this object's state with the state of (rhs)
+     * @param rhs another PointerAndBool to swap our contents with
+     */
    void SwapContents(PointerAndBool & rhs)
    {
       muscleSwap(_pointer, rhs._pointer);  
@@ -121,6 +129,6 @@ private:
 #endif
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

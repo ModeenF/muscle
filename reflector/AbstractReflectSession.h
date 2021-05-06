@@ -16,7 +16,7 @@ namespace muscle {
  *  AbstractReflectSession objects when needed.  It is used by the
  *  ReflectServer classes to generate sessions when connections are received.
  */
-class ReflectSessionFactory : public ServerComponent, private CountedObject<ReflectSessionFactory>
+class ReflectSessionFactory : public ServerComponent
 {
 public:
    /** Constructor.  Our globally unique factory ID is assigned here. */
@@ -27,7 +27,7 @@ public:
 
    /** Should be overriden to return a new ReflectSession object, or NULL on failure.
     *  @param clientAddress A string representing the connecting client's host (typically an IP address, e.g. "192.168.1.102")
-     * @param factoryInfo The IP address and port number of the local network interface on which this connection was received.
+    *  @param factoryInfo The IP address and port number of the local network interface on which this connection was received.
     *  @returns a reference to a freshly allocated AbstractReflectSession object on success, or a NULL reference on failure.
     */
    virtual AbstractReflectSessionRef CreateSession(const String & clientAddress, const IPAddressAndPort & factoryInfo) = 0;
@@ -86,7 +86,10 @@ protected:
 
 private:
    uint32 _id;
+
+   DECLARE_COUNTED_OBJECT(ReflectSessionFactory);
 };
+DECLARE_REFTYPES(ReflectSessionFactory);
 
 /** This is a partially specialized factory that knows how to act as a facade for a "slave" factory.
   * In particular, it contains implementations of AttachedToServer() and AboutToDetachFromServer()
@@ -112,12 +115,13 @@ public:
 private:
    ReflectSessionFactoryRef _slaveRef;
 };
+DECLARE_REFTYPES(ProxySessionFactory);
 
 /** This is the abstract base class that defines the server side logic for a single
  *  client-server connection.  This class contains no message routing logic of its own,
  *  but defines the interface so that subclasses can do so.
  */
-class AbstractReflectSession : public ServerComponent, public AbstractGatewayMessageReceiver, private CountedObject<AbstractReflectSession>
+class AbstractReflectSession : public ServerComponent, public AbstractGatewayMessageReceiver
 {
 public:
    /** Default Constructor. */
@@ -141,7 +145,7 @@ public:
      * or 0 if we weren't created via accepting a network connection  (e.g. we were created locally)
      * May only be called if this session is currently attached to a ReflectServer.
      */
-   const ip_address & GetLocalInterfaceAddress() const;
+   const IPAddress & GetLocalInterfaceAddress() const;
 
    /** Returns a globally unique ID for this session. */
    uint32 GetSessionID() const {return _sessionID;}
@@ -167,7 +171,7 @@ public:
     * and the session specified in (newSessionRef) to take its
     * place using the same socket connection & message IO gateway.
     * @param newSession the new session object that is to take the place of this one.
-    * @return B_NO_ERROR on success, B_ERROR if the new session refused to be attached.
+    * @return B_NO_ERROR on success, an error code if the new session refused to be attached.
     */
    status_t ReplaceSession(const AbstractReflectSessionRef & newSession);
 
@@ -304,9 +308,6 @@ public:
    /** Overridden to support auto-reconnect via SetAutoReconnectDelay() */
    virtual void Pulse(const PulseArgs &);
 
-   /** Should return a pretty, human readable string identifying this class.  */
-   virtual const char * GetTypeName() const = 0;
-
    /** Convenience method -- returns a human-readable string describing our
     *  type, our hostname, our session ID, and what port we are connected to.
     */
@@ -316,7 +317,7 @@ public:
     *  The returned value is meaningful only if we were added
     *  with AddNewConnectSession() or AddNewDormantConnectSession().
     */
-   const ip_address & GetAsyncConnectIP() const {return _asyncConnectDest.GetIPAddress();}
+   const IPAddress & GetAsyncConnectIP() const {return _asyncConnectDest.GetIPAddress();}
 
    /** Returns the remote port we connected asynchronously to.
     *  The returned value is meaningful only if we were added
@@ -401,7 +402,7 @@ public:
     * Adds a MessageRef to our gateway's outgoing message queue.
     * (ref) will be sent back to our client when time permits.
     * @param ref Reference to a Message to send to our client.
-    * @return B_NO_ERROR on success, B_ERROR if out-of-memory.
+    * @return B_NO_ERROR on success, B_OUT_OF_MEMORY if out-of-memory.
     */
    virtual status_t AddOutgoingMessage(const MessageRef & ref);
 
@@ -451,7 +452,7 @@ public:
     * for other types of session, it will just destroy this session's DataIO and IOGateway
     * and then create new ones by calling CreateDefaultSocket() and CreateDataIO().
     * @note This method will call CreateDataIO() to make a new DataIO object for the newly created socket.
-    * @returns B_NO_ERROR on success, or B_ERROR on failure.
+    * @returns B_NO_ERROR on success, or an error code on failure.
     *          On success, the connection result will be reported back
     *          later, either via a call to AsyncConnectCompleted() (if the connection
     *          succeeds) or a call to ClientConnectionClosed() (if the connection fails)
@@ -469,7 +470,9 @@ public:
    const ConstSocketRef & GetSessionWriteSelectSocket() const;
 
 protected:
-   /** Set by StorageReflectSession::AttachedToServer() */
+   /** Set by StorageReflectSession::AttachedToServer()
+     * @param p the new session-root-path for us to use (e.g. "/127.0.0.1/12345")
+     */
    void SetSessionRootPath(const String & p) {_sessionRootPath = p;}
 
    /** When a hostname is being chosen to represent this session (i.e. at the first
@@ -479,16 +482,19 @@ protected:
     *  @param defaultHostName The hostname that the system suggests be used for this session.
     *  Default implementation just returns (defaultHostName), i.e. it goes with the suggested name.
     */
-   virtual String GenerateHostName(const ip_address & ip, const String & defaultHostName) const;
+   virtual String GenerateHostName(const IPAddress & ip, const String & defaultHostName) const;
 
 private:
    void SetPolicyAux(AbstractSessionIOPolicyRef & setRef, uint32 & setChunk, const AbstractSessionIOPolicyRef & newRef, bool isInput);
    void PlanForReconnect();
    void SetConnectingAsync(bool isConnectingAsync);
+   bool IsThisSessionScheduledForPostSleepReconnect() const;
 
    friend class ReflectServer;
+
    uint32 _sessionID;
    String _idString;
+
    IPAddressAndPort _ipAddressAndPort;
 
    bool _connectingAsync;
@@ -501,6 +507,7 @@ private:
    bool _reconnectViaTCP;  // only valid when _asyncConnectDest is set
    AbstractMessageIOGatewayRef _gateway;
    uint64 _lastByteOutputAt;
+   uint32 _lastReportedQueueSize;  // used by ReflectServer.cpp to warn about growing/socket-free queues
    AbstractSessionIOPolicyRef _inputPolicyRef;
    AbstractSessionIOPolicyRef _outputPolicyRef;
    uint32 _maxInputChunk;   // as determined by our Policy object
@@ -515,8 +522,10 @@ private:
    bool _wasConnected;
 
    TamperEvidentValue<bool> _isExpendable;
+
+   DECLARE_COUNTED_OBJECT(AbstractReflectSession);
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -20,22 +20,32 @@ public:
    /** Default Constructor. */
    SegmentedStringMatcher();
 
-   /** A constructor that sets the given expression.  See SetPattern() for argument semantics.  */
-   SegmentedStringMatcher(const String & matchString, bool isSimpleFormat = true, const char * segmentSeparatorChars = "/");
+   /** A constructor that sets the given expression.  Calls through to SetPattern().
+    * @param matchString The globbing pattern or regular expression to match with.  It may be segmented using any of the
+    *                   separator characters specified in our constructor.
+    * @param isSimpleFormat If you wish to use the formal regex syntax, instead of the simple syntax, set isSimpleFormat to false.
+    * @param segmentSeparatorChars The set of characters that denote sub-keys within the key string.  This string will be passed to
+    *                              our StringTokenizer.  Defaults to "/".
+    * @param maxSegments the maximum number of segments from (matchString) that should be added to this SegmentedStringMatcher.
+    *                    Default is MUSCLE_NO_LIMIT, meaning all segments will be added with no fixed limit applied.
+    */
+   SegmentedStringMatcher(const String & matchString, bool isSimpleFormat = true, const char * segmentSeparatorChars = "/", uint32 maxSegments = MUSCLE_NO_LIMIT);
     
    /** Destructor */
    ~SegmentedStringMatcher();
 
    /** 
     * Set a new wildcard pattern or regular expression for this SegmentedStringMatcher to use in future Match() calls.
-    * @param expression The new globbing pattern or regular expression to match with.  It may be segmented using any of the
-    *                   separator characters specified in our constructor.
+    * @param matchString The new globbing pattern or regular expression to match with.  It may be segmented using any of the
+    *                    separator characters specified in our constructor.
     * @param isSimpleFormat If you wish to use the formal regex syntax, instead of the simple syntax, set isSimpleFormat to false.
     * @param segmentSeparatorChars The set of characters that denote sub-keys within the key string.  This string will be passed to
     *                              our StringTokenizer.  Defaults to "/".
-    * @return B_NO_ERROR on success, B_ERROR on error (e.g. expression wasn't parsable, or out of memory)
+    * @param maxSegments the maximum number of segments from (matchString) that should be added to this SegmentedStringMatcher.
+    *                    Default is MUSCLE_NO_LIMIT, meaning all segments will be added with no fixed limit applied.
+    * @return B_NO_ERROR on success, B_BAD_ARGUMENT if the expression wasn't parsable, or B_OUT_OF_MEMORY.
     */
-   status_t SetPattern(const String & expression, bool isSimpleFormat=true, const char * segmentSeparatorChars = "/");
+   status_t SetPattern(const String & matchString, bool isSimpleFormat=true, const char * segmentSeparatorChars = "/", uint32 maxSegments = MUSCLE_NO_LIMIT);
     
    /** Returns the pattern String as it was previously passed in to SetPattern() */
    const String & GetPattern() const {return _pattern;}
@@ -54,7 +64,10 @@ public:
     */
    bool Match(const char * const matchString) const {return _negate ? !MatchAux(matchString) : MatchAux(matchString);}
     
-   /** Convenience method:  Same as above, but takes a String object instead of a (const char *). */
+   /** Convenience method:  Same as above, but takes a String object instead of a (const char *).
+     * @param matchString a string to match against using our current expression.
+     * @return true iff (matchString) matches, false otherwise.
+     */
    inline bool Match(const String & matchString) const {return Match(matchString());}
 
    /** If set true, Match() will return the logical opposite of what
@@ -63,6 +76,7 @@ public:
      * Default state is false.  Note that this flag is also set by
      * SetPattern(..., true), based on whether or not the pattern
      * string starts with a tilde.
+     * @param negate true to negate/invert the sense of our results; false to return them un-inverted
      */
    void SetNegate(bool negate) {_negate = negate;}
 
@@ -95,8 +109,8 @@ SegmentedStringMatcherRef GetSegmentedStringMatcherFromPool();
 /** Convenience method.  Obtains a StringMatcher object from the default StringMatcher pool, calls SetPattern() on it
   * with the given arguments, and returns it, or a NULL reference on failure (out of memory, or a parse error?)
   */
-SegmentedStringMatcherRef GetSegmentedStringMatcherFromPool(const String & matchString, bool isSimpleFormat = true, const char * segmentSeparatorChars = "/");
+SegmentedStringMatcherRef GetSegmentedStringMatcherFromPool(const String & matchString, bool isSimpleFormat = true, const char * segmentSeparatorChars = "/", uint32 maxSegements = MUSCLE_NO_LIMIT);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -40,7 +40,7 @@ static unsigned __stdcall StdinThreadEntryFunc(void *)
       while(ReadFile(_stdinHandle, buf, sizeof(buf), &numBytesRead, NULL))
       {
          // Grab a temporary copy of the listeners-set.  That we we don't risk blocking in SendData() while holding the mutex.
-         if (_slaveSocketsMutex.Lock() == B_NO_ERROR)
+         if (_slaveSocketsMutex.Lock().IsOK())
          {
             temp = _slaveSockets;
             _slaveSocketsMutex.Unlock();
@@ -52,7 +52,7 @@ static unsigned __stdcall StdinThreadEntryFunc(void *)
 
          // Lastly, remove from the registered-sockets-set any sockets that SendData() errored out on.
          // This will cause the socket connection to be closed and the master thread(s) to be notified.
-         if ((trim)&&(_slaveSocketsMutex.Lock() == B_NO_ERROR))
+         if ((trim)&&(_slaveSocketsMutex.Lock().IsOK()))
          {
             for (HashtableIterator<uint32, ConstSocketRef> iter(_slaveSockets); iter.HasData(); iter++)
             {
@@ -70,7 +70,7 @@ static unsigned __stdcall StdinThreadEntryFunc(void *)
    }
 
    // Oops, stdin failed... clear the slave sockets table so that the client objects will know to close up shop
-   if (_slaveSocketsMutex.Lock() == B_NO_ERROR)
+   if (_slaveSocketsMutex.Lock().IsOK())
    {
       _stdinThreadStatus = STDIN_THREAD_STATUS_EXITED;
       _slaveSockets.Clear();
@@ -96,11 +96,13 @@ static unsigned __stdcall StdinThreadEntryFunc(void *)
 static Socket _stdinSocket(STDIN_FILENO, false);  // we generally don't want to close stdin
 #endif
 
-StdinDataIO :: StdinDataIO(bool blocking) : _stdinBlocking(blocking)
+StdinDataIO :: StdinDataIO(bool blocking, bool writeToStdout)
+   : _stdinBlocking(blocking)
+   , _writeToStdout(writeToStdout)
 #ifdef USE_WIN32_STDINDATAIO_IMPLEMENTATION
- , _slaveSocketTag(0)
+   , _slaveSocketTag(0)
 #else
- , _fdIO(ConstSocketRef(&_stdinSocket, false), true)
+   , _fdIO(ConstSocketRef(&_stdinSocket, false), true)
 #endif
 {
 #ifdef USE_WIN32_STDINDATAIO_IMPLEMENTATION
@@ -114,9 +116,10 @@ StdinDataIO :: StdinDataIO(bool blocking) : _stdinBlocking(blocking)
       // stdin gets redirected to nul... once you've created one non-blocking
       // StdinDataIO, you'll need to continue accessing stdin only via
       // non-blocking StdinDataIOs.
+      status_t ret;
       bool okay = false;
       ConstSocketRef slaveSocket;
-      if ((CreateConnectedSocketPair(_masterSocket, slaveSocket, false) == B_NO_ERROR)&&(SetSocketBlockingEnabled(slaveSocket, true) == B_NO_ERROR)&&(_slaveSocketsMutex.Lock() == B_NO_ERROR))
+      if ((CreateConnectedSocketPair(_masterSocket, slaveSocket, false).IsOK(ret))&&(SetSocketBlockingEnabled(slaveSocket, true).IsOK(ret))&&(_slaveSocketsMutex.Lock().IsOK(ret)))
       {
          bool threadCreated = false;
          if (_stdinThreadStatus == STDIN_THREAD_STATUS_UNINITIALIZED)
@@ -134,14 +137,19 @@ StdinDataIO :: StdinDataIO(bool blocking) : _stdinBlocking(blocking)
                &&((_slaveThread = (::HANDLE) _beginthreadex(NULL, 0, StdinThreadEntryFunc, NULL, CREATE_SUSPENDED, (unsigned *) &junkThreadID)) != 0)) ? STDIN_THREAD_STATUS_RUNNING : STDIN_THREAD_STATUS_EXITED;
             threadCreated = (_stdinThreadStatus == STDIN_THREAD_STATUS_RUNNING);
          }
-         if ((_stdinThreadStatus == STDIN_THREAD_STATUS_RUNNING)&&(_slaveSockets.Put(_slaveSocketTag = (++_slaveSocketTagCounter), slaveSocket) == B_NO_ERROR)) okay = true;
-                                                                                                                                                        else LogTime(MUSCLE_LOG_ERROR, "StdinDataIO:  Could not start stdin thread!\n");
+
+         if ((_stdinThreadStatus == STDIN_THREAD_STATUS_RUNNING)&&(_slaveSockets.Put(_slaveSocketTag = (++_slaveSocketTagCounter), slaveSocket).IsOK()))
+         {
+            okay = true;
+         }
+         else LogTime(MUSCLE_LOG_ERROR, "StdinDataIO:  Could not start stdin thread!\n");
+
          _slaveSocketsMutex.Unlock();
 
          // We don't start the thread running until here, that way there's no chance of race conditions if the thread exits immediately
          if (threadCreated) ResumeThread(_slaveThread);
       }
-      else LogTime(MUSCLE_LOG_ERROR, "StdinDataIO:  Error setting up I/O sockets!\n");
+      else LogTime(MUSCLE_LOG_ERROR, "StdinDataIO:  Error setting up I/O sockets! [%s]\n", ret());
 
       if (okay == false) Close();
    }
@@ -162,7 +170,7 @@ void StdinDataIO :: Shutdown()
 void StdinDataIO :: Close()
 {
 #ifdef USE_WIN32_STDINDATAIO_IMPLEMENTATION
-   if ((_stdinBlocking == false)&&(_slaveSocketsMutex.Lock() == B_NO_ERROR))
+   if ((_stdinBlocking == false)&&(_slaveSocketsMutex.Lock().IsOK()))
    {
       _slaveSockets.Remove(_slaveSocketTag);
       _slaveSocketsMutex.Unlock();
@@ -185,10 +193,20 @@ int32 StdinDataIO :: Read(void * buffer, uint32 size)
 #else
    // Turn off stdin's blocking I/O mode only during the Read() call.
    if (_stdinBlocking == false) (void) _fdIO.SetBlockingIOEnabled(false);
-   int32 ret = _fdIO.Read(buffer, size);
+   const int32 ret = _fdIO.Read(buffer, size);
    if (_stdinBlocking == false) (void) _fdIO.SetBlockingIOEnabled(true);
    return ret;
 #endif
+}
+
+int32 StdinDataIO :: Write(const void * buffer, uint32 size)
+{
+   return _writeToStdout ? (int32)fwrite(buffer, 1, size, stdout) : (int32)size;
+}
+
+void StdinDataIO :: FlushOutput()
+{
+   if (_writeToStdout) fflush(stdout);
 }
 
 const ConstSocketRef & StdinDataIO :: GetReadSelectSocket() const
@@ -200,4 +218,17 @@ const ConstSocketRef & StdinDataIO :: GetReadSelectSocket() const
 #endif
 }
 
-}; // end namespace muscle
+const ConstSocketRef & StdinDataIO :: GetWriteSelectSocket() const
+{
+   if (_writeToStdout == false) return GetNullSocket();
+
+#ifdef USE_WIN32_STDINDATAIO_IMPLEMENTATION
+   // I'm not sure how I want to handle this under Windows yet
+   // so for now I'll just return a NULL socket under windows.
+   return GetNullSocket();
+#else
+   return _fdIO.GetWriteSelectSocket();
+#endif
+}
+
+} // end namespace muscle

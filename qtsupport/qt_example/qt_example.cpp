@@ -21,7 +21,12 @@
 
 #include "qt_example.h"
 
-ExampleWidget :: ExampleWidget(ExampleWindow * master, bool animate) : _master(master), _isMousePressed(false), _updatePos(rand()%10000), _xRatio(0.7f), _yRatio(0.7f)
+ExampleWidget :: ExampleWidget(ExampleWindow * master, bool animate)
+   : _master(master)
+   , _isMousePressed(false)
+   , _updatePos(rand()%10000)
+   , _xRatio(0.7f)
+   , _yRatio(0.7f)
 {
    setMinimumSize(200, 20);
    connect(&_autoUpdateTimer, SIGNAL(timeout()), this, SLOT(AutoUpdate()));
@@ -55,7 +60,7 @@ void ExampleWidget :: paintEvent(QPaintEvent *)
       p.setPen(Qt::black);
       for (HashtableIterator<String, MessageRef> iter(_master->_states); iter.HasData(); iter++) p.drawLine(myPt, NormalizedToQtCoords(iter.GetValue()()->GetPoint("position")));
 
-      // And finally draw everyone's positio-indicator
+      // And finally draw everyone's position-indicator bubble
       for (HashtableIterator<String, MessageRef> iter(_master->_states); iter.HasData(); iter++) DrawUser(p, iter.GetValue());
       DrawUser(p, _master->_localState);
    }
@@ -74,8 +79,12 @@ void ExampleWidget :: DrawUser(QPainter & p, const MessageRef & data)
 void ExampleWidget :: DrawText(QPainter & p, const QPoint & pt, const QString & text, const QColor & c, bool inBox)
 {
    QFontMetrics fm = p.fontMetrics();
-   int tw = fm.width(text);
-   int th = fm.ascent()+fm.descent();
+#if QT_VERSION >= 0x050B00
+   const int tw = fm.horizontalAdvance(text);
+#else
+   const int tw = fm.width(text);
+#endif
+   const int th = fm.ascent()+fm.descent();
    QRect r(pt.x()-(tw/2), pt.y()-(th/2), tw, th);
    if (inBox)
    {
@@ -156,7 +165,11 @@ static QColor GetRandomBrightColor()
    return QColor((rand()%colorRange)+colorFloor, (rand()%colorRange)+colorFloor, (rand()%colorRange)+colorFloor);
 }
 
-ExampleWindow :: ExampleWindow(const QString & serverName, const QString & userName, const ConstByteBufferRef & publicKey, bool animate) : _isConnected(false), _curUserName(userName), _localColor(GetRandomBrightColor()), _publicKey(publicKey)
+ExampleWindow :: ExampleWindow(const QString & serverName, const QString & userName, const ConstByteBufferRef & publicKey, bool animate)
+   : _isConnected(false)
+   , _curUserName(userName)
+   , _localColor(GetRandomBrightColor())
+   , _publicKey(publicKey)
 {
 #ifdef MUSCLE_ENABLE_SSL
    if (_publicKey()) _mtt.SetSSLPublicKeyCertificate(_publicKey);
@@ -311,11 +324,11 @@ void ExampleWindow :: ConnectToServer()
 
    String hostname;
    uint16 port = 2960;  // default port for muscled
-   if (ParseConnectArg(FromQ(_serverName->text()), hostname, port) != B_NO_ERROR) 
+   if (ParseConnectArg(FromQ(_serverName->text()), hostname, port).IsError()) 
    {
       AddChatText(QString("Unable to parse server name %1.").arg(_serverName->text()));
    }
-   else if ((_mtt.AddNewConnectSession(hostname, port, false, SecondsToMicros(1)) == B_NO_ERROR)&&(_mtt.StartInternalThread() == B_NO_ERROR))
+   else if ((_mtt.AddNewConnectSession(hostname, port, false, SecondsToMicros(1)).IsOK())&&(_mtt.StartInternalThread().IsOK()))
    {
       AddChatText(QString("Connecting to server %1...").arg(_serverName->text()));
    }
@@ -389,10 +402,10 @@ void ExampleWindow :: MessageReceived(const MessageRef & msg)
          // Look for strings that indicate that subscribed nodes were removed from the tree
          {
             const String * nodePath;
-            for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, &nodePath) == B_NO_ERROR); i++)
+            for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, &nodePath).IsOK()); i++)
             {
                MessageRef existingState;
-               if (_states.Remove(*nodePath, existingState) == B_NO_ERROR)
+               if (_states.Remove(*nodePath, existingState).IsOK())
                {
                   AddChatText(QString("[%1] has disconnected from the server.").arg(existingState()->GetString("username")()));
                   _exampleWidget->update();
@@ -405,7 +418,7 @@ void ExampleWindow :: MessageReceived(const MessageRef & msg)
             for (MessageFieldNameIterator iter = msg()->GetFieldNameIterator(B_MESSAGE_TYPE); iter.HasData(); iter++)
             {
                MessageRef data;
-               for (uint32 i=0; msg()->FindMessage(iter.GetFieldName(), i, data) == B_NO_ERROR; i++)
+               for (uint32 i=0; msg()->FindMessage(iter.GetFieldName(), i, data).IsOK(); i++)
                {
                   if (_states.ContainsKey(iter.GetFieldName()) == false) AddChatText(QString("[%1] has connected to the server.").arg(data()->GetString("username")()));
                   _states.Put(iter.GetFieldName(), data);
@@ -421,7 +434,7 @@ void ExampleWindow :: MessageReceived(const MessageRef & msg)
 void ExampleWindow :: SendChatText()
 {
    QString text = _chatEntry->text();
-   _chatEntry->setText(QString::null);
+   _chatEntry->setText(QString());
 
    MessageRef chatMsg = GetMessageFromPool(QT_EXAMPLE_CHAT_TEXT);
    chatMsg()->AddString("username", FromQ(_curUserName));  // tag Message with who sent it

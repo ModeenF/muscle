@@ -1,9 +1,17 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#if defined(MUSCLE_USE_PTHREADS)
+# include <pthread.h>  // in case both MUSCLE_USE_CPLUSPLUS11_THREADS and MUSCLE_USE_PTHREADS are defined at once, e.g. for better SetThreadPriority() support
+#endif
+
 #include "system/Thread.h"
 #include "util/NetworkUtilityFunctions.h"
 #include "dataio/TCPSocketDataIO.h"  // to get the proper #includes for recv()'ing
 #include "system/SetupSystem.h"  // for GetCurrentThreadID()
+
+#if defined(MUSCLE_USE_QT_THREADS) && defined(MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION)
+# include "qtsupport/QMessageTransceiverThread.h"   // for MuscleQThreadSocketNotifier
+#endif
 
 #if defined(MUSCLE_PREFER_WIN32_OVER_QT)
 # include <process.h>  // for _beginthreadex()
@@ -19,7 +27,13 @@ namespace muscle {
 extern void DeadlockFinder_PrintAndClearLogEventsForCurrentThread();
 #endif
 
-Thread :: Thread(bool useMessagingSockets) : _useMessagingSockets(useMessagingSockets), _messageSocketsAllocated(!useMessagingSockets), _threadRunning(false), _suggestedStackSize(0), _threadStackBase(NULL)
+Thread :: Thread(bool useMessagingSockets)
+   : _useMessagingSockets(useMessagingSockets)
+   , _messageSocketsAllocated(!useMessagingSockets)
+   , _threadRunning(false)
+   , _suggestedStackSize(0)
+   , _threadStackBase(NULL)
+   , _threadPriority(PRIORITY_UNSPECIFIED)
 {
 #if defined(MUSCLE_USE_QT_THREADS)
    _thread.SetOwner(this);
@@ -44,7 +58,7 @@ const ConstSocketRef & Thread :: GetOwnerWakeupSocket()
 
 const ConstSocketRef & Thread :: GetThreadWakeupSocketAux(ThreadSpecificData & tsd)
 {
-   if ((_messageSocketsAllocated == false)&&(CreateConnectedSocketPair(_threadData[MESSAGE_THREAD_INTERNAL]._messageSocket, _threadData[MESSAGE_THREAD_OWNER]._messageSocket) != B_NO_ERROR)) return GetNullSocket();
+   if ((_messageSocketsAllocated == false)&&(CreateConnectedSocketPair(_threadData[MESSAGE_THREAD_INTERNAL]._messageSocket, _threadData[MESSAGE_THREAD_OWNER]._messageSocket).IsError())) return GetNullSocket();
 
    _messageSocketsAllocated = true;
    return tsd._messageSocket;
@@ -63,15 +77,16 @@ status_t Thread :: StartInternalThread()
 {
    if (IsInternalThreadRunning() == false)
    {
-      bool needsInitialSignal = (_threadData[MESSAGE_THREAD_INTERNAL]._messages.HasItems());
-      status_t ret = StartInternalThreadAux();
-      if (ret == B_NO_ERROR)
+      const bool needsInitialSignal = (_threadData[MESSAGE_THREAD_INTERNAL]._messages.HasItems());
+      status_t ret;
+      if (StartInternalThreadAux().IsOK(ret))
       {
          if (needsInitialSignal) SignalInternalThread();  // make sure he gets his already-queued messages!
          return B_NO_ERROR;
       }
+      else return ret;
    }
-   return B_ERROR;
+   return B_BAD_OBJECT;
 }
 
 status_t Thread :: StartInternalThreadAux()
@@ -80,47 +95,65 @@ status_t Thread :: StartInternalThreadAux()
    {
       _threadRunning = true;  // set this first, to avoid a race condition with the thread's startup...
 
-#if defined(MUSCLE_USE_PTHREADS)
-      pthread_attr_t attr;
-      if (_suggestedStackSize != 0)
-      {
-         pthread_attr_init(&attr);
-         pthread_attr_setstacksize(&attr, _suggestedStackSize);
-      }
-      if (pthread_create(&_thread, (_suggestedStackSize!=0)?&attr:NULL, InternalThreadEntryFunc, this) == 0) return B_NO_ERROR;
-#elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
-      typedef unsigned (__stdcall *PTHREAD_START) (void *);
-      if ((_thread = (::HANDLE)_beginthreadex(NULL, _suggestedStackSize, (PTHREAD_START)InternalThreadEntryFunc, this, 0, (unsigned *)&_threadID)) != NULL) return B_NO_ERROR;
-#elif defined(MUSCLE_USE_QT_THREADS)
-# ifdef QT_HAS_THREAD_PRIORITIES
-      _thread.start(GetInternalQThreadPriority());
-# else
-      _thread.start();
-# endif
-      return B_NO_ERROR;
-#elif defined(__BEOS__) || defined(__HAIKU__)
-      if ((_thread = spawn_thread(InternalThreadEntryFunc, "MUSCLE Thread", B_NORMAL_PRIORITY, this)) >= 0)
-      {
-         if (resume_thread(_thread) == B_NO_ERROR) return B_NO_ERROR;
-                                              else kill_thread(_thread);
-      }
-#elif defined(__ATHEOS__)
-      if ((_thread = spawn_thread("MUSCLE Thread", InternalThreadEntryFunc, NORMAL_PRIORITY, 32767, this)) >= 0)
-      {
-         if (resume_thread(_thread) == B_NO_ERROR) return B_NO_ERROR;
-      }
-#endif
+      const status_t ret = StartInternalThreadAuxAux();
+      if (ret.IsOK()) return ret;  // success!
 
       _threadRunning = false;  // oops, nevermind, thread spawn failed
+      return ret;
    }
-   return B_ERROR;
+   else return B_BAD_OBJECT;
+}
+
+status_t Thread :: StartInternalThreadAuxAux()
+{
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+# if !defined(MUSCLE_NO_EXCEPTIONS)
+   try {
+# endif
+      _thread = std::thread(InternalThreadEntryFunc, this);
+      return B_NO_ERROR;
+# if !defined(MUSCLE_NO_EXCEPTIONS)
+   }
+   catch(...) {/* empty */} 
+   return B_OUT_OF_MEMORY;
+# endif
+#elif defined(MUSCLE_USE_PTHREADS)
+   pthread_attr_t attr;
+   if (_suggestedStackSize != 0)
+   {
+      pthread_attr_init(&attr);
+      (void) pthread_attr_setstacksize(&attr, _suggestedStackSize);
+   }
+   return B_ERRNUM(pthread_create(&_thread, (_suggestedStackSize!=0)?&attr:NULL, InternalThreadEntryFunc, this));
+#elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
+   typedef unsigned (__stdcall *PTHREAD_START) (void *);
+   return ((_thread = (::HANDLE)_beginthreadex(NULL, _suggestedStackSize, (PTHREAD_START)InternalThreadEntryFunc, this, 0, (unsigned *)&_threadID)) != NULL) ? B_NO_ERROR : B_ERRNO;
+#elif defined(MUSCLE_USE_QT_THREADS)
+   _thread.start();
+   return B_NO_ERROR;
+#elif defined(__BEOS__) || defined(__HAIKU__)
+   if ((_thread = spawn_thread(InternalThreadEntryFunc, "MUSCLE Thread", B_NORMAL_PRIORITY, this)) >= 0)
+   {
+      if (resume_thread(_thread) == B_NO_ERROR) return B_NO_ERROR;
+      else 
+      {
+         ret = B_ERRNO; 
+         kill_thread(_thread);
+         return ret;
+      }
+   }
+   return B_ERRNO;
+#elif defined(__ATHEOS__)
+   if (((_thread = spawn_thread("MUSCLE Thread", InternalThreadEntryFunc, NORMAL_PRIORITY, 32767, this)) >= 0)&&(resume_thread(_thread) >= 0)) return B_NO_ERROR;
+   return B_ERRNO;
+#endif
 }
 
 void Thread :: ShutdownInternalThread(bool waitForThread)
 {
    if (IsInternalThreadRunning())
    {
-      SendMessageToInternalThread(MessageRef());  // a NULL message ref tells him to quit
+      (void) SendMessageToInternalThread(MessageRef());  // a NULL message ref tells him to quit
       if (waitForThread) WaitForInternalThreadToExit();
    }
 }
@@ -137,21 +170,20 @@ status_t Thread :: SendMessageToOwner(const MessageRef & ref)
 
 status_t Thread :: SendMessageAux(int whichQueue, const MessageRef & replyRef)
 {
-   status_t ret = B_ERROR;
+   status_t ret;
    ThreadSpecificData & tsd = _threadData[whichQueue];
-   if (tsd._queueLock.Lock() == B_NO_ERROR)
+   if (tsd._queueLock.Lock().IsOK(ret))
    {
-      if (tsd._messages.AddTail(replyRef) == B_NO_ERROR) ret = B_NO_ERROR;
-      bool sendNotification = (tsd._messages.GetNumItems() == 1);
+      const bool sendNotification = ((tsd._messages.AddTail(replyRef).IsOK(ret))&&(tsd._messages.GetNumItems() == 1));
       (void) tsd._queueLock.Unlock();
-      if ((sendNotification)&&(_signalLock.Lock() == B_NO_ERROR))
+      if ((sendNotification)&&(_signalLock.Lock().IsOK(ret)))
       {
          switch(whichQueue)
          {
             case MESSAGE_THREAD_INTERNAL: SignalInternalThread(); break;
             case MESSAGE_THREAD_OWNER:    SignalOwner();          break;
          }
-         _signalLock.Unlock();
+         (void) _signalLock.Unlock();
       }
    }
    return ret;
@@ -171,10 +203,10 @@ void Thread :: SignalAux(int whichSocket)
 {
    if (_messageSocketsAllocated)
    {
-      int fd = _threadData[whichSocket]._messageSocket.GetFileDescriptor();
+      const int fd = _threadData[whichSocket]._messageSocket.GetFileDescriptor();
       if (fd >= 0) 
       {
-         char junk = 'S';
+         const char junk = 'S';
          (void) send_ignore_eintr(fd, &junk, sizeof(junk), 0);
       }
    }
@@ -193,9 +225,9 @@ int32 Thread :: WaitForNextMessageFromOwner(MessageRef & ref, uint64 wakeupTime)
 int32 Thread :: WaitForNextMessageAux(ThreadSpecificData & tsd, MessageRef & ref, uint64 wakeupTime)
 {
    int32 ret = -1;  // pessimistic default
-   if (tsd._queueLock.Lock() == B_NO_ERROR)
+   if (tsd._queueLock.Lock().IsOK())
    {
-      if (tsd._messages.RemoveHead(ref) == B_NO_ERROR) ret = tsd._messages.GetNumItems();
+      if (tsd._messages.RemoveHead(ref).IsOK()) ret = tsd._messages.GetNumItems();
       (void) tsd._queueLock.Unlock();
 
       int msgfd;
@@ -240,13 +272,42 @@ int32 Thread :: WaitForNextMessageAux(ThreadSpecificData & tsd, MessageRef & ref
 
 void Thread :: InternalThreadEntry()
 {
+#if defined(MUSCLE_USE_QT_THREADS) && defined(MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION)
+   // In this mode, our Thread will run Qt's event-loop instead of using our own while-loop.
+   // That way users who wish to subclass the Thread class and then use QObjects in
+   // the the internal thread can get the Qt-appropriate behaviors that they are looking for.
+   MuscleQThreadSocketNotifier internalSocketNotifier(this, GetInternalThreadWakeupSocket().GetFileDescriptor(), QSocketNotifier::Read, NULL);
+   (void) _thread.CallExec();
+#else
    while(true)
    {
       MessageRef msgRef;
-      int32 numLeft = WaitForNextMessageFromOwner(msgRef);
-      if ((numLeft >= 0)&&(MessageReceivedFromOwner(msgRef, numLeft) != B_NO_ERROR)) break;
-   } 
+      const int32 numLeft = WaitForNextMessageFromOwner(msgRef);
+      if ((numLeft >= 0)&&(MessageReceivedFromOwner(msgRef, numLeft).IsError())) break;
+   }
+#endif
 }
+
+#if defined(MUSCLE_USE_QT_THREADS) && defined(MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION)
+void Thread :: QtSocketReadReady(int /*sock*/)
+{
+   MessageRef msgRef;
+   while(1)
+   {
+      const int32 numLeft = WaitForNextMessageFromOwner(msgRef, 0);  // 0 because we don't want to block here, this is a poll only
+      if (numLeft >= 0)
+      {
+         if (MessageReceivedFromOwner(msgRef, numLeft).IsError())
+         {
+            // Oops, MessageReceivedFromOwner() wants us to exit!
+            _thread.quit();
+            break;
+         }
+      }
+      else break;  // no more incoming Messages to process, for now
+   }
+}
+#endif
 
 status_t Thread :: MessageReceivedFromOwner(const MessageRef & ref, uint32)
 {
@@ -257,8 +318,20 @@ status_t Thread :: WaitForInternalThreadToExit()
 {
    if (_threadRunning)
    {
-#if defined(MUSCLE_USE_PTHREADS)
-      (void) pthread_join(_thread, NULL);
+      status_t ret;
+
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+# if !defined(MUSCLE_NO_EXCEPTIONS)
+      try {
+# endif
+         _thread.join();
+# if !defined(MUSCLE_NO_EXCEPTIONS)
+      }
+      catch(...) {return B_LOGIC_ERROR;}
+# endif
+#elif defined(MUSCLE_USE_PTHREADS)
+      const int pret = pthread_join(_thread, NULL);
+      if (pret != 0) ret = B_ERRNUM(pret);
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
       (void) WaitForSingleObject(_thread, INFINITE);
       ::CloseHandle(_thread);  // Raymond Dahlberg's fix for handle-leak problem
@@ -272,15 +345,15 @@ status_t Thread :: WaitForInternalThreadToExit()
 #endif
       _threadRunning = false;
       CloseSockets();
-      return B_NO_ERROR;
+      return ret;
    }
-   else return B_ERROR;
+   else return B_BAD_OBJECT;
 }
 
 Queue<MessageRef> * Thread :: LockAndReturnMessageQueue()
 {
    ThreadSpecificData & tsd = _threadData[MESSAGE_THREAD_INTERNAL];
-   return (tsd._queueLock.Lock() == B_NO_ERROR) ? &tsd._messages : NULL;
+   return (tsd._queueLock.Lock().IsOK()) ? &tsd._messages : NULL;
 }
 
 status_t Thread :: UnlockMessageQueue()
@@ -291,7 +364,7 @@ status_t Thread :: UnlockMessageQueue()
 Queue<MessageRef> * Thread :: LockAndReturnReplyQueue()
 {
    ThreadSpecificData & tsd = _threadData[MESSAGE_THREAD_OWNER];
-   return (tsd._queueLock.Lock() == B_NO_ERROR) ? &tsd._messages : NULL;
+   return (tsd._queueLock.Lock().IsOK()) ? &tsd._messages : NULL;
 }
 
 status_t Thread :: UnlockReplyQueue()
@@ -307,7 +380,7 @@ Thread * Thread :: GetCurrentThread()
    muscle_thread_key key = GetCurrentThreadKey();
 
    Thread * ret = NULL; 
-   if (_curThreadsMutex.Lock() == B_NO_ERROR)
+   if (_curThreadsMutex.Lock().IsOK())
    {
       (void) _curThreads.Get(key, ret);
       _curThreadsMutex.Unlock();
@@ -322,17 +395,23 @@ void Thread::InternalThreadEntryAux()
    _threadStackBase = &threadStackBase;  // remember this stack location so GetCurrentStackUsage() can reference it later on
 
    muscle_thread_key curThreadKey = GetCurrentThreadKey();
-   if (_curThreadsMutex.Lock() == B_NO_ERROR)
+   if (_curThreadsMutex.Lock().IsOK())
    {
       (void) _curThreads.Put(curThreadKey, this);
       _curThreadsMutex.Unlock();
+   }
+
+   status_t ret;
+   if ((_threadPriority != PRIORITY_UNSPECIFIED)&&(SetThreadPriorityAux(_threadPriority).IsError(ret)))
+   {
+      LogTime(MUSCLE_LOG_ERROR, "Thread %p:  Unable to set thread priority to %i [%s]\n", this, _threadPriority, ret());
    }
 
    if (_threadData[MESSAGE_THREAD_OWNER]._messages.HasItems()) SignalOwner();
    InternalThreadEntry();
    _threadData[MESSAGE_THREAD_INTERNAL]._messageSocket.Reset();  // this will wake up the owner thread with EOF on socket
 
-   if (_curThreadsMutex.Lock() == B_NO_ERROR)
+   if (_curThreadsMutex.Lock().IsOK())
    {
       (void) _curThreads.Remove(curThreadKey);
       _curThreadsMutex.Unlock();
@@ -343,7 +422,9 @@ void Thread::InternalThreadEntryAux()
 
 Thread::muscle_thread_key Thread :: GetCurrentThreadKey()
 {
-#if defined(MUSCLE_USE_PTHREADS)
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   return std::this_thread::get_id();
+#elif defined(MUSCLE_USE_PTHREADS)
    return pthread_self();
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
    return GetCurrentThreadId();
@@ -360,7 +441,9 @@ bool Thread :: IsCallerInternalThread() const
 {
    if (IsInternalThreadRunning() == false) return false;  // we can't be him if he doesn't exist!
 
-#if defined(MUSCLE_USE_PTHREADS)
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   return (std::this_thread::get_id() == _thread.get_id());
+#elif defined(MUSCLE_USE_PTHREADS)
    return pthread_equal(pthread_self(), _thread);
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
    return (_threadID == GetCurrentThreadId());
@@ -384,19 +467,118 @@ uint32 Thread :: GetCurrentStackUsage() const
    return (uint32) muscleAbs(curStackPtr-_threadStackBase);
 }
 
+status_t Thread :: SetThreadPriority(int newPriority)
+{
+   if (IsInternalThreadRunning())
+   {
+      status_t ret;
+      if (SetThreadPriorityAux(newPriority).IsOK(ret))
+      {
+         _threadPriority = newPriority;
+         return B_NO_ERROR;
+      }
+      else return ret;
+   }
+   else
+   {
+      _threadPriority = newPriority;  // we'll actually try to change to that thread priority in the thread's own startup-sequence
+      return B_NO_ERROR;
+   }
+}
+
+#if defined(MUSCLE_USE_QT_THREADS)
+static QThread::Priority MuscleThreadPriorityToQtThreadPriority(int muscleThreadPriority)
+{
+   switch(muscleThreadPriority)
+   {
+      case Thread::PRIORITY_IDLE:         return QThread::IdlePriority;
+      case Thread::PRIORITY_LOWEST:       return QThread::LowestPriority;
+      case Thread::PRIORITY_LOWER:        return QThread::LowPriority;
+      case Thread::PRIORITY_LOW:          return QThread::LowPriority;
+      case Thread::PRIORITY_NORMAL:       return QThread::NormalPriority;
+      case Thread::PRIORITY_HIGH:         return QThread::HighPriority;
+      case Thread::PRIORITY_HIGHER:       return QThread::HighPriority;
+      case Thread::PRIORITY_HIGHEST:      return QThread::HighestPriority;
+      case Thread::PRIORITY_TIMECRITICAL: return QThread::TimeCriticalPriority;
+      default:                            return QThread::InheritPriority;
+   }
+}
+#elif defined(WIN32)
+static int MuscleThreadPriorityToWindowsThreadPriority(int muscleThreadPriority)
+{
+   switch(muscleThreadPriority)
+   {
+      case Thread::PRIORITY_IDLE:         return THREAD_PRIORITY_IDLE;
+      case Thread::PRIORITY_LOWEST:       return THREAD_PRIORITY_LOWEST;
+      case Thread::PRIORITY_LOWER:        return THREAD_PRIORITY_BELOW_NORMAL;
+      case Thread::PRIORITY_LOW:          return THREAD_PRIORITY_BELOW_NORMAL;
+      case Thread::PRIORITY_NORMAL:       return THREAD_PRIORITY_NORMAL;
+      case Thread::PRIORITY_HIGH:         return THREAD_PRIORITY_ABOVE_NORMAL;
+      case Thread::PRIORITY_HIGHER:       return THREAD_PRIORITY_ABOVE_NORMAL;
+      case Thread::PRIORITY_HIGHEST:      return THREAD_PRIORITY_HIGHEST;
+      case Thread::PRIORITY_TIMECRITICAL: return THREAD_PRIORITY_TIME_CRITICAL;
+      default:                            return THREAD_PRIORITY_NORMAL;
+   }
+}
+#endif
+
+status_t Thread :: SetThreadPriorityAux(int newPriority)
+{
+   if (newPriority == PRIORITY_UNSPECIFIED) return B_NO_ERROR;  // sure, unspecified is easy, anything goes
+
+#if defined(MUSCLE_USE_PTHREADS)
+   int schedPolicy;
+   sched_param param;
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   int pret = pthread_getschedparam(_thread.native_handle(), &schedPolicy, &param);
+# else
+   int pret = pthread_getschedparam(_thread, &schedPolicy, &param);
+# endif
+   if (pret != 0) return B_ERRNUM(pret);
+
+   const int minPrio = sched_get_priority_min(schedPolicy);
+   const int maxPrio = sched_get_priority_max(schedPolicy);
+   if ((minPrio == -1)||(maxPrio == -1)) return B_UNIMPLEMENTED;
+
+   param.sched_priority = muscleClamp(((newPriority*(maxPrio-minPrio))/(NUM_PRIORITIES-1))+minPrio, minPrio, maxPrio);
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   return B_ERRNUM(pthread_setschedparam(_thread.native_handle(), schedPolicy, &param));
+# else
+   return B_ERRNUM(pthread_setschedparam(_thread, schedPolicy, &param));
+# endif
+#elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   return ::SetThreadPriority(_thread.native_handle(), MuscleThreadPriorityToWindowsThreadPriority(newPriority)) ? B_NO_ERROR : B_ERRNO;
+# else
+   return ::SetThreadPriority(_thread, MuscleThreadPriorityToWindowsThreadPriority(newPriority)) ? B_NO_ERROR : B_ERRNO;
+# endif
+#elif defined(MUSCLE_USE_QT_THREADS)
+   _thread.setPriority(MuscleThreadPriorityToQtThreadPriority(newPriority));
+   return B_NO_ERROR;
+#elif defined(WIN32)
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   return ::SetThreadPriority(_thread.native_handle(), MuscleThreadPriorityToWindowsThreadPriority(newPriority)) ? B_NO_ERROR : B_ERRNO;
+# else
+   return ::SetThreadPriority(_thread, MuscleThreadPriorityToWindowsThreadPriority(newPriority)) ? B_NO_ERROR : B_ERRNO;
+# endif
+#else
+   return B_UNIMPLEMENTED;  // dunno how to set thread priorities on this platform
+#endif
+}
+
 void CheckThreadStackUsage(const char * fileName, uint32 line)
 {
    Thread * curThread = Thread::GetCurrentThread();
    if (curThread)
    {
-      uint32 maxUsage = curThread->GetSuggestedStackSize();
+      const uint32 maxUsage = curThread->GetSuggestedStackSize();
       if (maxUsage != 0)  // if the Thread doesn't have a suggested stack size, then we don't know what the limit is
       {
-         uint32 curUsage = curThread->GetCurrentStackUsage();
+         const uint32 curUsage = curThread->GetCurrentStackUsage();
          if (curUsage > maxUsage)
          {
             char buf[20];
-            LogTime(MUSCLE_LOG_CRITICALERROR, "Thread %s exceeded its suggested stack usage (" UINT32_FORMAT_SPEC " > " UINT32_FORMAT_SPEC") at (%s:" UINT32_FORMAT_SPEC "), aborting program!\n", muscle_thread_id::GetCurrentThreadID().ToString(buf), curUsage, maxUsage, fileName, line);
+            LogTime(MUSCLE_LOG_CRITICALERROR, "Thread %s exceeded its suggested stack usage (" UINT32_FORMAT_SPEC " > " UINT32_FORMAT_SPEC ") at (%s:" UINT32_FORMAT_SPEC "), aborting program!\n", muscle_thread_id::GetCurrentThreadID().ToString(buf), curUsage, maxUsage, fileName, line);
             MCRASH("MUSCLE Thread exceeded its suggested stack allowance");
          }
       }
@@ -408,5 +590,4 @@ void CheckThreadStackUsage(const char * fileName, uint32 line)
    }
 }
 
-
-}; // end namespace muscle
+} // end namespace muscle

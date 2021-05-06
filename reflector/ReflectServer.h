@@ -17,7 +17,7 @@ namespace muscle {
  *  This class can be used as-is, or subclassed if necessary.
  *  There is typically only one ReflectServer object present in a given MUSCLE server program.
  */
-class ReflectServer : public RefCountable, public PulseNode, private PulseNodeManager, private CountedObject<ReflectServer>, private NotCopyable
+class ReflectServer : public RefCountable, public PulseNode, private PulseNodeManager, private NotCopyable
 {
 public: 
    /** Constructor. */
@@ -28,7 +28,7 @@ public:
 
    /** The main loop for the message reflection server.
     *  This method will not return until the server stops running (usually due to an error).
-    *  @return B_NO_ERROR if the server has decided to exit peacefully, or B_ERROR if there was a 
+    *  @return B_NO_ERROR if the server has decided to exit peacefully, or an error code if there was a 
     *                     fatal error during setup or execution.
     */
    virtual status_t ServerProcessLoop();
@@ -45,21 +45,21 @@ public:
     *                        as (invalidIP), then connections will be accepted from all local network interfaces.
     *  @param optRetPort If specified non-NULL, then on success the port that the factory was bound to will
     *                    be placed into this parameter.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (couldn't bind to socket?)
+    *  @return B_NO_ERROR on success, an error code on failure (couldn't bind to socket?)
     */
-   virtual status_t PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & sessionFactoryRef, const ip_address & optInterfaceIP = invalidIP, uint16 * optRetPort = NULL);
+   virtual status_t PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & sessionFactoryRef, const IPAddress & optInterfaceIP = invalidIP, uint16 * optRetPort = NULL);
     
    /** Remove a listening port callback that was previously added by PutAcceptFactory().
     *  @param port whose callback should be removed.  If (port) is set to zero, all callbacks will be removed.
     *  @param optInterfaceIP Interface(s) that the specified callbacks were assigned to in their PutAcceptFactory() call.
     *                        This parameter is ignored when (port) is zero. 
-    *  @returns B_NO_ERROR on success, or B_ERROR if a factory for the specified port was not found.
+    *  @returns B_NO_ERROR on success, or B_DATA_NOT_FOUND if a factory for the specified port was not found.
     */
-   virtual status_t RemoveAcceptFactory(uint16 port, const ip_address & optInterfaceIP = invalidIP);
+   virtual status_t RemoveAcceptFactory(uint16 port, const IPAddress & optInterfaceIP = invalidIP);
 
    /**
     * Called after the server is set up, but just before accepting any connections.
-    * Should return B_NO_ERROR if it's okay to continue, or B_ERROR to abort and shut down the server.
+    * Should return B_NO_ERROR if it's okay to continue, or an error code to abort and shut down the server.
     * @return Default implementation returns B_NO_ERROR.
     */
    virtual status_t ReadyToRun();
@@ -68,12 +68,14 @@ public:
     * Adds a new session that uses the given socket for I/O.
     * @param ref New session to add to the server.
     * @param socket The TCP socket that the new session should use, or a NULL reference, if the new session is to have no client connection (or use the default socket, if CreateDefaultSocket() has been overridden by the session's subclass).  Note that if the session already has a gateway and DataIO installed, then the DataIO's existing socket will be used instead, and this socket will be ignored.
-    * @return B_NO_ERROR if the new session was added successfully, or B_ERROR if there was an error setting it up.
+    * @return B_NO_ERROR if the new session was added successfully, or an error code if there was an error setting it up.
     */
    virtual status_t AddNewSession(const AbstractReflectSessionRef & ref, const ConstSocketRef & socket);
 
    /** Convenience method:  Calls AddNewSession() with a NULL Socket reference, so the session's default socket
      * (obtained by calling ref()->CreateDefaultSocket()) will be used.
+     * @param ref New session to add to the server
+     * @return B_NO_ERROR if the new session was added successfully, or an error code if there was an error setting it up.
      */
    status_t AddNewSession(const AbstractReflectSessionRef & ref) {return AddNewSession(ref, ConstSocketRef());}
 
@@ -99,9 +101,9 @@ public:
     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
     *                              is used; typically this means that it will be left up to the operating system how long to wait
     *                              before timing out the connection attempt.
-    * @return B_NO_ERROR if the session was successfully added, or B_ERROR on error (out-of-memory?)
+    * @return B_NO_ERROR if the session was successfully added, or an error code on error.
     */
-   status_t AddNewConnectSession(const AbstractReflectSessionRef & ref, const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS); 
+   status_t AddNewConnectSession(const AbstractReflectSessionRef & ref, const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS); 
 
    /**
     * Like AddNewConnectSession(), except that the added session will not initiate
@@ -123,9 +125,9 @@ public:
     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
     *                              is used; typically this means that it will be left up to the operating system how long to wait
     *                              before timing out the connection attempt.
-    * @return B_NO_ERROR if the session was successfully added, or B_ERROR on error (out-of-memory?)
+    * @return B_NO_ERROR if the session was successfully added, or an error code on error.
     */
-   status_t AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
+   status_t AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
    /**
     * Should be called just before the ReflectServer is to be destroyed.
@@ -142,6 +144,7 @@ public:
 
    /** Set whether or not we should log informational messages when sessions are added and removed, etc.
      * Default state is true.
+     * @param log true iff we want log messages, false to suppress them
      */
    void SetDoLogging(bool log) {_doLogging = log;}
 
@@ -157,11 +160,50 @@ public:
    /** Returns a read-only reference to our table of sessions currently attached to this server. */
    const Hashtable<const String *, AbstractReflectSessionRef> & GetSessions() const {return _sessions;}
 
-   /** Convenience method:  Given a session ID string, returns a reference to the session, or a NULL reference if no such session exists. */
+   /** Convenience method:  Given a session ID string, returns a reference to the session, or a NULL reference if no such session exists.
+     * @param sessionName the session ID string of the session we are trying to look up (same as its numeric session ID, but in string form)
+     */
    AbstractReflectSessionRef GetSession(const String & sessionName) const;
 
-   /** Convenience method:  Given a session ID number, returns a reference to the session, or a NULL reference if no such session exists. */
+   /** Convenience method:  Given a session ID number, returns a reference to the session, or a NULL reference if no such session exists. 
+     * @param sessionID the numeric session ID of the session we are trying to look up
+     */
    AbstractReflectSessionRef GetSession(uint32 sessionID) const;
+
+   /** Convenience method:  Returns a pointer to the first session of the specified type.  Returns NULL if no session of the specified type is found.
+     * @note this method iterates over the session list, so it's not as efficient as one might hope.
+     */
+   template <class SessionType> SessionType * FindFirstSessionOfType() const
+   {
+      for (HashtableIterator<const String *, AbstractReflectSessionRef> iter(GetSessions()); iter.HasData(); iter++)
+      {
+         SessionType * ret = dynamic_cast<SessionType *>(iter.GetValue()());
+         if (ret) return ret;
+      }
+      return NULL;
+   };
+
+   /** Convenience method:  Populates the specified table with sessions of the specified session type.
+     * @param results The list of matching sessions is returned here.
+     * @param maxSessionsToReturn No more than this many sessions will be placed into the table.  Defaults to MUSCLE_NO_LIMIT.
+     * @returns B_NO_ERROR on success, or an B_OUT_OF_MEMORY on error.
+     */
+   template <class SessionType> status_t FindSessionsOfType(Queue<AbstractReflectSessionRef> & results, uint32 maxSessionsToReturn = MUSCLE_NO_LIMIT) const
+   {
+      if (maxSessionsToReturn > 0)
+      {
+         for (HashtableIterator<const String *, AbstractReflectSessionRef> iter(GetSessions()); iter.HasData(); iter++)
+         {
+            SessionType * ret = dynamic_cast<SessionType *>(iter.GetValue()());
+            if (ret)
+            {
+               if (results.AddTail(iter.GetValue()).IsError()) return B_OUT_OF_MEMORY;
+               if (--maxSessionsToReturn == 0) break;
+            }
+         }
+      }
+      return B_NO_ERROR;
+   }
 
    /** Returns an iterator that allows one to iterate over all the session factories currently attached to this server. */
    const Hashtable<IPAddressAndPort, ReflectSessionFactoryRef> & GetFactories() const {return _factories;}
@@ -173,7 +215,7 @@ public:
      *                       (when it was passed in to PutAcceptFactory()), then specify that address again here.
      *                       Defaults to (invalidIP), indicating a factory that listens on all local network interfaces.
      */
-   ReflectSessionFactoryRef GetFactory(uint16 port, const ip_address & optInterfaceIP = invalidIP) const;
+   ReflectSessionFactoryRef GetFactory(uint16 port, const IPAddress & optInterfaceIP = invalidIP) const;
 
    /** Call this and the server will quit ASAP */
    void EndServer();
@@ -202,10 +244,10 @@ public:
      * name.  If an entry is found, it will be used verbatim; otherwise, a name will
      * be created based on the peer's IP address.  Useful for e.g. NAT remapping...
      */
-   Hashtable<ip_address, String> & GetAddressRemappingTable() {return _remapIPs;}
+   Hashtable<IPAddress, String> & GetAddressRemappingTable() {return _remapIPs;}
 
    /** Read-only implementation of the above */
-   const Hashtable<ip_address, String> & GetAddressRemappingTable() const {return _remapIPs;}
+   const Hashtable<IPAddress, String> & GetAddressRemappingTable() const {return _remapIPs;}
 
    /** Returns a number that is (hopefully) unique to each ReflectSession instance. 
      * This number will be different each time the server is run, but will remain the same for the duration of the server's life.
@@ -247,6 +289,19 @@ public:
 
    /** Returns the current SSL public key data, or a NULL ref if there isn't any. */
    const ConstByteBufferRef & GetSSLPublicKeyCertificate() const {return _publicKey;}
+
+   /** Sets the SSL pre-shared-key data that should be used to authenticate and
+     * encrypt either incoming or outgoing TCP connections.  Default state is empty strings.
+     * @param userName the user name to transmit (or expect)
+     * @param password the password to transmit (or expect)
+     */
+   void SetSSLPreSharedKeyLoginInfo(const String & userName, const String & password) {_pskUserName = userName; _pskPassword = password;}
+
+   /** Returns the PSK user name, as previously set via SetSSLPreSharedKeyLoginInfo().  Default is an empty string */
+   const String & GetSSLPreSharedKeyUserName() const {return _pskUserName;}
+
+   /** Returns the PSK password, as previously set via SetPreSharedKeyLoginInfo().  Default is an empty string */
+   const String & GetSSLPreSharedKeyPassword() const {return _pskPassword;}
 #endif
 
    /** Returns true iff our event loop is currently blocked inside the SocketMultiplexer::WaitForEvents() call.
@@ -258,17 +313,45 @@ public:
      */
    bool IsWaitingForEvents() const {return (_inWaitForEvents.GetCount() == 1);}
 
+   /** Implemented to call DisconnectSession() on any attached TCP-based sessions, just before 
+     * the computer goes to sleep, so that other computers won't have to deal with moribund 
+     * TCP connections that this computer won't handle while it's asleep.
+     *
+     * @note this method will only be called if you have attached a
+     *       DetectNetworkConfigChangesSession to this ReflectServer.
+     *
+     * This method also sets a computer-is-about-to-sleep flag so that any new TCP connections added
+     * in the time period between now and (when the computer actually goes to sleep) will be added
+     * only in dormant-mode, so that no TCP connection will actually happen until after the computer is
+     * re-awoken.
+     */
+   virtual void ComputerIsAboutToSleep() {SetComputerIsAboutToSleep(true);}
+
+   /** Implemented to call Reconnect() on any sessions that were previously disconnected
+     * by our ComputerIsAboutToSleep() call.
+     *
+     * @note this method will only be called if you have attached a 
+     *       DetectNetworkConfigChangesSession to this ReflectServer.
+     *
+     * This method also clears the computer-is-about-to-sleep flag that was set by
+     * the previous call to ComputerIsAboutToSleep()
+     */
+   virtual void ComputerJustWokeUp() {SetComputerIsAboutToSleep(false);}
+
 protected:
    /**
     * This version of AddNewSession (which is called by the previous 
     * version) assumes that the gateway, hostname, port, etc of the
     * new session have already been set up.
     * @param ref The new session to add.
-    * @return B_NO_ERROR if the new session was added successfully, or B_ERROR if there was an error setting it up.
+    * @return B_NO_ERROR if the new session was added successfully, or an error code if there was an error setting it up.
     */
    virtual status_t AttachNewSession(const AbstractReflectSessionRef & ref);
 
    /** Called by a session to send a message to its factory.  
+     * @param session the session that is sending the Message
+     * @param msgRef the Message that is being sent
+     * @param userData an application-specific user-data value
      * @see AbstractReflectSession::SendMessageToFactory() for details.
      */
    status_t SendMessageToFactory(AbstractReflectSession * session, const MessageRef & msgRef, void * userData);
@@ -277,14 +360,20 @@ protected:
     * Called by a session to get itself replaced (the
     * new session will continue using the same message io streams
     * as the old one)
-    * @return B_NO_ERROR on success, B_ERROR if the new session
-    * returns an error in its AttachedToServer() method.  If 
-    * B_ERROR is returned, then this call is guaranteed not to
-    * have had any effect on the old session.
+    * @param newSession the new session we want to have replace the old one
+    * @param replaceThisOne the old session that we want to go away
+    * @returns B_NO_ERROR on success, an error code if the new session
+    *          returns an error in its AttachedToServer() method.  If 
+    *          an error code is returned, then this call is guaranteed not to
+    *          have had any effect on the old session.
     */
    status_t ReplaceSession(const AbstractReflectSessionRef & newSession, AbstractReflectSession * replaceThisOne);
 
-   /** Called by a session to get itself removed & destroyed */
+   /** Called by a session to get itself removed & destroyed
+     * Causes the ReflectServer to place the session in the "lame duck sessions list", which will result in it being
+     * safely detached and removed from the ReflectServer at the next iteration of the event loop.
+     * @param which the session that wants to go away ASAP
+     */
    void EndSession(AbstractReflectSession * which);
 
    /** Called by a session to force its TCP connection to be closed
@@ -300,7 +389,7 @@ private:
    void AddLameDuckSession(const AbstractReflectSessionRef & whoRef);
    void AddLameDuckSession(AbstractReflectSession * who);  // convenience method ... less efficient
    void ShutdownIOFor(AbstractReflectSession * session);
-   status_t ClearLameDucks();  // returns B_NO_ERROR if the server should keep going, or B_ERROR otherwise
+   status_t ClearLameDucks();  // returns B_NO_ERROR if the server should keep going, or an error code otherwise
    uint32 DumpBoggedSessions();
    status_t RemoveAcceptFactoryAux(const IPAddressAndPort & iap);
    status_t FinalizeAsyncConnect(const AbstractReflectSessionRef & ref);
@@ -308,6 +397,8 @@ private:
    void LogAcceptFailed(int lvl, const char * desc, const char * ipbuf, const IPAddressAndPort & iap);
    uint32 CheckPolicy(Hashtable<AbstractSessionIOPolicyRef, Void> & policies, const AbstractSessionIOPolicyRef & policyRef, const PolicyHolder & ph, uint64 now) const;
    void CheckForOutOfMemory(const AbstractReflectSessionRef & optSessionRef);
+   void SetComputerIsAboutToSleep(bool isAboutToSleep);
+   bool IsSessionScheduledForPostSleepReconnect(const String & sessionID) const {return _sessionsToReconnectOnWakeup.ContainsKey(sessionID);}
 
    Hashtable<IPAddressAndPort, ReflectSessionFactoryRef> _factories;
    Hashtable<IPAddressAndPort, ConstSocketRef> _factorySockets;
@@ -322,20 +413,26 @@ private:
    bool _doLogging;
    uint64 _serverSessionID;
 
-   Hashtable<ip_address, String> _remapIPs;  // for v2.20; custom strings for "special" IP addresses
+   Hashtable<IPAddress, String> _remapIPs;  // for v2.20; custom strings for "special" IP addresses
    SocketMultiplexer _multiplexer;
 
 #ifdef MUSCLE_ENABLE_SSL
    ConstByteBufferRef _publicKey;  // used for making outgoing TCP connections
    ConstByteBufferRef _privateKey; // used for receiving incoming TCP connections
+   String _pskUserName;            // used for pre-shared-key connections
+   String _pskPassword;            // used for pre-shared-key connections
 #endif
    NestCount _inDoAccept;
    NestCount _inDoConnect;
 
    AtomicCounter _inWaitForEvents;
+   bool _computerIsAboutToSleep;
+   Hashtable<String, bool> _sessionsToReconnectOnWakeup;
+
+   DECLARE_COUNTED_OBJECT(ReflectServer);
 };
 DECLARE_REFTYPES(ReflectServer);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

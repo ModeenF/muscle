@@ -18,7 +18,9 @@ namespace muscle {
 static uint64 FileTimeToInt64(const FILETIME & ft) {return (((uint64)(ft.dwHighDateTime))<<32)|((uint64)ft.dwLowDateTime);}
 #endif
 
-CPULoadMeter :: CPULoadMeter() : _previousTotalTicks(0), _previousIdleTicks(0)
+CPULoadMeter :: CPULoadMeter()
+   : _previousTotalTicks(0)
+   , _previousIdleTicks(0)
 {
 #ifdef USE_KERNEL32_DLL_FOR_GETSYSTEMTIMES
    // Gotta dynamically load this system call, because the Borland headers doesn't know about it.  :^P
@@ -36,9 +38,9 @@ CPULoadMeter :: ~CPULoadMeter()
 
 float CPULoadMeter :: CalculateCPULoad(uint64 idleTicks, uint64 totalTicks)
 {
-   uint64 totalTicksSinceLastTime = totalTicks-_previousTotalTicks;
-   uint64 idleTicksSinceLastTime  = idleTicks-_previousIdleTicks;
-   float ret = 1.0f-((totalTicksSinceLastTime > 0) ? ((float)idleTicksSinceLastTime)/totalTicksSinceLastTime : 0);
+   const uint64 totalTicksSinceLastTime = totalTicks-_previousTotalTicks;
+   const uint64 idleTicksSinceLastTime  = idleTicks-_previousIdleTicks;
+   const float ret = 1.0f-((totalTicksSinceLastTime > 0) ? ((float)idleTicksSinceLastTime)/totalTicksSinceLastTime : 0);
    _previousTotalTicks = totalTicks;
    _previousIdleTicks  = idleTicks;
    return ret;
@@ -60,11 +62,11 @@ float CPULoadMeter :: GetCPULoad()
          if (strncmp(buf, "cpu ", 4) == 0)
          {
             StringTokenizer tok(false, &buf[4]); 
-            const char *                                  next = tok();
-            uint64 userTicks   = next ? Atoull(next) : 0; next = tok();
-            uint64 niceTicks   = next ? Atoull(next) : 0; next = tok();
-            uint64 systemTicks = next ? Atoull(next) : 0; next = tok();
-            uint64 idleTicks   = next ? Atoull(next) : 0;
+            const char *                                        next = tok();
+            const uint64 userTicks   = next ? Atoull(next) : 0; next = tok();
+            const uint64 niceTicks   = next ? Atoull(next) : 0; next = tok();
+            const uint64 systemTicks = next ? Atoull(next) : 0; next = tok();
+            const uint64 idleTicks   = next ? Atoull(next) : 0;
             sysLoadPercentage = CalculateCPULoad(idleTicks, userTicks+niceTicks+systemTicks+idleTicks);
             break;
          }
@@ -98,4 +100,4 @@ float CPULoadMeter :: GetCPULoad()
    return sysLoadPercentage;
 }
 
-}; // end namespace muscle
+} // end namespace muscle

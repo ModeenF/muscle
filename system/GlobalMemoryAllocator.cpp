@@ -51,6 +51,10 @@ namespace muscle {
 
 extern void SetFailedMemoryRequestSize(uint32 numBytes);  // FogBugz #7547
 
+static MemoryAllocatorRef _globalAllocatorRef;
+void SetCPlusPlusGlobalMemoryAllocator(const MemoryAllocatorRef & maRef) {_globalAllocatorRef = maRef;}
+const MemoryAllocatorRef & GetCPlusPlusGlobalMemoryAllocator() {return _globalAllocatorRef;}
+
 # if MUSCLE_ENABLE_MEMORY_PARANOIA > 0
 
 // Functions for converting user-visible pointers (etc) to our internal implementation and back
@@ -89,19 +93,19 @@ status_t MemoryParanoiaCheckBuffer(void * userPtr, bool crashIfInvalid)
          {
             foundCorruption = true;
             TCHECKPOINT;
-            printf("MEMORY GUARD CORRUPTION (%i words after rear):   buffer (%p,%u) (userptr=%p,%u) expected %p, got %p!\n", i+1, internalPtr, *internalPtr, userPtr, userBufLen, expectedRearVal, rearRead[i]);
+            printf("MEMORY GUARD CORRUPTION (%i words after rear):   buffer (%p,%zu) (userptr=%p,%zu) expected %p, got %p!\n", i+1, internalPtr, *internalPtr, userPtr, userBufLen, expectedRearVal, rearRead[i]);
          }
       }
       if (foundCorruption) 
       {
-         printf("CORRUPTED MEMORY BUFFER CONTENTS ARE (including %i front-guards and %i rear-guards of %u bytes each):\n", MUSCLE_ENABLE_MEMORY_PARANOIA, MUSCLE_ENABLE_MEMORY_PARANOIA, sizeof(size_t *));
+         printf("CORRUPTED MEMORY BUFFER CONTENTS ARE (including %i front-guards and %i rear-guards of %zu bytes each):\n", MUSCLE_ENABLE_MEMORY_PARANOIA, MUSCLE_ENABLE_MEMORY_PARANOIA, sizeof(size_t *));
          for (size_t i=0; i<*internalPtr; i++) printf("%02x ", ((char *)internalPtr)[i]); printf("\n");
          if (crashIfInvalid) 
          {
             fflush(stdout);
             MCRASH("MEMORY PARANOIA:  MEMORY CORRUPTION DETECTED!");
          }
-         return B_ERROR;
+         return B_LOGIC_ERROR;
       }
    }
    return B_NO_ERROR;
@@ -139,14 +143,14 @@ void * muscleAlloc(size_t userSize, bool retryOnFailure)
 {
    using namespace muscle;
 
-   size_t internalSize = CONVERT_USER_TO_INTERNAL_SIZE(userSize);
+   const size_t internalSize = CONVERT_USER_TO_INTERNAL_SIZE(userSize);
 
    void * userPtr = NULL;
    MemoryAllocator * ma = GetCPlusPlusGlobalMemoryAllocator()();
 
 #ifndef MUSCLE_SINGLE_THREAD_ONLY
    Mutex * glock = ma ? GetGlobalMuscleLock() : NULL;
-   if ((glock)&&(glock->Lock() != B_NO_ERROR))
+   if ((glock)&&(glock->Lock().IsError()))
    {
       printf("Error, muscleAlloc() could not lock the global muscle lock!\n");
       SetFailedMemoryRequestSize(userSize);   // FogBugz #7547
@@ -154,7 +158,7 @@ void * muscleAlloc(size_t userSize, bool retryOnFailure)
    }
 #endif
 
-   if ((ma == NULL)||(ma->AboutToAllocate(_currentlyAllocatedBytes, internalSize) == B_NO_ERROR))
+   if ((ma == NULL)||(ma->AboutToAllocate(_currentlyAllocatedBytes, internalSize).IsOK()))
    {
       size_t * internalPtr = (size_t *) malloc(internalSize);
       if (internalPtr)
@@ -219,9 +223,9 @@ void * muscleRealloc(void * oldUserPtr, size_t newUserSize, bool retryOnFailure)
       return NULL;
    }
 
-   size_t newInternalSize  = CONVERT_USER_TO_INTERNAL_SIZE(newUserSize);
-   size_t * oldInternalPtr = CONVERT_USER_TO_INTERNAL_POINTER(oldUserPtr);
-   size_t oldInternalSize  = *oldInternalPtr;
+   const size_t newInternalSize = CONVERT_USER_TO_INTERNAL_SIZE(newUserSize);
+   size_t * oldInternalPtr      = CONVERT_USER_TO_INTERNAL_POINTER(oldUserPtr);
+   const size_t oldInternalSize = *oldInternalPtr;
    if (newInternalSize == oldInternalSize) return oldUserPtr;  // same size as before?  Then we are already done!
 
    void * newUserPtr = NULL;
@@ -229,7 +233,7 @@ void * muscleRealloc(void * oldUserPtr, size_t newUserSize, bool retryOnFailure)
 
 #ifndef MUSCLE_SINGLE_THREAD_ONLY
    Mutex * glock = ma ? GetGlobalMuscleLock() : NULL;
-   if ((glock)&&(glock->Lock() != B_NO_ERROR)) 
+   if ((glock)&&(glock->Lock().IsError())) 
    {
       printf("Error, muscleRealloc() could not lock the global muscle lock!\n");
       SetFailedMemoryRequestSize(newUserSize);   // FogBugz #7547
@@ -237,11 +241,11 @@ void * muscleRealloc(void * oldUserPtr, size_t newUserSize, bool retryOnFailure)
    }
 #endif
 
-   size_t oldUserSize = CONVERT_INTERNAL_TO_USER_SIZE(oldInternalSize);
+   const size_t oldUserSize = CONVERT_INTERNAL_TO_USER_SIZE(oldInternalSize);
    if (newInternalSize > oldInternalSize)
    {
-      size_t growBy = newInternalSize-oldInternalSize;
-      if ((ma == NULL)||(ma->AboutToAllocate(_currentlyAllocatedBytes, growBy) == B_NO_ERROR))
+      const size_t growBy = newInternalSize-oldInternalSize;
+      if ((ma == NULL)||(ma->AboutToAllocate(_currentlyAllocatedBytes, growBy).IsOK()))
       {
          size_t * newInternalPtr = (size_t *) realloc(oldInternalPtr, newInternalSize);
          if (newInternalPtr)
@@ -284,7 +288,7 @@ void * muscleRealloc(void * oldUserPtr, size_t newUserSize, bool retryOnFailure)
    }
    else
    {
-      size_t shrinkBy = oldInternalSize-newInternalSize;
+      const size_t shrinkBy = oldInternalSize-newInternalSize;
       if (ma) ma->AboutToFree(_currentlyAllocatedBytes, shrinkBy);
       size_t * newInternalPtr = (size_t *) realloc(oldInternalPtr, newInternalSize);
       if (newInternalPtr)
@@ -331,7 +335,7 @@ void muscleFree(void * userPtr)
 
 #ifndef MUSCLE_SINGLE_THREAD_ONLY
       Mutex * glock = ma ? GetGlobalMuscleLock() : NULL;
-      if ((glock)&&(glock->Lock() != B_NO_ERROR)) 
+      if ((glock)&&(glock->Lock().IsError())) 
       {
          printf("Error, muscleFree() could not lock the global muscle lock!!!\n");
          return;  // serialize access to (ma)
@@ -359,7 +363,7 @@ void muscleFree(void * userPtr)
    }
 }
 
-}; // end namespace muscle
+} // end namespace muscle
 
 void * operator new(size_t s) THROW LPAREN BAD_ALLOC RPAREN
 {
@@ -389,8 +393,11 @@ void operator delete(  void * p) THROW LPAREN RPAREN {using namespace muscle; mu
 void operator delete[](void * p) THROW LPAREN RPAREN {using namespace muscle; muscleFree(p);}
 
 #else
+
+// this variable is here only to avoid a "libmuscle.a(GlobalMemoryAllocator.cpp.o) has no symbols" warning when linking
+int _globalMemoryAllocatorDummySymbol = 0;
+
 # if MUSCLE_ENABLE_MEMORY_PARANOIA > 0
 #  error "If you want to enable MUSCLE_ENABLE_MEMORY_PARANOIA, you must define MUSCLE_ENABLE_MEMORY_TRACKING also!"
 # endif
-status_t MemoryParanoiaCheckBuffer(void *, bool) {return B_NO_ERROR;}
 #endif

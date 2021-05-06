@@ -75,12 +75,12 @@ if __name__ == "__main__":
                  
                   # and subscribe to get updates regarding who else is on the server
                   subscribeMsg = message.Message(storage_reflect_constants.PR_COMMAND_SETPARAMETERS)
-                  subscribeMsg.PutBool("SUBSCRIBE:beshare/name", 1)
+                  subscribeMsg.PutBool("SUBSCRIBE:beshare/name", True)
                   mtt.SendOutgoingMessage(subscribeMsg)
                elif nextEvent == message_transceiver_thread.MTT_EVENT_DISCONNECTED:
                   print "Connection to server broken, goodbye!"
                   sys.exit(10)
-               elif nextEvent == None:     
+               elif nextEvent is None:     
                   break  # no more events to process, go back to sleep now
                else:
                   if nextEvent.what == NET_CLIENT_NEW_CHAT_TEXT:
@@ -98,9 +98,9 @@ if __name__ == "__main__":
                         print "("+sessionID+") "+user+": "+chatText
                   elif nextEvent.what == NET_CLIENT_PING:
                      fromSession = nextEvent.GetString("session") 
-                     if fromSession != None:
+                     if fromSession is not None:
                         nextEvent.what = NET_CLIENT_PONG
-                        nextEvent.PutString(storage_reflect_constants.PR_NAME_KEYS, "/*/"+fromSession+"/beshare");
+                        nextEvent.PutString(storage_reflect_constants.PR_NAME_KEYS, "/*/"+fromSession+"/beshare")
                         nextEvent.PutString("session", "blah")   # server will set this
                         nextEvent.PutString("version", "PythonChat v" + VERSION_STRING)
                         mtt.SendOutgoingMessage(nextEvent)
@@ -119,11 +119,11 @@ if __name__ == "__main__":
                      keys = nextEvent.GetFieldNames()
                      for fieldName in keys:
                         sessionID = GetSessionID(fieldName)
-                        if sessionID != None:
+                        if sessionID is not None:
                            datamsg = nextEvent.GetMessage(fieldName)
-                           if datamsg != None:
+                           if datamsg is not None:
                               username = datamsg.GetString("name")
-                              if username != None:
+                              if username is not None:
                                  if users.has_key(sessionID):
                                     print "User ("+sessionID+") (a.k.a. "+users[sessionID]+") is now known as " + username
                                  else:
@@ -132,17 +132,17 @@ if __name__ == "__main__":
                         
          if sys.stdin in inReady:
             usertyped = sys.stdin.readline().strip()
-            if usertyped == "/quit":
+            if (not usertyped) or (usertyped == "/quit"):
                print "Exiting!"
                mtt.Destroy()  # important, or we'll hang
                sys.exit(0)
-            if len(usertyped) > 0:
+            if usertyped:
                chatMsg = message.Message(NET_CLIENT_NEW_CHAT_TEXT)
                chatMsg.PutString(storage_reflect_constants.PR_NAME_KEYS, "/*/*/beshare")
                chatMsg.PutString("session", "blah")  # server will set this for us
                chatMsg.PutString("text", usertyped)
-            mtt.SendOutgoingMessage(chatMsg)
+               mtt.SendOutgoingMessage(chatMsg)
    except:
-      if mtt != None:
+      if mtt is not None:
          mtt.Destroy()
       raise

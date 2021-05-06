@@ -108,13 +108,11 @@ status_t ConvertFromBMessage(const BMessage & from, Message & to)
                BMessage bmsg;
                if (bmsg.Unflatten(static_cast<const char *>(nextItem)) != B_NO_ERROR) return B_ERROR;
                Message * newMsg = newnothrow Message;
-               if (newMsg)
-               {
-                  MessageRef msgRef(newMsg);
-                  if (ConvertFromBMessage(bmsg, *newMsg) != B_NO_ERROR) return B_ERROR;
-                  if (to.AddMessage(name, msgRef) != B_NO_ERROR) return B_ERROR;
-               }
-               else {WARN_OUT_OF_MEMORY; return B_ERROR;}
+               MRETURN_OOM_ON_NULL(newMsg);
+
+               MessageRef msgRef(newMsg);
+               if (ConvertFromBMessage(bmsg, *newMsg) != B_NO_ERROR) return B_ERROR;
+               if (to.AddMessage(name, msgRef) != B_NO_ERROR) return B_ERROR;
             }
             break;
 
@@ -122,10 +120,9 @@ status_t ConvertFromBMessage(const BMessage & from, Message & to)
                if (to.AddData(name, type, nextItem, itemSize) != B_NO_ERROR) return B_ERROR;
             break;
          }
-
       }
    }
    return B_NO_ERROR;
 }
 
-}; // end namespace muscle
+} // end namespace muscle

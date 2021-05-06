@@ -35,18 +35,18 @@ int main(int argc, char ** argv)
          SocketMultiplexer multiplexer;
          while(1)
          {
-            if ((pingSent == false)&&(ioGateway.AddOutgoingMessage(MessageRef(&pingMessage, false)) == B_NO_ERROR)) 
+            if ((pingSent == false)&&(ioGateway.AddOutgoingMessage(MessageRef(&pingMessage, false)).IsOK())) 
             {
                pingSent = true;
                lastThrowTime = GetRunTime64();
             }
 
-            int fd = s.GetFileDescriptor();
+            const int fd = s.GetFileDescriptor();
             multiplexer.RegisterSocketForReadReady(fd);
             if (ioGateway.HasBytesToOutput()) multiplexer.RegisterSocketForWriteReady(fd);
             if (multiplexer.WaitForEvents() < 0)
             {
-               LogTime(MUSCLE_LOG_ERROR, "WaitForEvents() failed, aborting!\n");
+               LogTime(MUSCLE_LOG_ERROR, "WaitForEvents() failed, aborting! [%s]\n", B_ERRNO());
                break;
             }
             if (multiplexer.IsSocketReadyForRead(fd))
@@ -58,11 +58,11 @@ int main(int argc, char ** argv)
                }
 
                MessageRef next;
-               while(inQueue.RemoveHead(next) == B_NO_ERROR)
+               while(inQueue.RemoveHead(next).IsOK())
                {
                   if ((pingSent)&&(next()->what == PR_RESULT_PONG))
                   {
-                     uint64 result = GetRunTime64()-lastThrowTime;
+                     const uint64 result = GetRunTime64()-lastThrowTime;
                      min = muscleMin(min, result);
                      max = muscleMax(max, result);
                      total += result;

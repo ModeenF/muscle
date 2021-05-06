@@ -11,6 +11,12 @@
 
 namespace muscle {
 
+/** @defgroup systemlog The SystemLog function API
+ *  These functions are all defined in SystemLog(.cpp,.h), and are stand-alone
+ *  functions that provide console-logging and log-file generation functionality to MUSCLE programs.
+ *  @{
+ */
+
 class String;
 class LogCallbackArgs;
 
@@ -72,7 +78,7 @@ static inline status_t Log(int, const char * fmt, ...) {va_list va; va_start(va,
 static inline status_t LogTime(int logLevel, const char * fmt, ...) {printf("%i: ", logLevel); va_list va; va_start(va, fmt); vprintf(fmt, va); va_end(va); return B_NO_ERROR;}
 
 // Minimalist version of WarnOutOfMemory()
-static inline void WarnOutOfMemory(const char * file, int line) {printf("ERROR--OUT OF MEMORY!  (%s:%i)\n", file, line);}
+static inline void WarnOutOfMemory(const char * file, int line) {printf("ERROR--MEMORY ALLOCATION FAILURE!  (%s:%i)\n", file, line);}
 
 // Minimumist version of LogFlush(), just flushes stdout
 static inline status_t LogFlush() {fflush(stdout); return B_NO_ERROR;}
@@ -164,7 +170,7 @@ int GetMaxLogLevel();
  *  Any calls to Log*() that specify a log level greater than (loglevel)
  *  will be suppressed.  Default level is MUSCLE_LOG_NONE (i.e. no file logging is done)
  *  @param loglevel The MUSCLE_LOG_* value to use in determining which log messages to save to disk.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t SetFileLogLevel(int loglevel);
 
@@ -177,17 +183,17 @@ void CloseCurrentLogFile();
  *                 Note that this string can contain any of the special tokens described by the
  *                 HumanReadableTimeValues::ExpandTokens() method, and these values will be expanded
  *                 out when the log file is opened.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t SetFileLogName(const String & logName);
 
-/** Sets a user-specified maximum size for the log file.  Once a log file has reached this size,
+/** Sets a user-specified maximum size (in bytes) for the log file.  Once a log file has reached this size,
   * it will be closed and a new log file opened (note that the new log file's name will be the same
   * as the old log file, overwriting it, unless you specify a date/time token via SetFileLogName()
   * that will expand out differently).
   * Default state is no limit on log file size.  (aka MUSCLE_NO_LIMIT)
   * @param maxSizeBytes The maximum allowable log file size, or MUSCLE_NO_LIMIT to allow any size log file.
-  * @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
   */
 status_t SetFileLogMaximumSize(uint32 maxSizeBytes);
 
@@ -195,7 +201,7 @@ status_t SetFileLogMaximumSize(uint32 maxSizeBytes);
   * is allowed to delete.
   * @param pattern The pattern to match against (e.g. "/var/log/mylogfiles-*.txt").  The matching will
   *                be done immediately/synchronously inside this call.
-  * @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
   */
 status_t SetOldLogFilesPattern(const String & pattern);
 
@@ -204,14 +210,14 @@ status_t SetOldLogFilesPattern(const String & pattern);
   * space taken up by log files limited to a finite amount.
   * Default state is no limit on the number of log files.  (aka MUSCLE_NO_LIMIT)
   * @param maxNumLogFiles The maximum allowable number of log files, or MUSCLE_NO_LIMIT to allow any number of log files.
-  * @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
   */
 status_t SetMaxNumLogFiles(uint32 maxNumLogFiles);
 
 /** Set this to true if you want log files to be compressed when they are closed (and given a .gz extension).
   * or false if they should be left in raw text form.
   * @param enable True to enable log file compression; false otherwise.
-  * @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
   */
 status_t SetFileLogCompressionEnabled(bool enable);
 
@@ -219,34 +225,34 @@ status_t SetFileLogCompressionEnabled(bool enable);
  *  Any calls to Log*() that specify a log level greater than (loglevel)
  *  will be suppressed.  Default level is MUSCLE_LOG_INFO.
  *  @param loglevel The MUSCLE_LOG_* value to use in determining which log messages to print to stdout.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t SetConsoleLogLevel(int loglevel);
 
 /** Same semantics as printf, only outputs to the log file/console instead
  *  @param logLevel a MUSCLE_LOG_* value indicating the "severity" of this message.
  *  @param fmt A printf-style format string (e.g. "hello %s\n").  Note that \n is NOT added for you.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t Log(int logLevel, const char * fmt, ...);
 
-/** Calls LogTime() with a critical "OUT OF MEMORY" Message.
+/** Calls LogTime() with a critical "MEMORY ALLOCATION FAILURE" Message.
   * Note that you typically wouldn't call this function directly;
-  * rather you should call the WARN_OUT_OF_MEMORY macro and it will
+  * rather you should call the MWARN_OUT_OF_MEMORY macro and it will
   * call WarnOutOfMemory() for you, with the correct arguments.
   * @param file Name of the source file where the memory failure occurred.
   * @param line Line number where the memory failure occurred.
   */
 void WarnOutOfMemory(const char * file, int line);
 
-#ifdef MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME
-# if defined(_MSC_VER)
-#  define LogTime(logLevel, ...)     _LogTime(__FILE__, __FUNCTION__, __LINE__, logLevel, __VA_ARGS__)
-# elif defined(__GNUC__)
-#  define LogTime(logLevel, args...) _LogTime(__FILE__, __FUNCTION__, __LINE__, logLevel, args)
-# else
-#  define LogTime(logLevel, args...) _LogTime(__FILE__, "",           __LINE__, logLevel, args)
+#ifdef MUSCLE_LOG_VERBOSE_SOURCE_LOCATIONS
+# ifndef MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME
+#  define MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME 1
 # endif
+#endif
+
+#ifdef MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME
+# define LogTime(logLevel, ...) _LogTime(__FILE__, __FUNCTION__, __LINE__, logLevel, __VA_ARGS__)
 status_t _LogTime(const char * sourceFile, const char * optSourceFunction, int line, int logLevel, const char * fmt, ...);
 #else
 
@@ -254,7 +260,7 @@ status_t _LogTime(const char * sourceFile, const char * optSourceFunction, int l
  *  e.g. LogTime(MUSCLE_LOG_INFO, "Hello %s!", "world") would generate "[I 12/18 12:11:49] Hello world!"
  *  @param logLevel a MUSCLE_LOG_* value indicating the "severity" of this message.
  *  @param fmt A printf-style format string (e.g. "hello %s\n").  Note that \n is NOT added for you.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t LogTime(int logLevel, const char * fmt, ...);
 
@@ -262,14 +268,14 @@ status_t LogTime(int logLevel, const char * fmt, ...);
 
 /** Ensures that all previously logged output is actually sent.  That is, it simply 
  *  calls fflush() on any streams that we are logging to.
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log lock couldn't be locked for some reason.
  */
 status_t LogFlush();
 
 /** Attempts to lock the Mutex that is used to serialize LogCallback calls.
   * Typically you won't need to call this function, as it is called for you
   * before any LogCallback calls are made.
-  * @returns B_NO_ERROR on success or B_ERROR on failure.
+  * @returns B_NO_ERROR on success or B_LOCK_FAILED on failure.
   * @note Be sure to call UnlockLog() when you are done!
   */
 status_t LockLog();
@@ -279,7 +285,7 @@ status_t LockLog();
   * after any LogCallback calls are made.  The only time you need to call it
   * is after you've made a call to LockLog() and are now done with your critical
   * section.
-  * @returns B_NO_ERROR on success or B_ERROR on failure.
+  * @returns B_NO_ERROR on success or B_LOCK_FAILED on failure.
   */
 status_t UnlockLog();
 
@@ -291,16 +297,16 @@ status_t UnlockLog();
   * @param maxDepth The maximum number of levels of stack trace that we should print out.  Defaults to
   *                 64.  The absolute maximum is 256; if you specify a value higher than that, you will still get 256.
   * @note This function is currently only implemented under Linux and MacOS/X Leopard; for other OS's, this function is a no-op.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED on failure.
   */
 status_t PrintStackTrace(FILE * optFile = NULL, uint32 maxDepth = 64);
 
-/** Logs out a stack trace, if possible.  Returns B_ERROR if not.
+/** Logs out a stack trace, if possible.
  *  @note Currently only works under Linux and MacOS/X Leopard, and then only if -rdynamic is specified as a compile flag.
  *  @param logLevel a MUSCLE_LOG_* value indicating the "severity" of this message.
  *  @param maxDepth The maximum number of levels of stack trace that we should print out.  Defaults to
  *                  64.  The absolute maximum is 256; if you specify a value higher than that, you will still get 256.
- *  @returns B_NO_ERROR on success, or B_ERROR if a stack trace couldn't be logged because the platform doesn't support it.
+ *  @returns B_NO_ERROR on success, or B_UNIMPLEMENTED if a stack trace couldn't be logged because the platform doesn't support it.
  */
 status_t LogStackTrace(int logLevel = MUSCLE_LOG_INFO, uint32 maxDepth = 64);
 
@@ -309,7 +315,7 @@ status_t LogStackTrace(int logLevel = MUSCLE_LOG_INFO, uint32 maxDepth = 64);
   * @param retStr On success, the stack trace is written to this String object.
   * @param maxDepth The maximum number of levels of stack trace that we should print out.  Defaults to
   *                 64.  The absolute maximum is 256; if you specify a value higher than that, you will still get 256.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or B_UNIMPLEMENTED if a stack trace couldn't be logged because the platform doesn't support it.
   * @note This function is currently only implemented under Linux and MacOS/X Leopard; for other OS's, this function is a no-op.
   */
 status_t GetStackTrace(String & retStr, uint32 maxDepth = 64);
@@ -336,17 +342,21 @@ void GetStandardLogLinePreamble(char * buf, const LogCallbackArgs & lca);
   * returns a corresponding uint32 that represents a hash of that location.
   * The source code location can be later looked up by feeding this hash value
   * as a command line argument into the muscle/tests/findsourcecodelocations program.
+  * @param fileName the filename associated with the location (e.g. as returned by the __FILE__ macro)
+  * @param lineNumber the line number within the file.
   */
 uint32 GenerateSourceCodeLocationKey(const char * fileName, uint32 lineNumber);
 
 /** Given a source-code location key (as returned by GenerateSourceCodeLocationKey()),
   * returns the standard human-readable representation of that value.  (e.g. "7QF2")
+  * @param key the source-code-location-key, represented as a uint32.
   */
 String SourceCodeLocationKeyToString(uint32 key);
 
 /** Given a standard human-readable representation of a source-code-location
   * key (e.g. "7EF2"), returns the uint16 key value.  This is the inverse
   * function of SourceCodeLocationKeyToString().
+  * @param s the source-code-location-key, represented as a human-readable string.
   */
 uint32 SourceCodeLocationKeyFromString(const String & s);
 
@@ -395,31 +405,47 @@ public:
    /** Returns the microsecond value (which ranges between 0 and 999999, inclusive). */
    int GetMicrosecond() const {return _microsecond;}
 
-   /** Sets the year value (e.g. 2005) */
+   /** Sets the year value (e.g. 2005)
+     * @param year new year value A.D. (in full four-digit form)
+     */
    void SetYear(int year) {_year = year;}
 
-   /** Sets the month value (January=0, February=1, March=2, ..., December=11). */
+   /** Sets the month value (January=0, February=1, March=2, ..., December=11).
+     * @param month new month-in-year value [0-11]
+     */
    void SetMonth(int month) {_month = month;}
 
-   /** Sets the day-of-month value (which ranges between 0 and 30, inclusive). */
+   /** Sets the day-of-month value (which ranges between 0 and 30, inclusive).
+     * @param dayOfMonth index of the new day-of-the-month field [0-30]
+     */
    void SetDayOfMonth(int dayOfMonth) {_dayOfMonth = dayOfMonth;}
 
-   /** Sets the day-of-week value (Sunday=0, Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6). */
+   /** Sets the day-of-week value (Sunday=0, Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6).
+     * @param dayOfWeek index of the new day-of-the-week field [0-6]
+     */
    void SetDayOfWeek(int dayOfWeek) {_dayOfWeek = dayOfWeek;}
 
-   /** Sets the hour value (which ranges between 0 and 23, inclusive). */
+   /** Sets the hour value (which ranges between 0 and 23, inclusive).
+     * @param hour the new hour-of-the-day index [0-23]
+     */
    void SetHour(int hour) {_hour = hour;}
 
-   /** Sets the minute value (which ranges between 0 and 59, inclusive). */
+   /** Sets the minute value (which ranges between 0 and 59, inclusive).
+     * @param minute the new minute-of-the-hour index [0-59]
+     */
    void SetMinute(int minute) {_minute = minute;}
 
-   /** Sets the second value (which ranges between 0 and 59, inclusive). */
+   /** Sets the second value (which ranges between 0 and 59, inclusive).
+     * @param second the new second-of-the-minute index [0-59]
+     */
    void SetSecond(int second) {_second = second;}
 
-   /** Sets the microsecond value (which ranges between 0 and 999999, inclusive). */
+   /** Sets the microsecond value (which ranges between 0 and 999999, inclusive).
+     * @param microsecond the new microsecond-of-the-second index [0-999999]
+     */
    void SetMicrosecond(int microsecond) {_microsecond = microsecond;}
 
-   /** Equality operator. */
+   /** @copydoc DoxyTemplate::operator==(const DoxyTemplate &) const */
    bool operator == (const HumanReadableTimeValues & rhs) const
    {
       return ((_year       == rhs._year)&&
@@ -432,7 +458,7 @@ public:
               (_microsecond == rhs._microsecond));
    }
 
-   /** Inequality operator */
+   /** @copydoc DoxyTemplate::operator!=(const DoxyTemplate &) const */
    bool operator != (const HumanReadableTimeValues & rhs) const {return !(*this==rhs);}
 
    /** This method will expand the following tokens in the specified String out to the following values:
@@ -493,7 +519,7 @@ enum {
   *                 Note that the values returned are ALWAYS in reference to local time 
   *                 zone -- the (timeType) argument governs how (timeUS) should be interpreted.  
   *                 (timeType) does NOT control the meaning of the return values.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t GetHumanReadableTimeValues(uint64 timeUS, HumanReadableTimeValues & retValues, uint32 timeType = MUSCLE_TIMEZONE_UTC);
 
@@ -504,7 +530,7 @@ status_t GetHumanReadableTimeValues(uint64 timeUS, HumanReadableTimeValues & ret
   * @param timeType If set to MUSCLE_TIMEZONE_UTC (the default) then (values) will be interpreted as being in UTC, 
   *                 and (retTimeUS) be converted to the local time zone as part of the conversion process.  If set to 
   *                 MUSCLE_TIMEZONE_LOCAL, on the other hand, then no time zone conversion will be done.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t GetTimeStampFromHumanReadableTimeValues(const HumanReadableTimeValues & values, uint64 & retTimeUS, uint32 timeType = MUSCLE_TIMEZONE_UTC);
 
@@ -562,10 +588,42 @@ uint64 ParseHumanReadableTimeIntervalString(const String & str);
   *                           the nearest second.  Defaults to zero for complete accuracy.
   * @param optRetIsAccurate If non-NULL, this value will be set to true if the returned string represents
   *                         (micros) down to the nearest microsecond, or false if the string is an approximation.
+  * @param roundUp If specified true, and we have to round off to the nearest unit in order to return a more
+  *                succinct human-readable string, then setting this to true will allow the figure in the final
+  *                position to be rounded up to the nearest unit, rather than always being rounded down.
   * @returns a human-readable time interval description string.
   */
-String GetHumanReadableTimeIntervalString(uint64 micros, uint32 maxClauses = MUSCLE_NO_LIMIT, uint64 minPrecisionMicros = 0, bool * optRetIsAccurate = NULL);
+String GetHumanReadableTimeIntervalString(uint64 micros, uint32 maxClauses = MUSCLE_NO_LIMIT, uint64 minPrecisionMicros = 0, bool * optRetIsAccurate = NULL, bool roundUp = false);
 
-}; // end namespace muscle
+/** Works the same as GetHumanReadableTimeIntervalString() except it interprets the passed-in microseconds value
+  * as a signed integer rather than unsigned, and thus will yield a useful result for negative values
+  * (e.g. "-3 seconds" rather than "54893 years").
+  * @param micros The number of microseconds to describe
+  * @param maxClauses The maximum number of clauses to allow in the returned string.  For example, passing this in
+  *                   as 1 might return "3 weeks", while passing this in as two might return "3 weeks, 2 days".
+  *                   Default value is MUSCLE_NO_LIMIT, indicating that no maximum should be enforced.
+  * @param minPrecisionMicros The maximum number of microseconds the routine is allowed to ignore
+  *                           when generating its string.  For example, if this value was passed in
+  *                           as 1000000, the returned string would describe the interval down to
+  *                           the nearest second.  Defaults to zero for complete accuracy.
+  * @param optRetIsAccurate If non-NULL, this value will be set to true if the returned string represents
+  *                         (micros) down to the nearest microsecond, or false if the string is an approximation.
+  * @param roundUp If specified true, and we have to round off to the nearest unit in order to return a more
+  *                succinct human-readable string, then setting this to true will allow the figure in the final
+  *                position to be rounded up to the nearest unit, rather than always being rounded down.
+  * @returns a human-readable time interval description string.
+  */
+String GetHumanReadableSignedTimeIntervalString(int64 micros, uint32 maxClauses = MUSCLE_NO_LIMIT, uint64 minPrecisionMicros = 0, bool * optRetIsAccurate = NULL, bool roundUp = false);
+
+/** Works the same as ParseHumanReadableTimeIntervalString(), except that if the string
+  * starts with a - sign, a negative value will be returned. 
+  * @param str The string to parse 
+  * @returns a time interval value, in microseconds.
+  */
+int64 ParseHumanReadableSignedTimeIntervalString(const String & str);
+
+/** @} */ // end of systemlog doxygen group
+
+} // end namespace muscle
 
 #endif

@@ -5,7 +5,11 @@
 
 namespace muscle {
 
-FilterSessionFactory :: FilterSessionFactory(const ReflectSessionFactoryRef & slaveRef, uint32 msph, uint32 tms) : ProxySessionFactory(slaveRef), _tempLogFor(NULL), _maxSessionsPerHost(msph), _totalMaxSessions(tms)
+FilterSessionFactory :: FilterSessionFactory(const ReflectSessionFactoryRef & slaveRef, uint32 msph, uint32 tms)
+   : ProxySessionFactory(slaveRef)
+   , _tempLogFor(NULL)
+   , _maxSessionsPerHost(msph)
+   , _totalMaxSessions(tms)
 {
    // empty
 }
@@ -90,14 +94,14 @@ void FilterSessionFactory :: MessageReceivedFromSession(AbstractReflectSession &
    {
       _tempLogFor = &from;
       const String * s;
-      for (int b=0; (msg->FindString(PR_NAME_KEYS, b, &s) == B_NO_ERROR); b++)
+      for (int b=0; (msg->FindString(PR_NAME_KEYS, b, &s).IsOK()); b++)
       {
          switch(msg->what)
          {
-            case PR_COMMAND_ADDBANS:        PutBanPattern(*s);                 break;
-            case PR_COMMAND_ADDREQUIRES:    PutRequirePattern(*s);             break;
-            case PR_COMMAND_REMOVEBANS:     RemoveMatchingBanPatterns(*s);     break;                    
-            case PR_COMMAND_REMOVEREQUIRES: RemoveMatchingRequirePatterns(*s); break;                    
+            case PR_COMMAND_ADDBANS:        (void) PutBanPattern(*s);                 break;
+            case PR_COMMAND_ADDREQUIRES:    (void) PutRequirePattern(*s);             break;
+            case PR_COMMAND_REMOVEBANS:            RemoveMatchingBanPatterns(*s);     break;                    
+            case PR_COMMAND_REMOVEREQUIRES:        RemoveMatchingRequirePatterns(*s); break;                    
          }
       }
       _tempLogFor = NULL;
@@ -109,18 +113,17 @@ status_t FilterSessionFactory :: PutBanPattern(const String & banPattern)
    TCHECKPOINT;
 
    if (_bans.ContainsKey(banPattern)) return B_NO_ERROR;
-   StringMatcherRef newMatcherRef(newnothrow StringMatcher(banPattern));
-   if (newMatcherRef())
-   {
-      if (_bans.Put(banPattern, newMatcherRef) == B_NO_ERROR) 
-      {
-         if (_tempLogFor) LogTime(MUSCLE_LOG_DEBUG, "Session [%s/%s] is banning [%s] on port %u\n", _tempLogFor->GetHostName()(), _tempLogFor->GetSessionIDString()(), banPattern(), _tempLogFor->GetPort());
-         return B_NO_ERROR;
-      }
-   }
-   else WARN_OUT_OF_MEMORY;
 
-   return B_ERROR;
+   StringMatcherRef newMatcherRef(newnothrow StringMatcher(banPattern));
+   MRETURN_OOM_ON_NULL(newMatcherRef());
+
+   status_t ret;
+   if (_bans.Put(banPattern, newMatcherRef).IsOK(ret))
+   {
+      if (_tempLogFor) LogTime(MUSCLE_LOG_DEBUG, "Session [%s/%s] is banning [%s] on port %u\n", _tempLogFor->GetHostName()(), _tempLogFor->GetSessionIDString()(), banPattern(), _tempLogFor->GetPort());
+      return B_NO_ERROR;
+   }
+   return ret;
 }
 
 status_t FilterSessionFactory :: PutRequirePattern(const String & requirePattern)
@@ -128,18 +131,17 @@ status_t FilterSessionFactory :: PutRequirePattern(const String & requirePattern
    TCHECKPOINT;
 
    if (_requires.ContainsKey(requirePattern)) return B_NO_ERROR;
-   StringMatcherRef newMatcherRef(newnothrow StringMatcher(requirePattern));
-   if (newMatcherRef())
-   {
-      if (_requires.Put(requirePattern, newMatcherRef) == B_NO_ERROR) 
-      {
-         if (_tempLogFor) LogTime(MUSCLE_LOG_DEBUG, "Session [%s/%s] is requiring [%s] on port %u\n", _tempLogFor->GetHostName()(), _tempLogFor->GetSessionIDString()(), requirePattern(), _tempLogFor->GetPort());
-         return B_NO_ERROR;
-      }
-   }
-   else WARN_OUT_OF_MEMORY;
 
-   return B_ERROR;
+   StringMatcherRef newMatcherRef(newnothrow StringMatcher(requirePattern));
+   MRETURN_OOM_ON_NULL(newMatcherRef());
+
+   status_t ret;
+   if (_requires.Put(requirePattern, newMatcherRef).IsOK(ret))
+   {
+      if (_tempLogFor) LogTime(MUSCLE_LOG_DEBUG, "Session [%s/%s] is requiring [%s] on port %u\n", _tempLogFor->GetHostName()(), _tempLogFor->GetSessionIDString()(), requirePattern(), _tempLogFor->GetPort());
+      return B_NO_ERROR;
+   }
+   return ret;
 }
 
 status_t FilterSessionFactory :: RemoveBanPattern(const String & banPattern)
@@ -150,7 +152,7 @@ status_t FilterSessionFactory :: RemoveBanPattern(const String & banPattern)
       (void) _bans.Remove(banPattern);
       return B_NO_ERROR;
    }
-   return B_ERROR;
+   else return B_DATA_NOT_FOUND;
 }
 
 status_t FilterSessionFactory :: RemoveRequirePattern(const String & requirePattern)
@@ -161,20 +163,20 @@ status_t FilterSessionFactory :: RemoveRequirePattern(const String & requirePatt
       (void) _requires.Remove(requirePattern);
       return B_NO_ERROR;
    }
-   return B_ERROR;
+   return B_DATA_NOT_FOUND;
 }
 
 void FilterSessionFactory :: RemoveMatchingBanPatterns(const String & exp)
 {
    StringMatcher sm(exp);
-   for (HashtableIterator<String, StringMatcherRef> iter(_bans); iter.HasData(); iter++) if (sm.Match(iter.GetKey()())) RemoveBanPattern(iter.GetKey());
+   for (HashtableIterator<String, StringMatcherRef> iter(_bans); iter.HasData(); iter++) if (sm.Match(iter.GetKey()())) (void) RemoveBanPattern(iter.GetKey());
 }
 
 
 void FilterSessionFactory :: RemoveMatchingRequirePatterns(const String & exp)
 {
    StringMatcher sm(exp);
-   for (HashtableIterator<String, StringMatcherRef> iter(_requires); iter.HasData(); iter++) if (sm.Match(iter.GetKey()())) RemoveRequirePattern(iter.GetKey());
+   for (HashtableIterator<String, StringMatcherRef> iter(_requires); iter.HasData(); iter++) if (sm.Match(iter.GetKey()())) (void) RemoveRequirePattern(iter.GetKey());
 }
 
-}; // end namespace muscle
+} // end namespace muscle

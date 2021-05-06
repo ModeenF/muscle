@@ -4,8 +4,15 @@
 #define MuscleSystemInfos_h
 
 #include "util/String.h"
+#include "util/Queue.h"
 
 namespace muscle {
+
+/** @defgroup systeminfo The SystemInfo function API
+ *  These functions are all defined in SystemInfo(.cpp,.h), and are stand-alone
+ *  functions that provide information about the computer and OS that the program is executing on.
+ *  @{
+ */
 
 /** Returns a human-readable name for the operating system that the code has 
   * been compiled on.  For example, "Windows", "MacOS/X", or "Linux".  If the 
@@ -14,6 +21,7 @@ namespace muscle {
   */
 const char * GetOSName(const char * defaultString = "Unknown");
 
+/** An enumeration of filesystem locations that can be passed to GetSystemPath() */
 enum {
    SYSTEM_PATH_CURRENT = 0, /**< our current working directory */
    SYSTEM_PATH_EXECUTABLE,  /**< directory where our process's executable binary is  */
@@ -32,15 +40,14 @@ enum {
   * @param outStr on success, this string will contain the appopriate
   *               path name,  The path is guaranteed to end with a file
   *               separator character (i.e. "/" or "\\", as appropriate).
-  * @returns B_NO_ERROR on success, or B_ERROR if the requested path could
+  * @returns B_NO_ERROR on success, or B_BAD_ARGUMENT if the requested path could
   *          not be determined. 
   */
 status_t GetSystemPath(uint32 whichPath, String & outStr);
 
 /** Queries the number of CPU processing cores available on this computer.
   * @param retNumProcessors On success, the number of cores is placed here
-  * @returns B_NO_ERROR on success, or B_ERROR if the number of processors
-  *          could not be determined (e.g. call is unimplemented on this OS)
+  * @returns B_NO_ERROR on success, or B_UNIMPLEMENTED, or some other error code.
   */
 status_t GetNumberOfProcessors(uint32 & retNumProcessors);
 
@@ -57,6 +64,26 @@ inline const char * GetFilePathSeparator()
 #endif
 }
 
-}; // end namespace muscle
+/** Convenience method for debugging.  Returns a list of human-readable strings
+  * of the various MUSCLE-specific build flags (as documented in BUILDOPTIONS.txt)
+  * that the MUSCLE codebase was compiled.
+  */
+Queue<String> GetBuildFlags();
+
+/** Convenience method for debugging.  Dumps a human-readable record of the 
+  * various MUSCLE-specific build flags (as documented in BUILDOPTIONS.txt)
+  * that the MUSCLE codebase was compiled with to the log, at the specified log level.
+  * @param logLevel Optional MUSCLE_LOG_* value to log at.  Defaults to MUSCLE_LOG_INFO.
+  */
+void LogBuildFlags(int logLevel = MUSCLE_LOG_INFO);
+
+/** Same as LogBuildFlags() except the text is printed directly to stdout
+  * rather than going through the LogTime() logging function.
+  */
+void PrintBuildFlags();
+
+/** @} */ // end of systeminfo doxygen group
+
+} // end namespace muscle
 
 #endif

@@ -14,7 +14,13 @@ namespace muscle {
 //#define DISABLE_OBJECT_POOLING 1
 
 #ifndef DEFAULT_MUSCLE_POOL_SLAB_SIZE
+/** Default maximum size of each ObjectPool "slab", in bytes.  Defaults to 4096, since that corresponds nicely to a standard kernel-page size. */
 # define DEFAULT_MUSCLE_POOL_SLAB_SIZE (4*1024)  // let's have each slab fit nicely into a 4KB page
+#endif
+
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+class String;
+extern void PrintAllocationStackTrace(const void * slabThis, const void * obj, uint32 slabIdx, uint32 numObjectsPerSlab, const String & optStackStr);
 #endif
 
 /** An interface that must be implemented by all ObjectPool classes.
@@ -93,7 +99,10 @@ class AbstractObjectManager : public AbstractObjectGenerator, public AbstractObj
  *  you call myObjectPool.ObtainObject(), and instead of calling 'delete Object', you call
  *  myObjectPool.ReleaseObject().  The advantage is that the ObjectPool will
  *  keep (up to a certain number of) "spare" Objects around, and recycle them back
- *  to you as needed. 
+ *  to you as needed.  Note that this class is generally not used directly, but rather is
+ *  used in conjuction with the Ref<> and RefCount classes to provide efficient, automatic,
+ *  and memory-leak-resistant reference-counting combined with object-pooling.  See 
+ *  GetMessageFromPool() for an example of this.
  */
 template <class Object, int MUSCLE_POOL_SLAB_SIZE=DEFAULT_MUSCLE_POOL_SLAB_SIZE> class ObjectPool : public AbstractObjectManager
 {
@@ -137,17 +146,17 @@ public:
 #ifdef DISABLE_OBJECT_POOLING
       Object * ret = newnothrow Object;
       if (ret) ret->SetManager(this);
-          else WARN_OUT_OF_MEMORY;
+          else MWARN_OUT_OF_MEMORY;
       return ret;
 #else
       Object * ret = NULL;
-      if (_mutex.Lock() == B_NO_ERROR)
+      if (_mutex.Lock().IsOK())
       {
          ret = ObtainObjectAux();
          _mutex.Unlock();
       }
       if (ret) ret->SetManager(this);
-          else WARN_OUT_OF_MEMORY;
+          else MWARN_OUT_OF_MEMORY;
       return ret;
 #endif
    }
@@ -168,13 +177,13 @@ public:
 #ifdef DISABLE_OBJECT_POOLING
          delete obj;
 #else
-         if (_mutex.Lock() == B_NO_ERROR)
+         if (_mutex.Lock().IsOK())
          {
             ObjectSlab * slabToDelete = ReleaseObjectAux(obj);
             _mutex.Unlock();
             delete slabToDelete;  // do this outside the critical section, for better concurrency
          }
-         else WARN_OUT_OF_MEMORY;  // critical error -- not really out of memory but still
+         else MWARN_OUT_OF_MEMORY;  // critical error -- not really out of memory but still
 #endif
       }
    }
@@ -182,7 +191,9 @@ public:
    /** AbstractObjectGenerator API:  Useful for polymorphism */
    virtual void * ObtainObjectGeneric() {return ObtainObject();}
 
-   /** AbstractObjectRecycler API:  Useful for polymorphism */
+   /** AbstractObjectRecycler API:  Useful for polymorphism
+     * @param obj the object to recycle
+     */
    virtual void RecycleObject(void * obj) {ReleaseObject((Object *)obj);}
     
    /** Implemented to call Drain() and return the number of objects drained. */
@@ -198,7 +209,7 @@ public:
       uint32 minItemsInUseInSlab = MUSCLE_NO_LIMIT;
       uint32 maxItemsInUseInSlab = 0;
       uint32 totalItemsInUse     = 0;
-      if (_mutex.Lock() == B_NO_ERROR)
+      if (_mutex.Lock().IsOK())
       {
          const ObjectSlab * slab = _firstSlab;
          while(slab)
@@ -211,18 +222,18 @@ public:
       }
       if (minItemsInUseInSlab == MUSCLE_NO_LIMIT) minItemsInUseInSlab = 0;  // just to avoid questions
 
-      uint32 slabSizeItems = NUM_OBJECTS_PER_SLAB;
+      const uint32 slabSizeItems = NUM_OBJECTS_PER_SLAB;
       printf("ObjectPool<%s> contains " UINT32_FORMAT_SPEC " " UINT32_FORMAT_SPEC "-slot slabs, with " UINT32_FORMAT_SPEC " total items in use (%.1f%% loading, " UINT32_FORMAT_SPEC " total bytes).   LightestSlab=" UINT32_FORMAT_SPEC ", HeaviestSlab=" UINT32_FORMAT_SPEC " (" UINT32_FORMAT_SPEC " bytes per item)\n", GetObjectClassName(), numSlabs, slabSizeItems, totalItemsInUse, (numSlabs>0)?(100.0f*(((float)totalItemsInUse)/(numSlabs*slabSizeItems))):0.0f, (uint32)(numSlabs*sizeof(ObjectSlab)), minItemsInUseInSlab, maxItemsInUseInSlab, (uint32) sizeof(Object));
    }
 
    /** Removes all "spare" objects from the pool and deletes them. 
      * This method is thread-safe.
      * @param optSetNumDrained If non-NULL, this value will be set to the number of objects destroyed.
-     * @returns B_NO_ERROR on success, or B_ERROR if it couldn't lock the lock for some reason.
+     * @returns B_NO_ERROR on success, or B_LOCK_FAILED if it couldn't lock the lock for some reason.
      */
    status_t Drain(uint32 * optSetNumDrained = NULL)
    {
-      if (_mutex.Lock() == B_NO_ERROR)
+      if (_mutex.Lock().IsOK())
       {
          // This will be our linked list of slabs to delete, later
          ObjectSlab * toDelete = NULL;
@@ -257,7 +268,74 @@ public:
          if (optSetNumDrained) *optSetNumDrained = numObjectsDeleted;
          return B_NO_ERROR;
       }
-      else return B_ERROR;
+      else return B_LOCK_FAILED;
+   }
+
+   /** Pre-allocates objects until there are (desiredPrefilledSize)
+     * pool-objects in existence (either in our reserve-list, or held
+     * by the calling code)
+     * @param desiredPrefilledSize the desired number of objects
+     *                that should be preallocated by this ObjectPool.
+     *                If this number is greater than GetMaxPoolSize(),
+     *                we'll act as if GetMaxPoolSize() was passed
+     *                for this argument.
+     * @returns B_NO_ERROR on success, or an error code (probably B_OUT_OF_MEMORY) on failure.
+     * @note this method is useful if you want to pre-fill the pool
+     *       to avoid later allocations happening at an awkward time
+     *       (e.g. in the context of a real-time thread)
+     */
+   status_t Prefill(uint32 desiredPrefilledSize = MUSCLE_NO_LIMIT)
+   {
+      status_t ret;
+
+#ifdef DISABLE_OBJECT_POOLING // it would be pointless to prefill a fake pool!
+      (void) desiredPrefilledSize;
+#else
+      MRETURN_ON_ERROR(_mutex.Lock());
+
+      desiredPrefilledSize = muscleMin(desiredPrefilledSize, _maxPoolSize);
+
+      const uint32 currentlyAlloced = GetNumAllocatedItemSlots();
+      if (currentlyAlloced < desiredPrefilledSize)
+      {
+         const uint32 numToAllocate  = desiredPrefilledSize-currentlyAlloced;
+         const uint32 stackArraySize = 1000;
+
+         Object * stackArray[stackArraySize];  // try to use this if possible
+         Object ** arrayPtr = stackArray;
+         if (numToAllocate > stackArraySize)
+         {
+            arrayPtr = newnothrow Object *[numToAllocate];  // but sometimes it isn't possible
+            if (arrayPtr == NULL)
+            {
+               MWARN_OUT_OF_MEMORY;
+               ret = B_OUT_OF_MEMORY;
+            }
+         }
+
+         if (arrayPtr)
+         {
+            uint32 numValid = 0;
+            for (uint32 i=0; i<numToAllocate; i++)
+            {
+               arrayPtr[i] = this->ObtainObjectAux();
+               if (arrayPtr[i] != NULL) numValid++;
+                                   else {ret = B_OUT_OF_MEMORY; break;}
+            }
+            for (int32 i=numValid-1; i>=0; i--)
+            {
+               ObjectSlab * slabToDelete = ReleaseObjectAux(arrayPtr[i]);
+               if (slabToDelete) delete slabToDelete;  // this should never happen, but I'm paranoid
+            }
+
+            if (arrayPtr != stackArray) delete [] arrayPtr;
+         }
+      }
+
+      _mutex.Unlock();
+#endif
+
+      return ret;
    }
 
    /** Returns the maximum number of "spare" objects that will be kept
@@ -270,8 +348,9 @@ public:
      * value will not cause any object to be added or removed to the
      * pool immediately;  rather the new size will be enforced only
      * on future operations.
+     * @param maxPoolSize the new approximate maximum number of recycled objects that may be kept around for future reuse at any one time.
      */
-   void SetMaxPoolSize(uint32 mps) {_maxPoolSize = mps;}
+   void SetMaxPoolSize(uint32 maxPoolSize) {_maxPoolSize = maxPoolSize;}
 
    /** Returns a read-only reference to a persistent Object that is default-constructed. */
    const Object & GetDefaultObject() const {return GetDefaultObjectForType<Object>();}
@@ -284,7 +363,7 @@ public:
    uint32 GetTotalDataSize() const 
    {
       uint32 ret = sizeof(*this);
-      if (_mutex.Lock() == B_NO_ERROR)
+      if (_mutex.Lock().IsOK())
       {
          ObjectSlab * slab = _firstSlab;
          while(slab)
@@ -303,7 +382,7 @@ public:
    uint32 GetNumAllocatedItemSlots() const 
    {
       uint32 ret = 0;
-      if (_mutex.Lock() == B_NO_ERROR)
+      if (_mutex.Lock().IsOK())
       {
          ObjectSlab * slab = _firstSlab;
          while(slab)
@@ -316,6 +395,11 @@ public:
       return ret;
    }
 
+   /** Turns the Mutex guarding this ObjectPool into a no-op by calling Mutex::Neuter() on it.
+     * Be careful with this, it will make using this ObjectPool permanently non-thread-safe!
+     */
+   void NeuterMutex() {_mutex.Neuter();}
+
 private:
    Mutex _mutex;
 
@@ -323,6 +407,7 @@ private:
 
    enum {INVALID_NODE_INDEX = ((uint16)-1)};  // the index-version of a NULL pointer
 
+#ifndef DOXYGEN_SHOULD_IGNORE_THIS
    class ObjectNode
    {
    public:
@@ -459,7 +544,14 @@ private:
          for (uint32 i=0; i<NUM_OBJECTS_PER_SLAB; i++)
          {
             const ObjectNode * n = &_nodes[i];
-            if (n->GetNextIndex() == INVALID_NODE_INDEX) printf("      " UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC ":   %s %p is possibly still in use?\n", i, (uint32)NUM_OBJECTS_PER_SLAB, GetObjectClassName(), n);
+            if (n->GetNextIndex() == INVALID_NODE_INDEX) 
+            {
+               printf("      " UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC ":   %s %p is possibly still in use?\n", i, (uint32)NUM_OBJECTS_PER_SLAB, GetObjectClassName(), n);
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+               const Object * o = &n->GetObject();
+               if (o->GetAllocationLocation() != NULL) PrintAllocationStackTrace(this, o, i, NUM_OBJECTS_PER_SLAB, *o->GetAllocationLocation());
+#endif
+            }
          }
       }
 
@@ -478,10 +570,7 @@ private:
          return ret;
       }
 
-      void GetUsageStats(uint32 & min, uint32 & max, uint32 & total) const
-      {
-         _data.GetUsageStats(min, max, total);
-      }
+      void GetUsageStats(uint32 & min, uint32 & max, uint32 & total) const {_data.GetUsageStats(min, max, total);}
 
    private:
       friend class ObjectSlabData;
@@ -490,6 +579,7 @@ private:
       ObjectSlabData _data;                     // must be declared after _nodes!  That's why ObjectSlab can't just inherit from this class
       // Any other member variables should be added to the ObjectSlabData class rather than here, so that we can calculate NUM_OBJECTS_PER_SLAB correctly
    };
+#endif
 
    // Must be called with _mutex locked!   Returns either NULL, or a pointer to a
    // newly allocated Object.
@@ -519,7 +609,7 @@ private:
                                       else slab->AppendToSlabList();  // could happen, if NUM_OBJECTS_PER_SLAB==1
             _curPoolSize += NUM_OBJECTS_PER_SLAB;
          }
-         // we'll do the WARN_OUT_OF_MEMORY below, outside the mutex lock
+         // we'll do the MWARN_OUT_OF_MEMORY below, outside the mutex lock
       }
       if (ret) --_curPoolSize;
       return ret;
@@ -554,6 +644,6 @@ private:
    ObjectSlab * _lastSlab;
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -1,6 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
 #include <stdio.h>
+
 #include "system/ThreadPool.h"
 #include "system/SetupSystem.h"
 
@@ -9,12 +10,16 @@ using namespace muscle;
 class TestClient : public IThreadPoolClient
 {
 public:
-   TestClient() : IThreadPoolClient(NULL) {/* empty */}
+   TestClient()
+      : IThreadPoolClient(NULL) 
+   {
+      // empty
+   }
 
    virtual void MessageReceivedFromThreadPool(const MessageRef & msgRef, uint32 numLeft)
    {
       char buf[20];
-      printf("MessageFromOwner called in thread %s, msgRef=%p (what=" UINT32_FORMAT_SPEC"), numLeft=" UINT32_FORMAT_SPEC"\n", muscle_thread_id::GetCurrentThreadID().ToString(buf), msgRef(), msgRef()?msgRef()->what:666, numLeft);
+      printf("MessageFromOwner called in thread %s, msgRef=%p (what=" UINT32_FORMAT_SPEC "), numLeft=" UINT32_FORMAT_SPEC "\n", muscle_thread_id::GetCurrentThreadID().ToString(buf), msgRef(), msgRef()?msgRef()->what:666, numLeft);
       Snooze64(200000);
    }
 };

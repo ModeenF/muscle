@@ -9,11 +9,13 @@ namespace muscle {
   * catch signals (e.g. SIGINT on Unix/MacOS, Console signals on Windows)
   * and react by initiating a controlled shutdown of the server.
   */
-class SignalHandlerSession : public AbstractReflectSession, public ISignalHandler, private CountedObject<SignalHandlerSession>
+class SignalHandlerSession : public AbstractReflectSession, public ISignalHandler
 {
 public:
    /** Default constructor. */
    SignalHandlerSession() {/* empty */}
+
+   /** Destructor. */
    virtual ~SignalHandlerSession() {/* empty */}
 
    virtual ConstSocketRef CreateDefaultSocket();
@@ -21,7 +23,6 @@ public:
    virtual void MessageReceivedFromGateway(const MessageRef &, void *) {/* empty */}
    virtual status_t AttachedToServer();
    virtual void AboutToDetachFromServer();
-   virtual const char * GetTypeName() const {return "SignalHandler";}
    virtual void SignalHandlerFunc(int whichSignal);
 
 protected:
@@ -36,7 +37,10 @@ protected:
 
 private:
    ConstSocketRef _handlerSocket;
+
+   DECLARE_COUNTED_OBJECT(SignalHandlerSession);
 };
+DECLARE_REFTYPES(SignalHandlerSession);
 
 /** Returns true iff any SignalHandlerSession ever caught a signal since this process was started. */
 bool WasSignalCaught();
@@ -51,4 +55,4 @@ void SetMainReflectServerCatchSignals(bool enable);
 /** Returns true iff the main-ReflectServer-handle-signals flags is set to true. */
 bool GetMainReflectServerCatchSignals();
 
-}; // end namespace muscle
+} // end namespace muscle

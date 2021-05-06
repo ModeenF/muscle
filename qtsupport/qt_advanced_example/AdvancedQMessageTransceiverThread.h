@@ -44,7 +44,7 @@ public:
      * the server.
      * @param args This Message can contain whatever initialization
      *             arguments need to be passed to the new session.
-     * @returns B_NO_ERROR on success, of B_ERROR on failure.
+     * @returns B_NO_ERROR on success, or an error code on failure.
      */
    status_t AddNewThreadedInternalSession(const MessageRef & args);
 
@@ -70,8 +70,6 @@ class AdvancedThreadWorkerSession : public ThreadWorkerSession
 public:
    AdvancedThreadWorkerSession() {/* empty */}
 
-   virtual const char * GetTypeName() const {return "AdvancedThreadWorker";}
-
    // Overridden to specially handle messages coming from the ThreadSupervisorSession (and therefore by extension, from the GUI thread)
    virtual void MessageReceivedFromSession(AbstractReflectSession & from, const MessageRef & msgRef, void * userData);
 };
@@ -83,8 +81,6 @@ class AdvancedThreadSupervisorSession : public ThreadSupervisorSession
 {
 public:
    AdvancedThreadSupervisorSession() {/* empty */}
-
-   virtual const char * GetTypeName() const {return "AdvancedThreadSupervisor";}
 };
 
 #endif

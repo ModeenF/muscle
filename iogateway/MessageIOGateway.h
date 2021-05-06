@@ -33,10 +33,10 @@ enum {
 };
 
 /** Callback function type for flatten/unflatten notification callbacks */
-typedef void (*MessageFlattenedCallback)(const MessageRef & msgRef, void * userData);
+typedef status_t(*MessageFlattenedCallback)(const MessageRef & msgRef, void * userData);
 
 /**
- * A "gateway" object that knows how to send/receive Messages over a wire, via a provided DataIO object. 
+ * A MessageIOGateway object knows how to send/receive Messages over a wire, via a provided DataIO object. 
  * May be subclassed to change the byte-level protocol, or used as-is if the default protocol is desired.
  * If ZLib compression is desired, be sure to compile with -DMUSCLE_ENABLE_ZLIB_ENCODING
  *
@@ -49,7 +49,7 @@ typedef void (*MessageFlattenedCallback)(const MessageRef & msgRef, void * userD
  * An example flattened Message byte structure is provided at the bottom of the
  * MessageIOGateway.h header file.
  */
-class MessageIOGateway : public AbstractMessageIOGateway, private CountedObject<MessageIOGateway>
+class MessageIOGateway : public AbstractMessageIOGateway
 {
 public:
    /** 
@@ -129,7 +129,7 @@ public:
      * the server's results are returned before this method returns.
      * @param optReceiver optional object to call MessageReceivedFromGateway() on when a reply Message is received.
      * @param timeoutPeriod Optional timeout period in microseconds, or MUSCLE_TIME_NEVER if no timeout is requested.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (timeout or network error)
+     * @returns B_NO_ERROR on success, or an error code on failure (timeout or network error)
      */
    virtual status_t ExecuteSynchronousMessaging(AbstractGatewayMessageReceiver * optReceiver, uint64 timeoutPeriod = MUSCLE_TIME_NEVER);
 
@@ -148,14 +148,33 @@ public:
 
    /** This method is similar to ExecuteSynchronousMessageRPCCall(), except that it doesn't wait for a reply Message.
      * Instead, it sends the specified (requestMessage), and returns B_NO_ERROR if the Message successfully goes out
-     * over the TCP socket, or B_ERROR otherwise.
+     * over the TCP socket, or an error code otherwise.
      * @param requestMessage the request Message to send
      * @param targetIAP Where to connect to (via TCP) to send (requestMessage)
      * @param timeoutPeriod The maximum amount of time this function should wait for TCP to connect, before returning.
-     * @returns B_NO_ERROR if the Message was sent, or B_ERROR if we couldn't connect (or if we connected but couldn't send the data).
+     * @returns B_NO_ERROR if the Message was sent, or an error code if we couldn't connect (or if we connected but couldn't send the data).
      *          Note that there is no way to know what (if anything) the receiving client did with the Message.
      */
    status_t ExecuteSynchronousMessageSend(const Message & requestMessage, const IPAddressAndPort & targetIAP, uint64 timeoutPeriod = MUSCLE_TIME_NEVER);
+
+   /** Calls through to our protected FlattenHeaderAndMessage() method.  Provided for special-case classes that want to
+     * to access that functionality directly rather than going through the gateway's usual DoOutput() interface.
+     * @param msgRef Reference to the Message object to flatten.
+     * @returns a Reference to a ByteBuffer containing the flattened bytes of both the MessageIOGateway header
+     *          and the passed-in Message object.
+     * @note see UnflattenHeaderAndMessage() for details.
+     */
+   ByteBufferRef CallFlattenHeaderAndMessage(const MessageRef & msgRef) const {return FlattenHeaderAndMessage(msgRef);}
+
+   /** Calls through to our protected UnflattenHeaderAndMessage() method.  Provided for special-case classes that want to
+     * to access that functionality directly rather than going through the gateway's usual DoInput() interface.
+     * @param bufRef Reference to a ByteBuffer object that contains the appropriate header
+     *               bytes, followed by some flattened Message bytes.
+     * @returns a Reference to a Message object containing the Message that was encoded in
+     *          the ByteBuffer on success, or a NULL reference on failure.
+     * @note see UnflattenHeaderAndMessage() for details.
+     */
+   MessageRef CallUnflattenHeaderAndMessage(const ConstByteBufferRef & bufRef) const {return UnflattenHeaderAndMessage(bufRef);}
 
 protected:
    virtual int32 DoOutputImplementation(uint32 maxBytes = MUSCLE_NO_LIMIT);
@@ -164,7 +183,7 @@ protected:
    /**
     * Should flatten the specified Message object into a newly allocated ByteBuffer
     * object and return the ByteBufferRef.  The returned ByteBufferRef's contents
-    * should consiste of (GetHeaderSize()) bytes of header, followed by the flattened
+    * should consist of (GetHeaderSize()) bytes of header, followed by the flattened
     * Message data.
     * @param msgRef Reference to a Message to flatten into a byte array.
     * @return A reference to a ByteBuffer object (containing the appropriate header
@@ -183,7 +202,7 @@ protected:
     * The default implementation uses (optional) ZLib decompression (depending on the header bytes)
     * and then msg.Unflatten() to produce the Message.
     */
-   virtual MessageRef UnflattenHeaderAndMessage(const ByteBufferRef & bufRef) const;
+   virtual MessageRef UnflattenHeaderAndMessage(const ConstByteBufferRef & bufRef) const;
  
    /**
     * Returns the size of the pre-flattened-message header section, in bytes.
@@ -204,7 +223,11 @@ protected:
    /** Overridden to return true until our PONG Message is received back */
    virtual bool IsStillAwaitingSynchronousMessagingReply() const {return _noRPCReply.IsInBatch() ? HasBytesToOutput() : (_pendingSyncPingCounter >= 0);}
 
-   /** Overridden to filter out our PONG Message and pass everything else on to (r). */
+   /** Overridden to filter out our PONG Message and pass everything else on to (r).
+     * @param msg the Message that was received
+     * @param userData the user-data pointer, as was passed to ExecuteSynchronousMessaging()
+     * @param r the receiver object that we will call MessageReceivedFromGateway() on
+     */
    virtual void SynchronousMessageReceivedFromGateway(const MessageRef & msg, void * userData, AbstractGatewayMessageReceiver & r);
 
    /** Allocates and returns a Message to send as a Ping Message for its synchronization. 
@@ -224,7 +247,7 @@ protected:
    /** 
      * Removes the next MessageRef from our outgoing Message queue and returns it in (retMsg).
      * @param retMsg on success, the next MessageRef to send will be written into this MessageRef.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (queue was empty)
+     * @returns B_NO_ERROR on success, or B_DATA_NOT_FOUND on failure (queue was empty)
      */
    virtual status_t PopNextOutgoingMessage(MessageRef & retMsg);
 
@@ -239,11 +262,33 @@ protected:
      */
    virtual bool AreOutgoingMessagesIndependent() const {return false;}
 
+#ifdef MUSCLE_ENABLE_ZLIB_ENCODING
+   /** Convenience method for subclasses:   Returns the ZLibCodec to use for deflating outgoing data,
+     * or NULL if no ZLibCodec should be used for outgoing data.
+     * @note this method is only declared if preprocessor constant MUSCLE_ENABLE_ZLIB_ENCODING is defined.
+     */
+   ZLibCodec * GetSendCodec() const {return GetCodec(_outgoingEncoding, _sendCodec);}
+
+   /** Convenience method for subclasses:   Returns the ZLibCodec to use for inflating incoming data,
+     * or NULL if no ZLibCodec should be used for incoming data.
+     * @param encoding the MUSCLE_MESSAGE_ENCODING_* value we want to decode
+     * @note this method is only declared if preprocessor constant MUSCLE_ENABLE_ZLIB_ENCODING is defined.
+     */
+   ZLibCodec * GetReceiveCodec(int32 encoding) const
+   {
+      // For receiving data, any ZLibCodec will do, so we'll just force it to the default codec-level
+      return GetCodec(muscleInRange((int32)encoding, (int32)MUSCLE_MESSAGE_ENCODING_ZLIB_1, (int32)MUSCLE_MESSAGE_ENCODING_ZLIB_9) ? MUSCLE_MESSAGE_ENCODING_ZLIB_6 : encoding, _recvCodec);
+   }
+#endif
+
 private:
+   ByteBufferRef FlattenHeaderAndMessageAux(const MessageRef & msgRef) const;
+
 #ifdef MUSCLE_ENABLE_ZLIB_ENCODING
    ZLibCodec * GetCodec(int32 newEncoding, ZLibCodec * & setCodec) const;
 #endif
 
+#ifndef DOXYGEN_SHOULD_IGNORE_THIS  // this is here so doxygen-coverage won't complain that I haven't documented this class -- but it's a private class so I don't need to
    class TransferBuffer
    {
    public:
@@ -258,15 +303,19 @@ private:
       ByteBufferRef _buffer;
       uint32 _offset;
    };
+#endif
 
    status_t SendMoreData(int32 & sentBytes, uint32 & maxBytes);
    status_t ReceiveMoreData(int32 & readBytes, uint32 & maxBytes, uint32 maxArraySize);
 
+   ByteBufferRef GetScratchReceiveBuffer();
+   void ForgetScratchReceiveBufferIfSubclassIsStillUsingIt();
+
    TransferBuffer _sendBuffer;
    TransferBuffer _recvBuffer;
 
-   uint8 _scratchRecvBufferBytes[2048];  // so we can receive smaller Messages without constantly allocating and freeing data
-   ByteBuffer _scratchRecvBuffer;
+   IPAddressAndPort _nextPacketDest;
+   ByteBufferRef _scratchRecvBuffer;   // used to efficiently receive small Messages in the normal case
 
    uint32 _maxIncomingMessageSize;
    int32 _outgoingEncoding;
@@ -280,6 +329,8 @@ private:
    MessageFlattenedCallback _unflattenedCallback;
    void * _unflattenedCallbackData;
 
+   Message _scratchPacketMessage;
+
 #ifdef MUSCLE_ENABLE_ZLIB_ENCODING
    mutable ZLibCodec * _sendCodec;
    mutable ZLibCodec * _recvCodec;
@@ -288,7 +339,10 @@ private:
    NestCount _noRPCReply;
    int32 _syncPingCounter;
    int32 _pendingSyncPingCounter;
+
+   DECLARE_COUNTED_OBJECT(MessageIOGateway);
 };
+DECLARE_REFTYPES(MessageIOGateway);
 
 /** This class is similar to MessageIOGateway, but it also keep a running tally
   * of the total number of bytes of data currently in its outgoing-Messages queue.
@@ -305,8 +359,14 @@ public:
    CountedMessageIOGateway(int32 outgoingEncoding = MUSCLE_MESSAGE_ENCODING_DEFAULT);
 
    virtual status_t AddOutgoingMessage(const MessageRef & messageRef);
-   uint32 GetNumOutgoingDataBytes() const {return _outgoingByteCount;}
+
    virtual void Reset();
+
+   /** Returns the number of bytes of data currently in our outgoing-messages-queue
+     * Calculated by calling FlattenedSize() on the Messages as they are added to
+     * or removed from the queue)
+     */
+   uint32 GetNumOutgoingDataBytes() const {return _outgoingByteCount;}
 
 protected:
    virtual status_t PopNextOutgoingMessage(MessageRef & ret);
@@ -314,6 +374,28 @@ protected:
 private:
    uint32 _outgoingByteCount;
 };
+DECLARE_REFTYPES(CountedMessageIOGateway);
+
+/** This function can be used to reduce memory usage when sending the same large
+  * Message to multiple MessageIOGateways.  
+  *
+  * If you call this function on your large Message object just before you pass it off 
+  * to one or more session objects for output, the Message object will be tagged with
+  * a rendezvous-point object such that only one of the gateways will have to allocate
+  * a serialized buffer and Flatten() the Message into it; the latter gateways will
+  * reuse the buffer created by the first gateway. This can be more memory-efficient 
+  * than the default behavior (where each MessageIOGateway has to allocate its
+  * own separate ByteBuffer and separately flatten the Message into it).
+  *
+  * @param msg a reference the Message you are about to pass to multiple gateways.
+  */
+status_t OptimizeMessageForTransmissionToMultipleGateways(const MessageRef & msg);
+
+/** Returns true iff the given Message has had 
+  * OptimizeMessageForTransmissionToMultipleGateways() called on it already.
+  * @param msg the Message to check for the presence of an optimization-tag.
+  */
+bool IsMessageOptimizedForTransmissionToMultipleGateways(const MessageRef & msg);
 
 //////////////////////////////////////////////////////////////////////////////////
 //
@@ -380,6 +462,6 @@ private:
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

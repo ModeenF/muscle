@@ -8,9 +8,9 @@ namespace muscle {
 // It creates and returns a new DumbReflectSession object.
 AbstractReflectSessionRef DumbReflectSessionFactory :: CreateSession(const String &, const IPAddressAndPort &)
 {
-   AbstractReflectSession * ret = newnothrow DumbReflectSession;
-   if (ret == NULL) WARN_OUT_OF_MEMORY;
-   return AbstractReflectSessionRef(ret);
+   DumbReflectSessionRef ret(newnothrow DumbReflectSession);
+   if (ret() == NULL) MWARN_OUT_OF_MEMORY;
+   return ret;
 }
 
 DumbReflectSession :: 
@@ -41,4 +41,4 @@ MessageReceivedFromSession(AbstractReflectSession & from, const MessageRef & msg
    if ((&from == this)||(IsRoutingFlagSet(MUSCLE_ROUTING_FLAG_NEIGHBORS_TO_GATEWAY))) (void) AddOutgoingMessage(msg);
 }
 
-}; // end namespace muscle
+} // end namespace muscle

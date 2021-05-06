@@ -18,7 +18,7 @@ namespace muscle {
  * field is to be SLIP-encoded into its own SLIP frame, so you may need to 
  * be a bit careful about how you segment your outgoing data.
  */
-class SLIPFramedDataMessageIOGateway : public RawDataMessageIOGateway, private CountedObject<SLIPFramedDataMessageIOGateway>
+class SLIPFramedDataMessageIOGateway : public RawDataMessageIOGateway
 {
 public:
    /** Constructor.  */
@@ -45,8 +45,11 @@ private:
    ByteBufferRef _pendingBuffer;
    MessageRef _pendingMessage;
    bool _lastReceivedCharWasEscape;
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(SLIPFramedDataMessageIOGateway);
+};
+DECLARE_REFTYPES(SLIPFramedDataMessageIOGateway);
+
+} // end namespace muscle
 
 #endif

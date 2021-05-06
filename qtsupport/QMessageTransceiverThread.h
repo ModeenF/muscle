@@ -7,6 +7,7 @@
 
 #include <qobject.h>
 #include <qthread.h>
+#include <qsocketnotifier.h>
 #include "system/MessageTransceiverThread.h"
 
 namespace muscle {
@@ -39,7 +40,7 @@ protected:
      * @param thread the QMessageTransceiverThread to attach the handler to
      * @param handler the QMessageTransceiverHandler to attach to the thread
      * @param sessionRef the AbstractReflectSession that will represent the handler inside the thread.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure.
+     * @returns B_NO_ERROR on success, or an error code on failure.
      */
    virtual status_t RegisterHandler(QMessageTransceiverThread & thread, QMessageTransceiverHandler * handler, const ThreadWorkerSessionRef & sessionRef) = 0;
 
@@ -68,7 +69,7 @@ private:
  *  about event loops and such.  In all other ways it works the
  *  same as any MessageTransceiverThread object.
  */
-class QMessageTransceiverThread : public QObject, public MessageTransceiverThread, public IMessageTransceiverMaster, private CountedObject<QMessageTransceiverThread>
+class QMessageTransceiverThread : public QObject, public MessageTransceiverThread, public IMessageTransceiverMaster
 {
    Q_OBJECT
 
@@ -89,7 +90,9 @@ public:
     */
    virtual ~QMessageTransceiverThread();
 
-   /** Overridden to handle signal events from our internal thread */
+   /** Overridden to handle signal events from our internal thread
+     * @param event the event object to handle, as provided by the Qt event loop
+     */
    virtual bool event(QEvent * event);
 
    /** Returns a read-only reference to our table of registered QMessageTransceiverHandler objects. */
@@ -115,7 +118,9 @@ signals:
      */ 
    void SessionAccepted(const String & sessionID, uint32 factoryID, const IPAddressAndPort & iap);
 
-   /** Emitted when a session object is attached to the internal thread's ReflectServer */
+   /** Emitted when a session object is attached to the internal thread's ReflectServer
+     * @param sessionID the session ID string of the session that was attached to the ReflectServer
+     */
    void SessionAttached(const String & sessionID);
 
    /** Emitted when a session object connects to its remote peer (only used by sessions that were
@@ -156,7 +161,7 @@ signals:
      */
    void OutputQueuesDrained(const MessageRef & ref);
 
-   /** This signal is called for all events send by the internal thread.  You can use this
+   /** This signal is called for all events sent by the internal thread.  You can use this
      * to catch custom events that don't have their own signal defined above, or if you want to
      * receive all thread events via a single slot.
      * @param code the MTT_EVENT_* code of the new event.
@@ -174,7 +179,7 @@ public slots:
     * @param msgRef a reference to the Message to send out.
     * @param optDistPath if non-NULL, then only sessions that contain at least one node that matches this
     *                    path will receive the Message.  Otherwise all sessions will receive the Message.
-    * @return B_NO_ERROR on success, B_ERROR if out of memory.
+    * @return B_NO_ERROR on success, or B_OUT_OF_MEMORY.
     */
    status_t SendMessageToSessions(const MessageRef & msgRef, const char * optDistPath = NULL);
 
@@ -210,6 +215,8 @@ private:
 
    QMessageTransceiverHandler * _firstSeenHandler;
    QMessageTransceiverHandler * _lastSeenHandler;
+
+   DECLARE_COUNTED_OBJECT(QMessageTransceiverThread);
 };
 
 /** This class represents a demand-allocated pool of QMessageTransceiverThread objects.
@@ -219,7 +226,7 @@ private:
   * You can specify how many QMessageTransceiverHandler objects may share a single
   * QMessageTransceiverThread at once.
   */
-class QMessageTransceiverThreadPool : public IMessageTransceiverMaster, private CountedObject<QMessageTransceiverThreadPool>
+class QMessageTransceiverThreadPool : public IMessageTransceiverMaster
 {
 public:
    /**
@@ -256,6 +263,8 @@ protected:
 private:
    uint32 _maxSessionsPerThread;
    Hashtable<QMessageTransceiverThread *, Void> _threads;
+
+   DECLARE_COUNTED_OBJECT(QMessageTransceiverThreadPool);
 };
 
 /**
@@ -271,7 +280,7 @@ private:
  * class directly for everything and ignore this class, if you prefer -- this class is here just as
  * an optimization.
  */
-class QMessageTransceiverHandler : public QObject, private CountedObject<QMessageTransceiverHandler>
+class QMessageTransceiverHandler : public QObject
 {
    Q_OBJECT
 
@@ -303,12 +312,18 @@ public:
      *                      ThreadWorkerSession, a subclass of ThreadWorkerSession, or at least something that acts 
      *                      like one, or else things won't work correctly.
      *                      The referenced session becomes sole property of the MessageTransceiverThread on success.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */  
    virtual status_t SetupAsNewSession(IMessageTransceiverMaster & master, const ConstSocketRef & socket, const ThreadWorkerSessionRef & optSessionRef);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
+   /** Convenience method -- calls the above method with a NULL session reference. 
+     * @param master the IMessageTransceiverMaster to bind this handler to.
+     * @param socket The TCP socket that the new session will be using, or -1, if the new session is to have no
+     *               associated TCP connection.  This socket becomes property of this object on success.
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
+     *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
+     */
    status_t SetupAsNewSession(IMessageTransceiverMaster & master, const ConstSocketRef & socket) {return SetupAsNewSession(master, socket, ThreadWorkerSessionRef());}
 
    /**
@@ -338,13 +353,37 @@ public:
      *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
      *                              is used; typically this means that it will be left up to the operating system how long to wait
      *                              before timing out the connection attempt.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */
-   virtual status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const ip_address & targetIPAddress, uint16 port, const ThreadWorkerSessionRef & optSessionRef, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
+   virtual status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const IPAddress & targetIPAddress, uint16 port, const ThreadWorkerSessionRef & optSessionRef, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
-   status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return SetupAsNewConnectSession(master, targetIPAddress, port, ThreadWorkerSessionRef(), autoReconnectDelay, maxAsyncConnectPeriod);}
+   /** Convenience method -- calls the above method with a NULL session reference. 
+     * Associates this handler with a specified IMessageTransceiverMaster, and tells it to connect to
+     * the specified host IP address and port.  If the handler was already associated with a IMessageTransceiverMaster,
+     * the previous association will be removed first.
+     * May be called at any time, but behaves slightly differently depending on whether the internal
+     * thread is running or not.  If the internal thread is running, the session will be added asynchronously
+     * to the server.  If not, the call is immediately passed on through to ReflectServer::AddNewConnectSession(). 
+     * @param master the IMessageTransceiverMaster to bind this handler to.
+     * @param targetIPAddress IP address to connect to
+     * @param port Port to connect to at that IP address.
+     * @param autoReconnectDelay If specified, this is the number of microseconds after the
+     *                           connection is broken that an automatic reconnect should be
+     *                           attempted.  If not specified, an automatic reconnect will not
+     *                           be attempted, and the session will be removed when the
+     *                           connection breaks.  Specifying this is equivalent to calling
+     *                           SetAutoReconnectDelay() on (optSessionRef).
+     * @param maxAsyncConnectPeriod If specified, this is the maximum time (in microseconds) that we will
+     *                              wait for the asynchronous TCP connection to complete.  If this amount of time passes
+     *                              and the TCP connection still has not been established, we will force the connection attempt to
+     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
+     *                              is used; typically this means that it will be left up to the operating system how long to wait
+     *                              before timing out the connection attempt.
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
+     *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
+     */
+   status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return SetupAsNewConnectSession(master, targetIPAddress, port, ThreadWorkerSessionRef(), autoReconnectDelay, maxAsyncConnectPeriod);}
 
    /**
      * Associates this handler with a specified IMessageTransceiverMaster, and tells it to connect to
@@ -374,12 +413,31 @@ public:
      *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
      *                              is used; typically this means that it will be left up to the operating system how long to wait
      *                              before timing out the connection attempt.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */
    virtual status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const String & targetHostName, uint16 port, const ThreadWorkerSessionRef & optSessionRef, bool expandLocalhost = false, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
+   /** Convenience method -- calls the above method with a NULL session reference. 
+     * @param master the IMessageTransceiverMaster to bind this handler to.
+     * @param targetHostName ASCII hostname or ASCII IP address to connect to.  (e.g. "blah.com" or "132.239.50.8")
+     * @param port Port to connect to at that IP address.
+     * @param expandLocalhost Passed to GetHostByName().  See GetHostByName() documentation for details.  Defaults to false.
+     * @param autoReconnectDelay If specified, this is the number of microseconds after the
+     *                           connection is broken that an automatic reconnect should be
+     *                           attempted.  If not specified, an automatic reconnect will not
+     *                           be attempted, and the session will be removed when the
+     *                           connection breaks.  Specifying this is equivalent to calling
+     *                           SetAutoReconnectDelay() on (optSessionRef).
+     * @param maxAsyncConnectPeriod If specified, this is the maximum time (in microseconds) that we will
+     *                              wait for the asynchronous TCP connection to complete.  If this amount of time passes
+     *                              and the TCP connection still has not been established, we will force the connection attempt to
+     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
+     *                              is used; typically this means that it will be left up to the operating system how long to wait
+     *                              before timing out the connection attempt.
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
+     *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
+     */
    status_t SetupAsNewConnectSession(IMessageTransceiverMaster & master, const String & targetHostName, uint16 port, bool expandLocalhost = false, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return SetupAsNewConnectSession(master, targetHostName, port, ThreadWorkerSessionRef(), expandLocalhost, autoReconnectDelay, maxAsyncConnectPeriod);}
 
    /**
@@ -391,7 +449,7 @@ public:
      *                    know what you are doing.  ;^)  On success, (optDrainTag) becomes property
      *                    of this MessageTransceiverThread.
      * @returns B_NO_ERROR on success (in which case an MTT_EVENT_OUTPUT_QUEUES_DRAINED event will be
-     *          forthcoming) or B_ERROR on error (out of memory).
+     *          forthcoming) or B_OUT_OF_MEMORY.
      */
    status_t RequestOutputQueueDrainedNotification(const MessageRef & notificationMsg, DrainTag * optDrainTag = NULL);
 
@@ -401,7 +459,7 @@ public:
      *             not thread safe, the referenced IOPolicy should not be used after it has
      *             been successfully passed in via this call.  May be a NULL ref to remove
      *             the existing input policy.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetNewInputPolicy(const AbstractSessionIOPolicyRef & pref);
 
@@ -411,7 +469,7 @@ public:
      *             not thread safe, the referenced IOPolicy should not be used after it has
      *             been successfully passed in via this call.  May be a NULL ref to remove
      *             the existing output policy.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetNewOutputPolicy(const AbstractSessionIOPolicyRef & pref);
 
@@ -422,7 +480,7 @@ public:
      * Note that ZLIB encoding is only enabled if your program is compiled with the
      * -DMUSCLE_ENABLE_ZLIB_ENCODING compiler flag set.
      * @param encoding one of the MUSCLE_MESSAGE_ENCODING_* constant declared in MessageIOGateway.h
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetOutgoingMessageEncoding(int32 encoding);
 
@@ -466,7 +524,7 @@ signals:
 
    /** Emitted when this handler's session object has connected to its remote peer 
      * (only used by sessions that were created in connect-mode)
-     * The IP address and port that the session is connected to.
+     * @param connectedTo The IP address and port that the session is connected to.
      */
    void SessionConnected(const IPAddressAndPort & connectedTo);
 
@@ -476,7 +534,9 @@ signals:
    /** Emitted when this handler's session object has been removed from the I/O thread's ReflectServer */
    void SessionDetached();
 
-   /** Emitted when this handler's output queue has been drained, after a call to RequestOutputQueueDrainedNotification() */
+   /** Emitted when this handler's output queue has been drained, after a call to RequestOutputQueueDrainedNotification()
+     * @param drainMsg the MessageRef that was originally passed to RequestOutputQueueDrainedNotification()
+     */
    void OutputQueueDrained(const MessageRef & drainMsg);
 
    /** This signal is called for all events associated with this handler.  You can use this
@@ -491,7 +551,7 @@ public slots:
    /**
     * Sends the specified Message to our session inside the I/O thread.
     * @param msgRef a reference to the Message to send out.
-    * @return B_NO_ERROR on success, B_ERROR if out of memory.
+    * @return B_NO_ERROR on success, an error code if out of memory.
     */
    status_t SendMessageToSession(const MessageRef & msgRef);
 
@@ -543,8 +603,38 @@ private:
 
    QMessageTransceiverHandler * _prevSeen;  // used by _mtt for a quickie linked list
    QMessageTransceiverHandler * _nextSeen;  // used by _mtt for a quickie linked list
+
+   DECLARE_COUNTED_OBJECT(QMessageTransceiverHandler);
 };
 
-};  // end namespace muscle;
+#if defined(MUSCLE_USE_QT_THREADS) && defined(MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION)
+/** Helper class for the Qt implementation of the MUSCLE Thread class.  This class is exposed only
+  * because Qt's signal/slot system requires it to be; please ignore it as it is meant to be a 
+  * private implementation detail.
+  */
+class MuscleQThreadSocketNotifier : public QSocketNotifier
+{
+Q_OBJECT
+
+public:
+#if QT_VERSION >= 0x050000
+   MuscleQThreadSocketNotifier(Thread * thread, qintptr sock, Type t, QObject * parent) 
+#else
+   MuscleQThreadSocketNotifier(Thread * thread, int     sock, Type t, QObject * parent) 
+#endif
+      : QSocketNotifier(sock, t, parent), _thread(thread)
+   {
+      connect(this, SIGNAL(activated(int)), this, SLOT(SocketReady(int)));
+   }
+
+private slots:
+   void SocketReady(int sock) {if (type() == Read) _thread->QtSocketReadReady(sock); else _thread->QtSocketWriteReady(sock);}
+
+private:
+   Thread * _thread;
+};
+#endif
+
+} // end namespace muscle
 
 #endif

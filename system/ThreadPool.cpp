@@ -13,7 +13,9 @@ IThreadPoolClient :: ~IThreadPoolClient()
 
 status_t IThreadPoolClient :: SendMessageToThreadPool(const MessageRef & msg)
 {
-   return ((_threadPool)&&(msg())) ? _threadPool->SendMessageToThreadPool(this, msg) : B_ERROR;
+   if (_threadPool == NULL) return B_BAD_OBJECT;
+   if (msg()       == NULL) return B_BAD_ARGUMENT;
+   return _threadPool->SendMessageToThreadPool(this, msg);
 }
 
 void IThreadPoolClient :: SetThreadPool(ThreadPool * tp)
@@ -26,7 +28,10 @@ void IThreadPoolClient :: SetThreadPool(ThreadPool * tp)
    }
 }
    
-ThreadPool :: ThreadPool(uint32 maxThreadCount) : _maxThreadCount(maxThreadCount), _shuttingDown(false), _threadIDCounter(0)
+ThreadPool :: ThreadPool(uint32 maxThreadCount)
+   : _maxThreadCount(maxThreadCount)
+   , _shuttingDown(false)
+   , _threadIDCounter(0)
 {
    (void) _availableThreads.EnsureSize(maxThreadCount);
    (void) _activeThreads.EnsureSize(maxThreadCount);
@@ -46,7 +51,7 @@ uint32 ThreadPool :: Shutdown()
    for (HashtableIterator<uint32, ThreadPoolThreadRef> iter(_activeThreads);    iter.HasData(); iter++) iter.GetValue()()->ShutdownInternalThread();
    for (HashtableIterator<IThreadPoolClient *, bool> iter(_registeredClients);  iter.HasData(); iter++) iter.GetKey()->_threadPool = NULL;  // so they won't try to unregister from us
 
-   uint32 ret = _availableThreads.GetNumItems()+_activeThreads.GetNumItems()+_registeredClients.GetNumItems()+_pendingMessages.GetNumItems()+_deferredMessages.GetNumItems()+_waitingForCompletion.GetNumItems();
+   const uint32 ret = _availableThreads.GetNumItems()+_activeThreads.GetNumItems()+_registeredClients.GetNumItems()+_pendingMessages.GetNumItems()+_deferredMessages.GetNumItems()+_waitingForCompletion.GetNumItems();
    _availableThreads.Clear();
    _activeThreads.Clear();
    _registeredClients.Clear();
@@ -80,8 +85,8 @@ void ThreadPool :: UnregisterClient(IThreadPoolClient * client)
       if (DoesClientHaveMessagesOutstandingUnsafe(client))
       {
          ConstSocketRef signalSock;
-         if (CreateConnectedSocketPair(waitSock, signalSock, true) == B_NO_ERROR) (void) _waitingForCompletion.Put(client, signalSock);
-                                                                             else printf("ThreadPool::UnregisterClient:  Couldn't set up socket pair for shutdown notification!\n");
+         if (CreateConnectedSocketPair(waitSock, signalSock, true).IsOK()) (void) _waitingForCompletion.Put(client, signalSock);
+                                                                      else printf("ThreadPool::UnregisterClient:  Couldn't set up socket pair for shutdown notification!\n");
       }
    }
 
@@ -102,7 +107,7 @@ status_t ThreadPool :: ThreadPoolThread :: SendMessagesToInternalThread(IThreadP
 
    _currentClient = client;
    _internalQueue.SwapContents(mq);
-   if (SendMessageToInternalThread(MessageRef(&_dummyMsg, false)) == B_NO_ERROR) return B_NO_ERROR;  // Send an empty Message, just to signal the internal thread
+   if (SendMessageToInternalThread(MessageRef(&_dummyMsg, false)).IsOK()) return B_NO_ERROR;  // Send an empty Message, just to signal the internal thread
    else
    {
       // roll back!
@@ -136,10 +141,12 @@ status_t ThreadPool :: SendMessageToThreadPool(IThreadPoolClient * client, const
    MutexGuard mg(_poolLock);
 
    bool * isBeingHandled = mg.IsMutexLocked() ? _registeredClients.Get(client) : NULL;
-   if (isBeingHandled == NULL) return B_ERROR;   
+   if (isBeingHandled == NULL) return B_BAD_ARGUMENT;   
 
    Queue<MessageRef> * mq = ((*isBeingHandled)?_deferredMessages:_pendingMessages).GetOrPut(client);
-   if ((mq == NULL)||(mq->AddTail(msg) != B_NO_ERROR)) return B_ERROR;
+   MRETURN_OOM_ON_NULL(mq);
+   MRETURN_ON_ERROR(mq->AddTail(msg));
+
    if ((*isBeingHandled == false)&&(mq->GetNumItems() == 1)) DispatchPendingMessagesUnsafe();
    return B_NO_ERROR;
 }
@@ -162,18 +169,20 @@ void ThreadPool :: DispatchPendingMessagesUnsafe()
          {
             // demand-allocate a new Thread for us to use
             ThreadPoolThreadRef tRef(newnothrow ThreadPoolThread(this, _threadIDCounter++));
-            if (tRef() == NULL) {WARN_OUT_OF_MEMORY; break;}
-            if (StartInternalThread(*tRef()) != B_NO_ERROR) {LogTime(MUSCLE_LOG_ERROR, "ThreadPool:  Error launching thread!\n"); break;}
-            if (_availableThreads.Put(tRef()->GetThreadID(), tRef) != B_NO_ERROR) {tRef()->ShutdownInternalThread(); break;}  // should never happen, but just in case
+            if (tRef() == NULL) {MWARN_OUT_OF_MEMORY; break;}
+
+            status_t ret;
+            if (StartInternalThread(*tRef()).IsError(ret)) {LogTime(MUSCLE_LOG_ERROR, "ThreadPool:  Error launching thread! [%s]\n", ret()); break;}
+            if (_availableThreads.Put(tRef()->GetThreadID(), tRef).IsError()) {tRef()->ShutdownInternalThread(); break;}  // should never happen, but just in case
          }
 
          if (_availableThreads.HasItems())
          {
             // Okay, there's an idle thread awaiting something to do, so we'll just pass the next client's requests off to him.
             ThreadPoolThreadRef tRef = *_availableThreads.GetLastValue();  // use the last thread because it's "hottest" in cache
-            if (_availableThreads.MoveToTable(tRef()->GetThreadID(), _activeThreads) == B_NO_ERROR)
+            if (_availableThreads.MoveToTable(tRef()->GetThreadID(), _activeThreads).IsOK())
             {
-               if (tRef()->SendMessagesToInternalThread(client, *mq) == B_NO_ERROR)
+               if (tRef()->SendMessagesToInternalThread(client, *mq).IsOK())
                {
                   *isBeingHandled = true;  // this is to note that this client now has a Thread that is processing its data
                   (void) _pendingMessages.RemoveFirst();
@@ -225,4 +234,4 @@ status_t ThreadPool :: StartInternalThread(Thread & thread)
    return thread.StartInternalThread();
 }
 
-}; // end namespace muscle
+} // end namespace muscle

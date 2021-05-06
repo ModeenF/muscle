@@ -13,7 +13,7 @@ static const UINT WIN32MTT_SIGNAL_EVENT = WM_USER;  // default signal value
  *  This is a Win32-API-specific subclass of MessageTransceiverThread.
  *  It can be useful when you are using MUSCLE in a Win32-only application.
  */
-class Win32MessageTransceiverThread : public MessageTransceiverThread, private CountedObject<Win32MessageTransceiverThread>
+class Win32MessageTransceiverThread : public MessageTransceiverThread
 {
 public:
    /** This constructor creates an object that will signal your thread by calling
@@ -70,8 +70,9 @@ public:
    /** Returns the signal value that was passed in to our constructor, or 0 if there wasn't one. */
    UINT GetSignalValue() const {return _signalValue;}
 
-   /** Used to set the signal value when the constructor call isn't appropriate.  This value is only used
-     * if the signal handle is set to a valid value (i.e. not INVALID_HANDLE_VALUE)
+   /** Used to set the signal value when value that was set in the constructor call isn't appropriate.  
+     * This value is only used if the signal handle is set to a valid value (i.e. not INVALID_HANDLE_VALUE)
+     * @param signalValue Signal value to deliver to the reply thread when notifying it of an event.
      */
    void SetSignalValue(UINT signalValue) {_signalValue = signalValue;}
 
@@ -91,13 +92,15 @@ private:
    // method 2 -- via SetEvent()
    ::HANDLE _signalHandle;
    bool _closeHandleWhenDone;
+
+   DECLARE_COUNTED_OBJECT(Win32MessageTransceiverThread);
 };
 
 /** Here is some example code showing how to process events from a Win32MessageTransceiverThread object
   * From inside a Win32 thread, using the PostThreadMessage()/PeekMessage() method:
   *
   * Win32MessageTransceiverThread * mtt = new Win32MessageTransceiverThread(GetCurrentThreadId());
-  * if ((mtt->AddNewConnectSession("beshare.tycomsystems.com", 2960) == B_NO_ERROR)&&(mtt->StartInternalThread() == B_NO_ERROR))
+  * if ((mtt->AddNewConnectSession("beshare.tycomsystems.com", 2960).IsOK())&&(mtt->StartInternalThread().IsOK()))
   * {
   *    while(1)
   *    {
@@ -122,7 +125,7 @@ private:
   *                   case MTT_EVENT_SESSION_CONNECTED:
   *                      printf("Connected to remote peer complete!\n");
   *                   break;
-
+  *
   *                   case MTT_EVENT_SESSION_DISCONNECTED:
   *                      printf("Disconnected from remote peer, or connection failed!\n");
   *                   break;
@@ -143,7 +146,7 @@ private:
   * From inside a Win32 thread, using the SetEvent()/WaitForMultipleObjects() method:
   *
   * Win32MessageTransceiverThread * mtt = new Win32MessageTransceiverThread(CreateEvent(0, false, false, 0), true);
-  * if ((mtt->AddNewConnectSession("beshare.tycomsystems.com", 2960) == B_NO_ERROR)&&(mtt->StartInternalThread() == B_NO_ERROR))
+  * if ((mtt->AddNewConnectSession("beshare.tycomsystems.com", 2960).IsOK())&&(mtt->StartInternalThread().IsOK()))
   * {
   *    while(1)
   *    {
@@ -185,6 +188,6 @@ private:
   *
 ***/
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

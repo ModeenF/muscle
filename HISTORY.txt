@@ -5,6 +5,1388 @@ key:  - new feature
       * bug fixed
       o other
 
+   * Applied various fixes based on warnings supplied by cppcheck.
+   * Modified TCPSocketDataIO::FlushOutput() to no longer call
+     SetSocketCorkAlgorithmEnabled() when compiled under MacOS/X,
+     because MacOS/X's implementation of TCP_NOPUSH is problematic.
+   * StringMatcher::SetPattern() wasn't escaping + characters when
+     converting simple-wildcard-strings to regex-strings.  Fixed.
+
+8.20 - Released 4/26/2021
+   - Added ARRAYROWS and ARRAYCOLS functions to MuscleSupport.h
+     (These are similar to the existing ARRAYITEMS except they return
+     the first and second dimensional-extents of a 2D array)
+   - Added AreKeysASupersetOf() and AreKeysASubsetOf() convenience
+     methods to the Hashtable class.
+   - Added an optional (fromIndex) argument to String::Replace()
+     and String::GetNumInstancesOf().
+   - CMake now compiles the executables in the tests folder also. 
+   - CMake now compiles the executables in the 
+     html/muscle-by-example/examples/* sub-folders also. 
+   - CMake now includes zip/unzip functions from zlib/zlib/contrib/minizip
+     in the generated muscle.lib.
+   - Added support for the -DMUSCLE_ENABLE_LOCKING_VIOLATIONS_CHECKER
+     compile-time flag and the associated functionality in the Mutex
+     class (see BUILDOPTIONS.txt for details)
+   - Added a NeuterMutex() method to the ObjectPool class.
+   o Changed ARRAYITEMS to return uint32 instead of unsigned int.
+   o Changed ChildProcessDataIO::WaitForChildProcessToExit()
+     to return a status_t rather than a bool.
+   o Removed obsolete Win95/Win98 support code from RS232DataIO.cpp.
+   o Removed all MSVC project files from the distribution
+     (use cmake to generate .vcproj files on-demand instead)
+   o Removed Borland Makefiles as obsolete.
+   o Removed dev-C++ Makefiles as obsolete.
+   o Added explicit assignment-operators to several classes so
+     that g++ 9.3.0 wouldn't warn about deprecated implicit behavior.
+   * Fixed several const-correctness problems in the minizip code.
+   * Updated chatclient, testudp, and portableplaintextclient tests
+     to use a StdinDataIO rather than selecting on STDIN_FILENO,
+     so that they can work as expected under Windows.
+   * Fixed the CMakeList.txt to link to pthreads and util libraries
+     when appropriate (before it would only do so if Qt was installed)
+   * Fixed a potential string-terminator bug in
+     TarFileWriter::WriteFileHeader().
+   * Fixed various minor compiler-warnings.
+
+8.10 - Released 4/5/2021
+   - Added ByteBufferPacketDataIO class to the dataio folder.
+   - Win32 implementation of ChildProcessDataIO now
+     uses a variable-duration polling algorithm to improve
+     data-transfer rate from child's stdout to parent process.
+   - Added a Prefill() method to the ObjectPool class.
+   - Added a new flag SETDATANODE_FLAG_ENABLESUPERCEDE
+     to the SetDataNodeFlags enum.  PR_COMMAND_SETDATA
+     Message specifying this flag will try to remove
+     any previously-enqueued-but-still-pending updates
+     regarding the DataNodes they modify, so as not to
+     build up a FIFO backlog of update-Messages when
+     the server is under a heavy update-load.
+   - PR_COMMAND_SETDATA parser now accepts PR_NAME_FLAGS
+     field as either a SetDataNodeFlags or a uint32,
+     for convenience when client isn't C++-based.
+   - Added UpdateSubscriptionMessage(), PruneSubscriptionMessage(),
+     and UpdateSubscriptionIndexMessage() hook-methods to
+     the StorageReflectSession class.
+   - Added GetStringReference() convenience-method to the
+     Message class.
+   - Added MLOG_ON_ERROR, MPRINT_ON_ERROR, MLOG_AND_RETURN_ON_ERROR,
+     and MPRINT_AND_RETURN_ON_ERROR macros for convenient error-logging.
+   - Added a MiniPacketTunnelIOGateway class, for maximally
+     efficient packing of multiple smaller-than-MTU Messages together
+     into UDP packets.
+   - The ZLibCodec class now inherits from RefCountable.
+   - Added SetPacketRemoteLocationTaggingEnabled() and
+     GetPacketRemoteLocationTaggingEnabled() methods to the
+     AbstractMessageIOGateway class.
+   - Added a ProxyIOGateway class that centralizes some common
+     code used by both the PacketTunnelIOGateway and the
+     MiniPacketTunnelIOGateway (and potentially other
+     "decorator" style gateways in the future)
+   o Moved the declaration of the SetDataNodeFlags
+     BitChord type from StorageReflectSession.h to
+     StorageReflectConstants.h.
+   o Modified the NotifySubscribersThatNodeChanged()
+     and NodeChanged() methods in StorageReflectSession.
+     to accept a NodeChangeFlags argument instead of a boolean.
+   o Modified the SetData() method in DataNode to
+     accept a SetDataFlags argument instead of a boolean.
+   o Simplified error-handling in various locations by
+     using MRETURN_ON_ERROR instead of explicit if/returns.
+   o Moved the AbstractGatewayMessageReceiver and
+     QueueGatewayMessageReceiver classes out of
+     AbstractMessageIOGateway.h and into their own
+     file AbstractGatewayMessageReceiver.h
+   o Updated the README.html to include descriptions
+     of recently-added classes.
+   o Updated the muscle.dox file to match the latest
+     DOxygen codebase.
+   * Fixed #include in Win32FileHandleDataIO.h
+   * Fixed a bug in IPAddress::SetIPv4AddressFromUint32()
+     that was causing it to set the interface-index of an
+     IPv4 address to 0 instead of to MUSCLE_NO_LIMIT/invalid.
+   * Fixed a potential buffer-overrun in
+     StorageReflectSession::NodeIndexChanged().
+   * PacketDataIO::Write() was mis-named WriteTo().  Fixed.
+   * Fixed a bug in qt_advanced_example.cpp that caused
+     the InternalThreadSessions display to be rendered
+     incorrectly.
+
+8.00 - Released 3/8/2021
+   - Added TemplatedFlatten(), TemplatedUnflatten(),
+     TemplatedFlattenedSize(), and CreateMessageTemplate()
+     methods to the Message class, to allow encoding of
+     a Message's payload-data separately from its metadata.
+   - Added a TemplatingMessageIOGateway class that takes
+     advantage of Message's new templated-flattening 
+     functionality to reduce network bandwidth.
+   - Added GetAndMoveToFront() and GetAndMoveToBack()
+     convenience-methods to the Hashtable class.
+   - Added protected GetSendCodec() and GetReceiveCodec() methods
+     to the MessageIOGateway class, so subclasses can access them.
+   - Added a DMUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
+     compile-time flag, to make it easier to exercise the
+     TemplatedMessageIOGateway class.  Defining this flag
+     causes the AbstractMessageIOGateway class to use a
+     TemplatedMessageIOGateway by default.
+   - Added a (maxRecursions) argument to the SortFieldNames()
+     method of the Message class.
+   - Added a .And() method to the status_t class for easier
+     ordered-chaining of multiple status_t-returning calls
+     (available under C++17 and later only)
+   - Added a MUSCLE_USE_CPLUSPLUS17 define that is automatically
+     set when compiling with C++17 or later.
+   - Added a MRETURN_ON_ERROR macro to facility returning
+     of status_t error-codes from function calls.
+   - Added a MRETURN_OOM_ON_NULL(ptr) macro that will invoke
+     MRETURN_OUT_OF_MEMORY if the passed-in pointer is NULL.
+   o Added template-testing code to testmessage.cpp
+   o Replaced explicit comparisons to B_NO_ERROR with calls
+     to .IsOK() and .IsError()
+   o Renamed WARN_OUT_OF_MEMORY macro to MWARN_OUT_OF_MEMORY
+     to reduce the chance of macro-namespace collisions.
+   o Renamed RETURN_OUT_OF_MEMORY macro to MRETURN_OUT_OF_MEMORY
+     to reduce the chance of macro-namespace collisions.
+   o Renamed DECLARE_ANONYMOUS_STACK_OBJECT macro to
+     MDECLARE_ANONYMOUS_STACK_OBJECT to reduce the chance
+     of macro-namespace collisions.
+   o Renamed DECLARE_DEBUGTIMER to MDECLARE_DEBUGTIMER to
+     reduce the chance of macro-namespace collisions.
+   * Fixed a bug where calling Message::AddData() with
+     a NULL data-pointer could cause a crash.
+   * Fixed a potential crash-on-exit bug in the
+     StorageReflectSession class's Cleanup method.
+   * Fixed a bug in the pthreads implementation of
+     Mutex::TryLock() (it was calling through to
+     pthread_mutex_lock() rather than pthread_mutex_trylock())
+
+7.71 - Released 2/14/2021
+   - Added copy-constructor and assignment-operator to the
+     StringTokenizer class.
+   - Added an IndexOfName() method to the Message class.
+   o Updated the muscle.dox file to work with DOxygen v1.9.2.
+   o Fixed some ClangSA warnings
+   o Modified Hashtable::PutOrRemove() to return a status_t
+     instead of a pointer-to-value.
+   o StringTokenizer constructor now takes separate arguments
+     for "hard" and "soft" separator-chars (with multiple
+     contiguous "hard" separator-chars returning empty strings
+     when tokenized, while contiguous "soft" separator-chars
+     will be handled as a single separator)
+   o Removed svncopy.cpp from the tests subfolder.
+   o Added teststringtokenizer.cpp to the tests subfolder.
+   * SetSocketMulticastToSelf() was broken under MacOS/X; fixed.
+   * The calls to ReadFromNetworkArray() inside 
+     NetworkUtilityFunctions.cpp no longer pass zero as an
+     interface index, to avoid an unnecessary @0 suffix in
+     IPv6 address strings.
+   * Modified DetectNetworkConfigChangesSession.cpp to again
+     compile when _WIN32_WINNT is set to 0x0501 (aka WinXP)
+   * Fixed a bug in the Win32 implementation of
+     Thread::SetThreadPriority() that would cause it to
+     always return B_UNIMPLEMENTED.
+
+7.70 - Released 1/8/2021
+   - The subscribed-sessions tables used by DataNode objects are 
+     now immutable and shared across multiple DataNodes when 
+     appropriate, reducing the server's RAM usage.
+   - Added IsInterfaceIndexValid(), UnsetInterfaceIndex(),
+     SetInterfaceIndexFrom(), and WithoutInterfaceIndex() methods 
+     to the IPAddress class.
+   - Added AddTailIfNotAlreadyPresent() and AddHeadIfNotAlreadyPresent()
+     convenience methods to the Queue class.
+   - Added a (defaultInterfaceIndex) value to IPAddress::GetInterfaceIndex()
+     to specify what to return if the current interface index value isn't
+     valid.  Defaults to zero.
+   - Added IPAddress::IsIPv6NodeLocalMulticast() and 
+     IPAddress::IsIPv6LinkLocalMulticast() convenience methods.
+   - Added == and != operators to the NetworkInterfaceInfo class.
+   o Modified the DataNode::GetSubscribers() method to return a
+     (const Hashtable<String, uint32> &) rather than a
+     (HashtableIterator<const String *, uint32>)
+   o Split Queue::RemoveDuplicateItems(bool) into
+     Queue::RemoveDuplicateItems() and Queue:RemoveSortedDuplicateItems().
+   o Revised the way interface-index values are handled in the IPAddress
+     class.  Now unset/invalid interface-indices are represented
+     internally via a guard value (MUSCLE_NO_LIMIT) rather than 0.
+   o IPAddress::ToString()'s (printIPv4AddressesInIPv4Style) argument
+     now defaults to true instead of false.
+   o Modified muscleArrayIndexIsValid() to reference (theArray) via
+     a dummy (theArray==theArray) test rather than a (theArray!=NULL)
+     test, as the latter test can generate a warning at compile time.
+    
+7.62 - Released 11/20/2020
+   - Added a ToBinaryString() convenience-method to the BitChord class.
+   - Updated TarFileWriter so that it can now write using non-seekable
+     DataIO objects as well as SeekableDataIO objects (although with
+     non-seekable you have to explicitly specify the file sizes up-front)
+   - Updated the captive zlib implementation to the latest (v1.2.11)
+   - Added CallFlattenHeaderAndMessage() and CallUnflattenHeaderAndMessage()
+     convenience-methods to the MessageIOGateway class.
+   - Added a GZDataIO class to the zlib folder, as quick way to wrap
+     the gzread()/gzwrite() API inside a DataIO interface.
+   o Modified CMakeList.txt to avoid policy warnings under Windows.
+   * Fixed pointer-casting in Windows call to SetWindowLongPtr()
+   * Fixed a bug where String::WithoutSuffix() and String::WithoutPrefix() 
+     would spin the CPU if they were passed an empty String as an argument.
+     Now these methods immediately return (*this) in that case, instead.
+
+7.61 Released 8/5/2020
+   - Removed MUSCLE's requirement that indexed-child-nodes'
+     node-names must start with the capital letter I.  Now
+     any name is acceptable for use as an indexed-child-node.
+   - Added a new Arg(double, uint32, uint32) overload to the
+     String class, which can yield better floating-point-to-String
+     formatting than the standard printf() specifiers provide.
+   - muscleMin(), muscleMax(), and various other inline functions
+     in MuscleSupport.h are now tagged as MUSCLE_CONSTEXPR
+     so that they can be evaluated at compile-time when possible.
+   o muscleArrayIndexIsValid now returns false if the passed-in
+     array-pointer is NULL.
+   * Fixed a warning in the CMakeLists.txt that would occur
+     on build systems that don't have Qt installed.
+
+7.60 Released 6/25/2020
+   - Added a "daemonsitter" program to the tests folder, to
+     demonstrate how to use MUSCLE to babysit a litter of child
+     processes.
+   - Added a ChildCountQueryFilter class, for constructing
+     QueryFilters that take the number of child nodes of
+     a DataNode into account when deciding on a match.
+   - Merged in Richard Spindler's addition of CMakeList.txt
+     files so that the Qt example programs are now built
+     via cmake when possible, and also so that MUSCLE's
+     Qt support code is built into a separate qtsupport 
+     library.
+   - Added an optional (prepend) argument to the 
+     AssembleBatchMessage() utility function.
+   - SimulatedMulticastDataIO now tries to send a test
+     UDP packet on its UDP socket before committing to
+     use it.
+   - Updated server/Makefile to conditionally build for 
+     Catalyst based on presence of ENABLECATALYST env-var.
+   - Added a testserverthread.cpp program to the tests
+     folder to test/demonstrate launching a child thread
+     that runs its own ReflectServer event loop, and how
+     the main thread can send Messages to it
+   - Added a GetEffectiveParameters() convenience method
+     to the StorageReflectSession class.
+   o Modified StorageReflectSession::SetDataNode(),
+     RestoreNodeTreeFromMessage(), and CloneDataNodeSubree()
+     to take a bit-chord of SETDATANODE_FLAG_* bits rather
+     than an error-prone list of boolean arguments.
+   o Added a dummy symbol to GlobalMemoryAllocator.cpp
+     to avoid a "GlobalMemoryAllocator.o has no symbols" warning
+   o Modified CMakeLists.txt to use WITH_MUSCLED option instead
+     of BUILD_MUSCLED environment variable.
+   o Changed MessageIOGateway's MessageFlattenedCallback's
+     return type from void to status_t, so that the callback
+     can affect whether the Message goes out or not.
+
+7.55 Released 5/7/2020
+   - Rewrote DetectNetworkConfigChangesSession's Windows
+     and Mac implementation to use a single thread for all
+     DetectNetworkConfigChangesSessions in the process,
+     rather than one thread per DetectNetworkConfigChangesSession.
+   - Added a Python implementation of the BitChord class to
+     python/bit_chord.py
+   - Added PutFlat() and GetFlat() convenience methods to the
+     Python Message class in message.py
+   - Added SegmentedStringMatcher to the libmuscle.a build.
+   - Added some experimental support for building libmuscle.a as
+     a Catalyst-compatible library (see server/Makefile)
+   - Added GetAndClearBit(), GetAndSetBit() and GetAndToggleBit()
+     convenience methods to the BitChord class.
+   - Added a SetErrno(int) function to MuscleSupport.h, to
+     complement the existing GetErrno() function.
+   - Added muscleproxy.cpp to the tests sub-folder, as simple
+     demonstration of how to implement a proxy using MUSCLE.
+   - Added a MoveIndexEntries() convenience method to the
+     StorageReflectSession class.
+   - Added CAddArchiveMessage() and CPrependArchiveMessage()
+     convenience methods to the Message class.
+   - Added an optional (maxSegments) argument to the SetPattern()
+     method of the SegmentedStringMatcher class.
+   - Added a "Clone Window" button to the qt_muscled_browser GUI.
+   - Made qt_muscled_browser's stdout output prettier. 
+   o Modified SendDataUDP() so that when it returns, errno is
+     still set to the state that the sendto() call set it to.
+   o Moved the NODE_DEPTH_* enum out of the StorageReflectSession
+     class and up into muscle-namespace scope, so that it
+     can be referenced by non-StorageReflectSession code.
+   * Added a work-around to SimulatedMulticastDataIO for the
+     occasional MacOS/X bug that causes SendDataUDP() to always
+     return ENOBUFS on a Wi-Fi device's socket.  This won't fix
+     the underlying problem in MacOS/X, but it will at least
+     keep SimulatedMulticastDataIO from spinning a core at 100%
+     when the fault occurs.
+
+7.54 Released 3/20/2020
+   - Added a B_ERRNUM(e) macro that works similarly to B_ERRNO, except
+     it calls strerror() with the passed-in integer value rather than
+     calling strerror(errno).
+   - Added a TryLock() method to the Mutex class.
+   - Added a WithReplacements() method to the String class that takes
+     a (const Hashtable<String,String> &) argument, for doing multiple
+     simultaneous search-and-replace operations at one time.
+   * Fixed the handling of RTM_NEWADDR and RTM_DELADDR messages in the
+     Linux implementation of DetectNetworkConfigChangesSession.
+   * Tweaked the Windows #ifdef's in ChildProcessDataIO.cpp per Mika
+   * Return values of pthreads functions weren't being used correctly
+     to set status_t results on error.  Fixed.
+
+7.53 Released 2/13/2020
+   - Added a new FlushOutput() virtual method to the
+     AbstractMessageIOGateway class, in case a subclass
+     needs to hook into the gateway's flush-output functionality.
+   - Added a ParseArgs(const Queue<String> &, Message &, bool) 
+     convenience-method to MiscUtilityFunctions.{cpp,h}.
+   - hexterm now reports more details about certain network errors.
+   - Updated the MacOSX/iOS implementation of GetNetworkInterfaceInfos()
+     to call ioctl(SIOCGIFFUNCTIONALTYPE) to disambiguate the device-type
+     of a network-interface device.
+   o Added the MUSCLE_CONSTEXPR tag to the TimeUnitConversionFunctions
+     so that they can be evaluated at compile time when possible.
+   o Modified SharedFilterSessionFactory.cpp to treat an all-zeros
+     shared memory region the same as a non-existent one (so that
+     we no longer have to delete the memory region just to return the
+     filter's behavior to its default state)
+   o Moved the FlushOutput() calls for the gateway classes up into 
+     AbstractMessageIOGateway::DoOutput() so that it only needs to
+     be implemented in one place rather than separately in each subclass.
+   o Modified the gateway classes to fail gracefully if GetDataIO()
+     returns a NULL reference, instead of dereferencing a NULL pointer.
+   o Updated the friend-template workaround in Hashtable.h to apply
+     to all versions of GCC, to avoid having to update the code
+     every time a new version of GCC comes out with the bug still unfixed.
+
+7.52 Released 11/28/2019
+   - Enabled bitcode-generation for iOS in the CMakeLists.txt file.
+   - Added SetSocketCorkAlgorithmEnabled() and GetSocketCorkAlgorithmEnabled()
+     functions to the NetworkUtilityFunctions API (currently implemented
+     for Linux, BSD, and MacOS/X)
+   - TCPSocketDataIO::FlushOutput() now also calls also the new
+     SetSocketCorkAlgorithmEnabled() function for better efficiency.
+   o Moved inline code out of TCPSocketDataIO.h, UDPSocketDataIO.h,
+     ByteBufferDataIO.h, and FileDataIO.h and into corresponding .cpp files.
+   o Split hexterm's "file=blah" argument into "rfile=blah" and "wfile=blah"
+     to allow hexterm to also write hex bytes into a file.
+   o Replaced explicit type-comparisons in message.py with calls to isinstance().
+   o message.py now tests sys.byteorder to determine the native CPU's endianness
+   * PlainTextMessageIOGateway wasn't calling FlushOutput() on its DataIO
+     object at the appropriate times.  Fixed.
+   * Removed some obsolete backwards-compatibility-with-early-Python-2.x
+     code from the python3/message.py class.
+   * Refined the exception-handling in message_transceiver_thread.py
+
+7.51 Released 10/22/2019
+   - Added a MUSCLE_ENABLE_AUTHORIZATION_EXECUTE_WITH_PRIVILEGES
+     compile-time flag and a SetRequestRootAccessForChildProcessEnabled()
+     method to the ChildProcessDataIO class that will be available
+     only on MacOS/X and only if the compile-time flag was specified
+     when compiling MUSCLE.  The new method tells the ChildProcessDataIO
+     class to launch the child process as a privileged/root-level process
+     (and causes the OS to prompt for the user's password before allowing that)
+   - Moved the time-unit-conversion helper-functions into their own
+     separate header file (util/TimeUnitConversions.h), and implemented
+     the full matrix of possible unit-conversions within the set of 
+     supported time-units.
+
+7.50 Released 9/25/2019
+   - Merged in some iOS-compatibility patches supplied
+     by Arno Gramatke.  The CMakeLists.txt now does the
+     right thing for iOS, and several non-iOS-supported
+     classes (i.e.  DetectNetworkConfigChangesSession
+     and RS232DataIO) now compile under iOS as dummy/no-op
+     classes, rather than breaking the build.
+   - Added a B_ERRNO macro which is similar to B_ERROR, 
+     except it automatically references the current
+     errno-string, as returned by strerror(errno).
+   - Added various status_t error-constants for "common" 
+     error types, such as B_BAD_ARGUMENT, B_DATA_NOT_FOUND, 
+     B_OUT_OF_MEMORY, B_FILE_NOT_FOUND, etc.  See 
+     support/MuscleSupport.h for the full list.
+   - Added IsOK(status_t &) and IsError(status_t &) methods
+     to the status_t class, to support short-circuit logic
+     chains that return an error-description string 
+     (see test/teststatus.cpp for examples)
+   - Added a RETURN_OUT_OF_MEMORY macro to formalize the
+     common "WARN_OUT_OF_MEMORY; return B_OUT_OF_MEMORY;" couplet.
+   - Merged in Mika Lindqvist's patch for VS2019 and ARM64.
+   o Instead of an enum/int, the status_t class now holds a
+     (const char *) containing a human-readable description 
+     of the error that occurred (or a NULL pointer to indicate 
+     that the operation succeeded).
+   o B_ERROR now optionally takes a (const char *) argument
+     specifying a human-readable error-string describing
+     the error that occurred.
+   o Updated the codebase to return more specific status_t
+     error strings when possible (instead of only B_ERROR).
+   o Updates the codebase so that LogTime() calls reporting
+     an error now include the state-string of the relevant 
+     status_t variable, when applicable.
+   o The Mutex, SharedMemory, TarFileWriter, and ZLibCodec
+     classes all now now inherit from NotCopyable.
+   * Updated the friend-template work-around in Hashtable.h
+     to include g++ 8.3.x
+   * Fixed an output-formatting bug in test/readmessages.cpp
+   * Fixed a bug in test/readmessage.cpp that could cause
+     readmessage to crash when reading an invalid file.
+
+7.41 Released 8/8/2019
+   - Added a SwapContents() method to the StringMatcher class,
+     and also a move-constructor and a move-assignment-operator.
+   - The CMakeLists.txt file can now take an optional
+     -DBUILD_MUSCLED=OFF argument, for use-cases where
+     the user wants only muscle.lib to be built and not muscled.
+   - The Cloneable interface class now includes logic to verify
+     that the object returned by Clone() is of the correct
+     subclass, and will trigger an assertion-failure if it isn't.
+   - Added a test/testclone unit-test program to test Cloneable.
+   o Moved AbstractReflectSession::GetTypeName() up into the
+     ServerComponent superclass, and gave it a default implementation
+     (based on RTTI) so that it no longer needs to be implemented
+     manually by every subclass.
+
+7.40 Released 7/23/2019
+   - Added an AndQueryFilter class, for better ease-of-use.
+   - Added an  OrQueryFilter class, for better ease-of-use.
+   - Added a NandQueryFilter class, for better ease-of-use.
+   - Added a  NorQueryFilter class, for better ease-of-use.
+   - Added IsKeyLocatedInThisContainer() and
+     IsValueLocatedInThisContainer() methods to the
+     Hashtable class (to match the IsItemLocatedInThisContainer()
+     method already present in the Queue class)
+   o Renamed the existing AndOrQueryFilter class to 
+     MinimumThresholdQueryFilter.  This class now serves as the
+     superclass of the AndQueryFilter and OrQueryFilter classes.
+   o Renamed the NandNotQueryFilter class to 
+     MaximumThresholdQueryFilter.  This class now serves as the
+     superclass of the NandQueryFilter and NorQueryFilter classes.
+   o Tweaked some #ifdefs so that MUSCLE code can be compiled
+     to WebAssembly using Emscripten.
+   o Added support for a -DMUSCLE_USE_DUMMY_DETECT_NETWORK_CONFIG_CHANGES_SESSION
+     build-flag, for easier test-building on systems that aren't
+     currently supported by the DetectNetworkConfigChangesSession
+   * Rewrote testqueryfilter.cpp to unit-test the new classes.
+   * Fixed some compiler-warnings in the included Qt-examples.
+   * Various style tweakages in response to suggestions generated
+     by GitHub CodeFactor
+   * Added the 'class' keyword to a couple of friend-declarations
+     in SSLSocketDataIO.h, since pre-C++11 compilers require it.
+   * Fixed a use-after-free bug that could occur when the
+     Hashtable class's Put() methods needed to allocate a
+     larger internal array to hold the new item, AND the
+     passed-in value-argument was a reference to an object
+     that was located within the Hashtable's old data-array.
+   * Fixed a bug similar to the above in the Queue class's
+     AddHead*() and AddTail*() methods.
+
+7.31 Released 7/11/2019
+   - Updated muscled.cpp and portablereflectclient.cpp so that
+     either one can specify public or private keys to load.
+   - Added tests/testhashcodes.cpp, to check the consistency
+     of CalculateHashCode() and CalculateHashCode64() across
+     CPU architectures.
+   o ChildProcessDataIO::ChildProcessReadyToRun() now returns
+     B_NO_ERROR if the child process should run, or B_ERROR
+     if the child process should be aborted.
+   o Modified the Hashtable-templatized-friend workaround to
+     be active on g++ up to v8.2.0.
+   * Fixed a bug that could cause the Message class's equality
+     operator to incorrectly return true in the case where both 
+     Message objects are semantically the same, but are pointing 
+     to different (yet identical) binary data-buffers.
+   * Fixed some errors and omissions in the README.html file.
+
+7.30 Released 6/7/2019
+   - Added a GetErrno() function to MuscleSupport.h, as a portable 
+     front-end to either errno or WSAGetLastError(), depending on OS.
+   - The tests/readmessage.cpp program now inflates zlib-compressed
+     files, and takes a new optional "sizes" keyword, which, if
+     specified, will cause the program to print a report of how
+     many bytes each sub-Message in the file takes up, sorted by
+     increasing size.
+   - Added a SetPreSharedKeyLoginInfo() method to the SSLSocketDataIO
+     class so that it can now support PSK-based authentication.
+   - Added GetPreSharedKeyUserName() and GetPreSharedKeyPassword()
+     methods to the SSLSocketDataIO class.
+   - Added a SetSSLPreSharedKeyLoginInfo() method (and corresponding
+     GetSSLPreSharedUserName() and GetSSLPreSharedPassword() methods)
+     to the ReflectServer class.
+   - Added a SetSSLPreSharedKeyLoginInfo() method to the 
+     MessageTransceiverThread class.
+   - Added a SetPrivateKey(const ConstMessageRef &) convenience
+     method to the SSLSocketDataIO class.
+   - Modified the ReflectServer class so that any combination
+     of public, private, and pre-shared keys can be applied to
+     newly created sessions.
+   o Hashtable.h was using some C++11-specific syntax that would
+     cause a warning to be generated when compiling in C++03 mode.  Fixed.
+   o Added an "if(TARGET muscle) return()" idempotency test to
+     the CMakeLists.txt file, to avoid potential cmake errors.
+   o Dropped support for old (pre-1.1.x) versions of OpenSSL
+     from the SSLSocketDataIO class.
+   * The CMakeLists.txt now links in the IOKit framework under MacOS/X.
+     
+7.21 Released 5/7/2019
+   - ChildProcessDataIO::LaunchChildProcess() and friends now
+     take an optional Hashtable<String,String> that, if specified,
+     will be passed to the child process as environment-variables.
+   o Reduced sizeof(Hashtable) by 8 bytes, from 64 to 56.
+   o Queues of very small Item-types (e.g. 1 or 2 bytes per
+     Item) now automatically get larger ACTUAL_SMALL_QUEUE_SIZE 
+     values, to take advantage of space that would otherwise be
+     wasted as padding anyway.
+   o Added some indentation-style fixes for member-initializers
+
+7.20 Released 4/23/2019
+   - Added new convenience methods to the Hashtable class:
+     PutAtFront(), PutAtBack(), PutBefore(), PutBehind(), and
+     PutAtPosition().  (These are variations of Put() that
+     allow the caller to simultaneously specify the desired
+     position of the object in the table's iteration-sequence)
+   - Added a ParseNumericSuffix() method to the String class.
+   - The StringTokenizer class no longer performs a heap 
+     allocation when tokenizing short strings.
+   - Added ReadFlat(), WriteFlat(), and AppendFlat() methods
+     to the ByteBuffer class.
+   - Added a Reposition(const KeyType &) method to the 
+     OrderedKeysHashtable class.
+   o Added const-qualifiers to more local variables where appropriate.
+   o Refactored the Hashtable class's internal sorting 
+     implementation to reduce the amount of redundant code.
+   o Moved all of the auto-sort functionality out of the 
+     HashtableBase class and into an OrderedHashtable subclass that 
+     OrderedKeysHashtable and OrderedValuesHashtable now derive from.
+   o Hashtable::SwapContents() no longer swaps the values of the
+     auto-sort-enabled flag or the auto-sort-cookie value.
+   o Added some private typedefs to make the Hashtable methods'
+     implementation code less verbose.
+   * Some private members of the HashtableBase class had been
+     declared protected by mistake.  Fixed.
+   * Fixed a bug in the Hashtable class that could cause a 
+     HashtableIterator to be updated improperly, if the 
+     Hashtable was resized during the iteration.
+   * testhashtable's interactive test manually changed the 
+     ordering of its OrderedKeysHashtable on startup, breaking
+     the table's automatic-sort functionality.  Fixed.
+
+7.13 Released 4/6/2019
+   - Added <, <=, >=, and > operators to the Queue class, to
+     allow for easy lexicographical comparison of Queues.
+   o Modified SharedFilterSessionFactory::IsAccessAllowedForIP()
+     to be non-static, to avoid having to re-open the shared
+     memory region on every call to the method.
+   o Added const-qualifiers to local variables where appropriate.
+   * Added a missing #include directive to DebugTimer.h
+
+7.12 Released 2/5/2019
+   - Added a AddConstToRef() convenience-function to RefCount.h,
+     as a counterpart to the existing CastAwayConstFromRef().
+   - NetworkInterfaceInfo::IsCopperDetected() now returns
+     meaningful values under Windows.
+   o Tweaked the code to avoid a few false-positive warnings
+     from Clang Static Analyzer.
+   o Removed SSLSocketDataIO.{cpp,h} from the include XCode
+     project since it is typically not necessary and breaks
+     the build if OpenSSL isn't installed on the host Mac.
+
+7.11 Released 1/7/2019
+   o Queue:GetWithDefault() methods that
+     take a default-value argument (by-reference)
+     now return their return-value by-value rather
+     than by-reference, to avoid any possibility
+     of returning a dangling reference if they
+     are called with a temporary-object argument.
+   o Hashtable:Get*WithDefault() methods that
+     take a default-value argument (by-reference)
+     now return their return-value by-value rather
+     than by-reference, to avoid any possibility
+     of returning a dangling reference if they
+     are called with a temporary-object argument.
+   * _MSC_VER was misspelled as MSC_VER in
+     PseudoFlattenable.h, causing the code to
+     fail to compile under MSVC2013.  Fixed.
+   * Fixed a bug in Mutex.h that would prevent
+     MUSCLE_QT_HAS_THREADS from being correctly
+     #defined if MUSCLE_AVOID_CPLUSPLUS11 wasn't set.
+   * Fixed FileDescriptorDataIO.h to compile 
+     correctly under Windows in the case where it
+     is the first muscle-include file to be parsed.
+   * MuscleSupport.h now checks for the presence of
+     _WIN32 (in addition to __WIN32__, etc)
+   * Fixed an assertion failure that could be 
+     triggered inside DeadlockFinder_ProcessEnding()
+     if MUSCLE_ENABLE_DEADLOCK_FINDER was defined.
+   * Fixed some warnings generated by clang++ when
+     -Wshadow is specified on the compile line.
+
+7.10 Released 12/3/2018
+   - Under C++11 and later, the status_t type is now a
+     class rather than a simple typedef for int32.  It
+     is used pretty much the same way as before, except
+     now it provides better compile-time error-checking.
+   - Under C++11 and later, the status_t type (and its
+     values B_OK, B_ERROR, and B_NO_ERROR) are now part
+     of the muscle namespace.
+   - Added a WithoutNumericSuffix() convenience method to
+     the String class.
+   - The CMakeLists.txt file has been modified so that it
+     is now usable by CMake 2.8.x and higher.
+   o Functions in the C APIs have been modified to return
+     type c_status_t (CB_ERROR or CB_NO_ERROR) rather than
+     status_t, to avoid ambiguities with the new C++11
+     version of status_t in mixed C/C++11 programs.
+   o BitChord::GetNumBitsInBitChord() and friends are now
+     declared as static/constexpr rather than const methods,
+     so that they can be called at compile-time now.
+   o Replaced the MUSCLE_ENABLE_KEEPALIVE_API compile-flag
+     with a new MUSCLE_DISABLE_KEEPALIVE_API flag (i.e.
+     so that the socket-keepalive API is now enabled by
+     default if neither flag is specified)
+   o DOxygen documentation is now generated with C++11
+     enabled (before it was documenting the pre-C++11 API)
+   * In the BitChord class, GetNumBytesInBitChord() and
+     GetNumWordsInBitChord() were mis-named.  Fixed.
+   * Fixed a bug that affected MUSCLE subscriptions that 
+     included a QueryFilter:  If a DataNode matched a 
+     subscription's node-path string, but its Message-payload
+     didn't match the QueryFilter's criteria (at the time the 
+     subscription was created), then future modifications to the 
+     DataNode would not cause the subscriber to be notified 
+     even if the updated Message-payload did change to match
+     the QueryFilter's criteria.
+   * Modified StorageReflectSession::DoSubscribeRefCallback() to
+     take its argument via an object-pointer rather than
+     smuggling an integer delta-value to it inside a (void *).
+
+7.03 Released 9/28/2018
+   - WarnOutOfMemory() now calls PrintStackTrace() (but not more
+     often than once every 5 seconds, to avoid spamming)
+   - BitChord::ClearUnusedBits() is now O(1) when compiled with C++11.
+   o support/BitChord.h will now fall back to its legacy implementation
+     if MUSCLE_AVOID_CPLUSPLUS11_BITCHORD is defined.  (This define
+     will automatically be set if MUSCLE_AVOID_CPLUSPLUS11 is defined)
+   o Removed unnecessary call to ERR_print_errors_fp() from the
+     SSLSocketDataIO constructor.
+   * IPAddress's string-argument-constructor left its fields
+     uninitialized in the case where SetFromString() failed.  Fixed.
+   * Fixed a bug in StorageRectSession::DoTraversalAux() that would
+     cause the node-traversal to skip first node-name specified in 
+     the second (and later) path-strings in a Message.
+
+7.02 Released 9/7/2018
+   - Added a function OptimizeMessageForTransmissionToMultipleGateways()
+     that can be used to greatly reduce a server's RAM usage when it is 
+     going to send a large Message to multiple clients simultaneously.
+   - Added a function IsMessageOptimizedForTransmissionToMultipleGateways()
+     that will return true iff the specified Message has been tagged already.
+   - Added a GetDistanceTo() method to the String class that 
+     returns the Levenshtein distance between two Strings.
+   - Added a GetInitialMemoryUsage() method to the CompleteSystemSystem class.
+   - Added a GetProcessMemoryUsage() function to MiscUtilityFunctions that
+     returns the current process's approximate resident heap-size, in bytes.
+   - Added a CreateConnectedSocketPair() convenience function
+     to message_transceiver_thread.py.
+   - Added AdoptRawDataArray() and ReleaseRawDataArray() methods to 
+     the Queue class, so that a Queue can operate using an 
+     externally-provided data-array if necessary.
+   o Replaced some #defines in GlobalMemoryAllocator.h with inline
+     functions instead, for more robust parsing.
+
+7.01 Released 8/22/2018
+   - Added a EuclideanModulo() convenience function
+     to MuscleSupport.h
+   * Fixed some typos in the C++03 implementation of
+     BitChord::FromWords() and BitChord::FromBytes()
+   * Fixed a bug in Hashtable::MoveToPosition() that 
+     would cause it not to correctly position the target
+     item when the specified position was in the latter
+     half of the table's iteration-sequence.
+
+7.00 Released 8/10/2018
+   - Rewrote the BitChord class to be much more powerful and
+     easy to use (especially in conjunction with an enum
+     of flag-names).  The implementation now includes variadic
+     methods (which are emulated via macros if C++11 isn't
+     available), a PseudoFlattenable interface, and a number 
+     of new convenience methods.
+   - BitChord now implements HashCode() and can therefore be
+     used as a key-type in a Hashtable.
+   - BitChord now implements CalculateChecksum().
+   - BitChord::ToHexString() now returns a constant-length hex
+     string, instead of returning a string that starts only at
+     the first non-zero byte.
+   - Added a testbitchord.cpp test program to the tests folder.
+   - CleanupDNSLabel() and CleanupDNSPath() now accept an optional
+     second argument specifying additional characters that the
+     filter should allow to remain in the returned String.
+   - Under MacOS/X and BSD, MUSCLE sockets now have the SO_NOSIGPIPE
+     socket-option automatically set on them, to avoid spurious
+     SIGPIPE signals while running inside a debugger.
+   - Updated PythonUtilityFunctions.cpp to be compatible with Python3.
+   o Rewrote the CHILD_PROCESS_LAUNCH_BITS in the ChildProcessDataIO
+     class to use a BitChord typedef (ChildProcessLaunchFlags)
+     instead.  Renamed them to CHILD_PROCESS_LAUNCH_FLAG_*.
+   o Removed the "inherit file descriptors" member variable and
+     arguments from the ChildProcessDataIO class and added a
+     CHILD_PROCESS_LAUNCH_FLAG_INHERIT_FDS flag to replace it.
+   o Added a (launchFlags) arg to the LaunchIndependentChildProcess()
+     convenience methods in the ChildProcessDataIO class.
+   o Changed the DATA_FLAG_* bits of the ByteBuffer class to
+     an enum, managed by the EndianFlags BitChord typedef.
+     Renamed them to ENDIAN_FLAG_* for clarity.
+   o Renamed ByteBuffer::SetDataFlags() to ByteBuffer::SetEndianFlags()
+   o BitChord is now implemented using uint32 words rather than
+     unsigned-int words.
+   o Modified the GetNetworkInterfaceInfos() function to take
+     a GNIIBits argument instead of a uint32 (and renamed the
+     GNII_* enums to GNII_FLAG_*)
+   o Renamed BitChord::GetBit() to BitChord::IsBitSet()
+   o Removed the inclusion of CoreFoundation/CFRunLoop.h
+     from DetectNetworkConfigChangesSession.h since having
+     it there could cause a namespace collision with Apple's
+     Point class.
+   o The ARRAYITEMS() templated method (in MuscleSupport.h)
+     is now declared constexpr under C++11 and higher.
+   o Moved the declaration of the Void class out of
+     util/Hashtable.h and into support/Void.h
+   o Modified the StringMatcher class to use BitChord
+     instead of a uint8 to hold its internal flags.
+   o Modified the FilePathInfo class to use BitChord
+     instead of a uint32 to hold its internal flags.
+   o Replaced the signal(SIGPIPE, SIG_IGN) call inside
+     NetworkSetupSystem with a less problematic call to
+     sigaction(SIGPIPE).
+   o Added some documentation for the BitChord class to
+     the MUSCLE-by-Example mkdocs pages.
+   * Updated the Python3 code in the python3 folder to
+     fix a couple of bugs (caused by code that was correct for 
+     Python2 but needed to be written differently for Python3)
+
+6.91 Released 7/26/2018
+   - Added Pete Goodeve's Python3 port of MUSCLE's existing Python2 
+     files (into the new python3 sub-directory)
+   - Added a striphextermoutput utility program to the tests folder,
+     since I'm tired of doing stripping hexterm output by hand.
+   - hexterm now pays attention when you enter a blank line on stdin,
+     and takes that as a hint to break up its output into separate
+     Write() calls (useful when piping striphextermoutput's results
+     back into hexterm, since otherwise the data for separate UDP
+     packets could get combined into a single giant UDP packet, which
+     isn't helpful)
+   - hexterm now takes an optional "delay" argument; if the argument
+     is specified (e.g. "delay=100 milliseconds"), then hexterm will
+     insert a delay of that duration after each call to Write().
+   - MuscleSupport.h now uses stdint.h and inttypes.h by default as 
+     the basis for its int8/int16/int32/int64/etc typedefs, rather
+     than trying to hand-roll them from the built-in C/C++ int/long
+     types.  If for some reason you can't use that, you can add the 
+     compiler flag -DMUSCLE_AVOID_STDINT to your command line and
+     the old approach will be used instead.
+   - Added SFINAE logic to the CloneObject() function (in Cloneable.h)
+     so that (on C++11 and later) it now works correctly for objects 
+     that inherit Cloneable and also concrete objects that do not.
+   - MuscleSupport.h now uses static_assert() to verify type sizes,
+     if possible.
+   - MicroMessage.c and MiniMessage.c now have pseudo-static-asserts
+     so that they will generate compile-time errors if any of of the
+     intN typedefs have the wrong size.
+   - Added PutAndGetKey() convenience methods to the Hashtable class.
+     (They work the same as PutAndGet(), except they return a pointer
+     to the key object in the table, rather than the value object)
+   * Fixed a bug that would cause Ref::Clone() to return a
+     default-initialized item (rather than a clone of the existing item) 
+     if it was called on an object being managed by an ObjectPool.
+   * Fixed a bug that would cause MuscleSupport.h to implicitly
+     defined MUSCLE_AVOID_CPLUSPLUS11 under MSVC2014/2017.  (I made
+     the mistake of thinking that Microsoft would set the value of
+     the __cplusplus macro correctly, but they do not)
+   * The 32-bit/non-stdint typedefs for int32 and uint32 are now 
+     based on int (and unsigned int, respectively) rather than
+     long/unsigned long.
+
+6.90 Released 7/14/2018
+   - Updated SSLSocketDataIO.cpp to compile against newer
+     versions of OpenSSL.
+   - Added GetFirstKeyWithValue() and GetLastKeyWithValue()
+     convenience methods to the Hashtable class.
+   - CopyFile() now takes an optional third argument.  The
+     third argument, if set to true, allows CopyFile() to also 
+     recursively copy a directory, if the first argument is
+     the path of a directory.
+   o The MicroMessage API was designed in such a way that it was
+     easy to accidentally dereference a misaligned pointer and
+     invoke undefined behavior.  I redesigned the API so that
+     misaligned pointers are no longer used or exposed to the
+     calling code, so that the MicroMessage API can now be used
+     e.g. on ARM CPUs.
+   * Fixed MSVC2017 compiler warning in PseudoFlattenable.h.
+   * Fixed a buffer overflow in test/printsourcelocations.cpp
+   * The C-based test programs in the test folder (microchatclient,
+     minichatclient, microreflectclient, and minireflectclient)
+     weren't handling socket-closed/EOF events correctly.  Fixed.
+   * Added some code to MiniMessage.c so that data fields will
+     be longword-aligned even if ((sizeof(MMessageField)%8)!=0)
+   * MFree() in the MiniMessage API was defined to return (void *)
+     rather than (void), due to a copy/paste error.  Fixed.
+   * Updated the MUSCLE_ENABLE_MEMORY_TRACKING implementations of 
+     MAlloc(), MRealloc(), and MFree() to follow strict-aliasing rules.
+   * IPAddressAndPort::WithInterfaceIndex() and 
+     IPAddress::WithInterfaceIndex() can now be called even
+     when MUSCLE_AVOID_IPV6 is defined.
+
+6.85 Released 5/29/2018
+   - Added logic to CMakeLists.txt so that if libz isn't
+     installed on the build-system, it will automatically
+     fall back to using the captive implementation in zlib/zlib.
+   * Fixed a number of minor warnings that appeared when 
+     compiling with clang++ and all warnings enabled.
+   * Fixed various typos and grammar problems in the MkDocs files.
+   * Added a sanity-check to Message::Unflatten() so that a
+     serialized Message with an impossibly-large entries-count
+     field will error out cleanly, rather than attempt to allocate 
+     an impossibly-large Hashtable and exhaust the host's RAM.
+
+6.84 Released 5/22/2018
+   - Added support for a -DMUSCLE_LOG_VERBOSE_SOURCE_LOCATIONS
+     command-line switch so that the log output can contain
+     full filename/line-number info, if desired.
+   - ReflectServer::ServerProcessLoop() will now print warnings
+     if it sees a session with no writeable socket and an
+     outgoing Message queue that keeps getting longer and longer.
+   o Added proper settings to the other build permutations in
+     the .vcxproj files in the muscle-by-example/examples/vc++14
+     folder.
+   * Win32AllocateStdioConsole() no longer attempts to redirect
+     both stdout and stderr to the same file when a filename is
+     supplied as its argument (because Windows apparently doesn't
+     support that).  Instead, a separate xxx_stderr.txt file is
+     created to hold the stderr output.
+
+6.83 Released 5/3/2018
+   - Rewrote the String::*IgnoreCase() methods to be more efficient
+     (they no longer call ToLowerCase()).
+   - Added Strcasestr() and StrcasestrEx() helper-functions to 
+     String.{cpp,h}.
+   - Added a vc++14 sub-directory to the muscle-by-example\examples
+     folder.  It contains a .sln, .vcxproj files, and a BUILD_ALL.bat
+     file, so that the "MUSCLE by Example" programs can be built 
+     using Visual Studio 2015 (or higher).
+   * Added some missing .c and .cpp files to the the Visual
+     Studio projects in the vc++14 folder so that the 
+     muscle-by-example example programs can all link.
+   o Improved the DOxygen-documentation and code-formatting in
+     String.{cpp,h} a bit.
+   o Modified several of the muscle-by-example example programs so 
+     that they will compile and run even when C++11 support isn't 
+     enabled.
+   o The Windows implementation of GetSystemPath() no longer calls
+     PathRemoveFileSpecA(), which means programs including 
+     GetSystemPath() will no longer need to link to Shlwapi.lib.
+   o Added a TimeSetupSystem class (part of CompleteSetupSystem)
+     so that GetRunTime64() doesn't have to demand-calculate
+     clock-frequencies on its first call.
+     
+6.82 Released 4/25/2018
+   o test/Makefile-mt no longer tries to compile testreflectsession
+     except when executing on an OS that testreflectsession supports.
+   o Did some minor editing and re-arranging of the "MUSCLE by Example" pages.
+   o Replaced a number of `tags` in the MkDocs with [URLs](...)
+   o Removed private-inheritance of CountedObject from all the classes
+     that had it -- now they include a CountedObject private member 
+     variable instead.  This was done only because all that private 
+     inheritance was cluttering up the DOxygen inheritance graphs.
+   o Added a DECLARE_COUNTED_OBJECT macro to CountedObject.h so that
+     any potential memory-overhead of CountedObjects can be eliminated 
+     in cases where object-counting is not desired.
+   o Removed support for the -DMUSCLE_AVOID_OBJECT_COUNTING and added
+     a -DMUSCLE_ENABLE_OBJECT_COUNTING macro in its place.  (That is,
+     the CountedObject class is now disabled-by-default and must be
+     explicitly enabled in order to use it)
+   o Added "MUSCLE by Example" documentation for MiscUtilityFunctions.{cpp,h}
+   * Changed a number of `tags` in the MUSCLE-by-Example MkDocs source
+     into [urls] so that the methods they mention can be quickly reviewed.
+   * server/Makefile now specifies libmuscle.a after the main() .o file.
+   * Fixed some gcc warnings in the tests folder (per Mika's suggestions)
+   * UnparseFile() wasn't quoting keywords with spaces properly.  Fixed.
+   * Fixed the dependencies in the "MUSCLE by Example" examples' Makefiles.
+
+6.81 Released 4/11/2018
+   - Added a "StorageReflectSession Message Types" section
+     to the "MUSCLE by Example" mkdocs pages
+   - Added a graphviz diagram to reflectserver.md
+   - Added an "xcode" sub-directory that contains a muscle.xcodeproj
+     project that compiles MUSCLE (contributed by Ruurd Adema)
+   o Added an if-test to TarFileWriter::WriteOctalASCII() to
+     avoid a spurious warning from gcc under Windows (reported by Mika)
+   o muscled and admin now link to libmuscle.a instead of directly
+     to the .o files.
+   o Changed the first parameter of ConvertReturnValueToMuscleSemantics()
+     from (int) to (long) in order to avoid compiler warnings.
+   * Merged in a number of patches from Ruurd Adema that fix compiler
+     warnings and errors in DOxygen comments.  (Thanks Ruurd!)
+   * muscle/server/Makefile was inappropriately including muscled.o 
+     in the libmuscle.a library.  Fixed.
+   * muscle/server/Makefile was specifying certain build-flags twice.  Fixed.
+   * Fixed a bug where the new item added by the zero-arguments
+     versions of Queue::AddTail() and Queue::AddHead() 
+     was not being reliably default-initialized.
+   o Added a note to the zero-argument Queue::AddTailAndGet() 
+     and Queue::AddHeadAndGet() methods' documentation that for
+     POD ItemTypes, the value they return a pointer to may not 
+     be in an initialized state.
+
+6.80 Released 4/2/2018
+   - Added the html/muscle-by-example tour MkDocs-source sub-directory.
+   - Added ReadFrom() and WriteTo() methods to the PacketDataIO API
+     (as convenient alternatives to calling SetPacketDestination()
+     and/or GetSourceOfLastReadPacket())
+   - PlainTextMessageIOGateway now properly supports packet-based I/O.
+   - MessageIOGateway, PlainTextMessageIOGateway, and 
+     RawDataMessageIOGateway all now support a
+     PR_NAME_PACKET_REMOTE_LOCATION field which can be used to 
+     determine a UDP packet's source and/or destination when the
+     gateway is being used in conjunction with a PacketDataIO.
+   - Added a GetFieldTypeForName(const String &) convenience method to 
+     the Message class.
+   - Added an IPAddress(const String &) constructor.
+   - Added a GetPrettyTypeCodeString() function to Message.h, that returns
+     a String object (instead of writing into a char[] buf), because really.
+   - Added the IHostNameResolver interface, and the PutHostNameResolver(),
+     RemoveHostNameResolver(), and ClearHostNameResolvers() functions,
+     so that programs can add their own custom back-end functionality 
+     to the GetHostByName() function if they want to.
+   - Added a GetHostByNameNative() function that does hostname lookup
+     without any IHostNameResolver callbacks.
+   - Added a Set() method to the IPAddressAndPort class.
+   o Changed UDPSocketDataIO::Write()'s multi-target behavior to
+     try to send to all targets even if some of the sends fail.
+   o Moved SeekableDataIO and PacketDataIO subclasses into their
+     own separate header files.
+   o Updated test/testudp.cpp to support PlainTextMessageIOGateway also.
+   * Fixed hexterm.vcproj to include some .cpp files that were missing.
+   * muscled and libmuscle.a are now compiled without the 
+     -DMUSCLE_SINGLE_THREAD_ONLY and -DMUSCLE_ENABLE_MEMORY_TRACKING
+     flags, so that libmuscle.a can be used as-is in more projects.
+   * The PRINT_CALLS_PER_SECOND macro in TimeUtilityFunctions.h was 
+     broken, and printed more often than it was supposed to.  Fixed.
+   * Fixed a bug in SysLog.cpp's log-rotator code that could cause
+     it to delete log-files prematurely under certain circumstances.
+   * Fixed a bug that could cause Message::FindData(fn, B_ANY_TYPE, ...)
+     to crash.
+   * Added a number of additional .cpp files to the libmuscle.a 
+     file generated in the server folder.
+   * Fixed an out-of-date comment in StdinDataIO.h
+   * Half-specified numeric-range clauses in StringMatcher strings
+     weren't being matched correctly.  Fixed.
+   * The default value of the (launchBits) argument in some of the
+     ChildProcessDataIO::System() methods was set incorrectly.  Fixed.
+
+6.72 Released 1/5/2018
+   - MUSCLE_AVOID_CPLUSPLUS11 will now be #defined automatically
+     inside MuscleSupport.h if it wasn't explicitly specified AND
+     the __cplusplus preprocessor token is defined to a value
+     smaller than 201100.
+   - Added a muscleClearArray() templated convenience functions to 
+     MuscleSupport.h
+   o Fixed a deprecation warning for kSCNetworkInterfaceTypePPTP in
+     NetworkUtilityFunctions.cpp (MacOS/X only)
+   o AtomicCounter.h and Mutex.h will now use the corresponding 
+     C++11 APIs in their internal implementation unless 
+     MUSCLE_AVOID_CPLUSPLUS11 is defined.
+   o Added logic to detect XCode versions before 8.0 and auto-enable
+     MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD when they are 
+     detected, since XCode's clang++ didn't support the thread_local
+     keyword before XCode 8.0.
+   * Fixed compile error in AtomicCounter.h if C++11 was enabled
+     and also MUSCLE_SINGLE_THREAD_ONLY was defined.
+
+6.71 Released 11/3/2017
+   - Added a GetFieldType() method to the MessageFieldNameIterator
+     class, for convenience.
+   - Added a 'writeToStdout' argument to StdinDataIO's constructor so
+     that StdinDataIO can optionally Write() data to stdout as well.
+     (The argument defaults to false, for backwards compatibility)
+   - SanitySetupSystem now verifies that sizeof(void*)'s value 
+     corresponds correctly to the presence/absence of the 
+     MUSCLE_64_BIT_PLATFORM macro, and panics if it doesn't.
+   - Added constructors to MultiQueryFilter (and its subclasses)
+     that take a std::initializer_list of child ConstQueryFilterRef's,
+     for convenience.  (requires C++11 or later to use)
+   o CMakeLists.txt now includes the files in the dataio subdirectory
+     as part of muscle.lib (except for SSLSocketDataIO.cpp, to avoid
+     creating a hard-coded OpenSSL dependency)
+   o Removed the 32-bit-specific implementation of CalculateHashCode64();
+     now the 64-bit is used on both 32-bit and 64-bit CPUs so that 
+     the function will give the same results regardless of platform.
+
+6.70 Released 10/17/2017
+   - The ReflectServer class, if a DetectNetworkConfigChanges session
+     is attached to it, will now automatically disconnect any non-local
+     TCP connections just before the local computer goes to sleep, in
+     order to avoid saddling any communicating peers with a moribund
+     TCP connection.  It will reconnect them, if possible, after the
+     computer re-awakes.
+   - The DetectNetworkConfigChangesSession constructor now takes
+     an optional argument indicating whether or not its presence
+     should enable the behavior described in the previous bullet-point.
+     Defaults to true, but can be explicitly set false if you don't want
+     the new behavior for some reason.
+   - Added a back-end for the Thread class that uses C++11's std::thread
+   - Added a back-end for the Mutex class that uses C++11's std::recursive_mutex
+   - Added a back-end for the ThreadLocalStorage class that uses
+     C++11's thread_local keyword.
+   - Added a CMakeLists.txt file to the root directory, for those who
+     prefer to compile a basic MUSCLE library and muscled using cmake
+     (e.g. "cd muscle; mkdir _build; cd _build; cmake ..; make")
+   - Added a IsSelfAssigned() convenience method to the IPAddress class.
+   - Added FindFirstSessionOfType() and FindSessionsOfType() convenience
+     methods to the ReflectServer class.
+   o Moved the INetworkConfigChangesTarget interface out of
+     DetectNetworkConfigChanges.h and into its own separate header file.
+   o MUSCLE now requires a C++11 compiler by default.  If you want to 
+     compile MUSCLE using an older (pre-C++11) compiler, you'll need to
+     explicitly add -DMUSCLE_AVOID_CPLUSPLUS11 to your compile-flags.
+   o MuscleSupport.h now automatically defines -DMUSCLE_USE_CPLUSPLUS11_THREADS
+     if neither MUSCLE_AVOID_CPLUSPLUS11 nor MUSCLE_AVOID_CPLUSPLUS11_THREADS
+     has been defined.
+   o Checks for -DMUSCLE_USE_CPLUSPLUS11 have been removed, because
+     C++11 is now the default compiler level.  C++11-specific code is
+     now guarded by #ifndef MUSCLE_AVOID_CPLUSPLUS11 instead.
+   o Removed the "borland" subdirectory since it's obsolete.
+   o Removed the deprecated SetReflectToSelf() and GetReflectToSelf()
+     methods from the DumbReflectSession class.
+
+6.62 Released 9/14/2017
+   o Moved constructor-arguments in the .cpp files to separate lines,
+     for better diff-ability when they are modified.
+   o Removed the overrides of String::StartsWith() that took an
+     offset parameter, since it doesn't really make sense to check
+     for a prefix with an offset.
+   o Fixed some warnings flagged by clang++'s -Weverything option
+   o Lots of miscellaneous Doxygen header-comment fixes and cleanup
+   o Added a DoxyTemplates.h header file to serve as a repository
+     of common class-member definitions, to avoid repetitive boilerplate.
+   o Modified String::operator==() to call memcmp() rather than strcmp()
+   * Improved portablereflectclient's string parsing a little.
+   * Added "const" tag to several operators in the IPAddress class 
+     that were supposed to have it, but didn't.
+
+6.61 Released 7/21/2017
+   - Added a WithInterfaceIndex() convenience method to the IPAddress
+     class (for consistency with the IPAddressAndPort class's API)
+   * Fixed a sign-casting error in ParseHumanReadableSignedTimeIntervalString()
+     under Windows.  Thanks to Mika Lindqvist for reporting this error.
+   * Fixed potential crash in GetSystemPath() under MacOS/X.
+   * Fixed the MCRASH macro to explicitly specify muscle::Crash()
+     rather than just Crash(), so that it will work when called from
+     other namespaces. 
+
+6.60 Released 6/22/2017
+   - Added SetPriority() and GetPriority() methods to the Thread
+     class, to allow specification of the CPU-priority a Thread
+     should run at.
+   - SimulatedMulticastDataIO's unicast-ping-packets now contain
+     location information about other members of the group, so that
+     even if some packets get dropped, there is a good chance that
+     all members will end up knowing about of all other members anyway.
+   - Added define MUSCLE_CONSTEXPR that expands to constexpr iff
+     MUSCLE_ENABLE_CPLUSPLUS11 is defined, or expands to nothing otherwise.
+   - Some static methods in IPAddress and IPAddressAndPort are now
+     tagged with MUSCLE_CONSTEXPR so that they can be evaluated
+     at compile-time, if necessary.
+   - Added an optional (roundUp) argument to the 
+     GetHumanReadableTimeIntervalString() functions.
+   - Added SetPacketSendDestination() and GetPacketSendDestination()
+     virtual methods to the DataIO class.
+   - Added a ProxyDataIO class that passes through all calls
+     verbatim to its held child DataIO object
+   o Renamed XorDataIO to XorProxyDataIO, and made it a subclass
+     of ProxyDataIO.
+   o Renamed PacketizedDataIO to PacketizedProxyDataIO, and made it 
+     a subclass of ProxyDataIO.
+   o Modified the UDPSocketDataIO class to contain the above two
+     virtual methods instead of SetSendDestination() and 
+     GetSendDestination()
+   o Renamed the GetSendDestinations() and SetSendDestinations()
+     methods in UDPSocketDataIO to SetPacketSentDestinations() and
+     GetPacketSendDestinations(), respectively.
+   o Added a GetPacketSendDestination() method implementation to the
+     SimulatedMulticastDataIO class.
+   o Removed the GetInternalQThread() virtual method from the
+     Thread class, since there is now a more general (non-Qt-specific)
+     mechanism in the Thread class that can be used instead.
+   o Rewrote SimulatedMulticastDataIO to be simpler and more robust;
+     in particular it now only creates two UDP sockets instead of four.
+   o Removed the FailoverDataIO class, since it didn't seem useful.
+   o Renamed DataIO::GetPacketMaximumSize() to GetMaximuPacketSize()
+   o Split the DataIO class into separate classes:  DataIO for
+     basic Read()/Write()-only I/O, SeekableDataIO for file-style
+     I/O where the current-seek-position can be Seek()'d, and
+     PacketDataIO for UDP-style packet-based I/O with explicit
+     source and destination IP addresses.
+   o Modified the various DataIO subclasses as necessary so that
+     they now subclass from the appropriate interface.
+
+6.50 Released 6/6/2017
+   - Added SimulatedMulticastDataIO, which simulates multicast
+     communication via directed unicast.  Useful for communicating
+     multicast-style across a WiFi network, where real multicast
+     communication doesn't work very well.
+   - hexterm now supports a "wifi" keyword, which if specified along
+     with the "udp=address:port" argument will replace the basic
+     UDPSocketDataIO functionality with SimulatedMulticastDataIO,
+     for testing purposes.
+   - Added some additional Inflate() and Deflate() methods
+     to the ZLibCodec class so that it can now write its
+     output into an existing ByteBuffer object rather than
+     allocating a new one from the byte-buffer-pool, if desired.
+   - hexterm now accepts a "verifyspam" argument; if specified,
+     hexterm will check incoming packets to see if they match
+     the dummy-data format sent out by hexterm's "spamspersecond"
+     feature, and if they do not, it will log an error message.
+   - Added a GetHardwareType() method to the 
+     NetworkInterfaceInfo class.  This method returns a
+     NETWORK_INTERFACE_HARDWARE_TYPE_* value indicating what
+     kind of network interface it is (e.g. Ethernet, WiFi, etc)
+   - Added a GetNetworkHardwareTypeString() static method to
+     the NetworkInterfaceInfo class.  This returns a human-readable
+     string describing the given NETWORK_INTERFACE_HARDWARE_TYPE_*
+   - Added some MacOS/X-specific utility methods to the String class:
+     SetFromCFStringRef(), ToCFStringRef(), and a String constructor
+     method that takes a (const CFStringRef &)
+   - The ip_address and IPAddressAndPort classes now implement
+     the PseudoFlattenable interface to allow for easier handling.
+   o Renamed the ip_address type to IPAddress, and made it a real
+     class (and not a typedef'd alias for uint32) even when
+     MUSCLE_AVOID_IPV6 is defined.  ip_address is now a typedef'd
+     alias to IPAddress, for backwards compatibility with old code.
+   o The various convenience methods that could be called on an
+     ip_address object (e.g. IsAddressIPv4(), IsAddressValid(),
+     IsAddressMulticast(), etc) are now methods in IPAddress instead.
+   o AtomicCounter now uses std::atomic<int32> internally,
+     if MUSCLE_USE_CPLUSPLUS11 is defined.
+   o PODSwapper and SwapContentsSwapper now check for the
+     corner-case where the two objects passed in are actually
+     the same object (and if so, they don't attempt a swap)
+   o Added a GetSourceOfLastReadPacket() method to the DataIO interface.
+   o UDPSocketDataIO::GetSourceOfLastReadPacket() is now virtual.
+   o Moved the ip_address/IPAddress and IPAddressAndPort classes'
+     declarations out of NetworkUtilityFunctions.h and into IPAddress.h
+   o Moved the NetworkInterfaceInfo class (and its associated
+     functions) out of NetworkUtilityFunctions.h and into
+     NetworkInterfaceInfo.h
+   * Fixed several places in the codebase that were inappropriately
+     relying on CFStringGetCStringPtr() to return a non-NULL value, 
+     when in fact it is documented to return NULL sometimes.
+   * hexterm now exits gracefully when stdin is closed.
+
+6.42 Released 5/12/2017
+   - Added SetPerProcessRunTime64Offset() and
+     GetPerProcessRunTime64Offset() calls, to support
+     adding an artificial constant to the values returned
+     by GetRunTime64(), for testing purposes
+   - Added ParseHumanReadableSignedTimeIntervalString()
+     and GetHumanReadableSignedTimeIntervalString() functions
+     to TimeUtilityFunctions.h for better parsing of
+     time-intervals that might be negative.
+   - Added some new convenience methods to the Hashtable
+     class:  GetKeyAtWithDefault(), GetValueAt(), and
+     GetValueAtWithDefault()
+   o Modified the signatures of a few API calls (including
+     MessageIOGateway::UnflattenHeaderAndMessage(), 
+     DeflateByteBuffer(), InflateByteBuffer, and the
+     RawDataQueryFilter class) to take a 
+     (const ConstByteBufferRef &) rather than a 
+     (const ByteBufferRef &), as they don't ever need to 
+     modify the referenced ByteBuffer object anyway.
+
+6.41 Released 3/23/2017
+   - Added ReadAndDeflateAndWrite() and ReadAndInflateAndWrite()
+     functions to the ZLibUtilityFunctions.{cpp,h} API, and
+     to the ZLibCodec class, to more easily support inflation/
+     deflation of large files without having to load all their
+     data into RAM at once.
+   - Added Visual Studio 2017 RTM project files, as provided by
+     Mika Lindqvist.
+   - FileDataIO::GetReadSelectSocket() and GetWriteSelectSocket()
+     now return valid ConstSocketRef objects on OS's that do
+     support select-ing on a file's file descriptor (read:
+     under POSIX-y OS's, but not under Windows)
+   - hexterm now supports a file=filename argument, in case
+     you want hexterm to read its input bytes from a file.
+   * Fixed a number of Doxygen-commenting oversights detected by 
+     Alvaro Lopez Ortega's "doxy-coverage" comment-checking tool.
+   * Tweaked some of the serialization/deserialization code to be
+     more careful about avoiding non-aligned word accesses.
+   o Changed the "OUT OF MEMORY" error message produced by
+     WARN_OUT_OF_MEMORY macro to read "MEMORY ALLOCATION FAILURE"
+     instead (since these errors can be caused by a corrupted
+     heap as well as by actual memory exhaustion)
+
+6.40 Released 2/10/2017
+   - Added templates constructors to the Ref<> and ConstRef<>
+     classes so that it is now possible to do implicit 
+     upcasting when creating or assigning a Ref or ConstRef
+     object (e.g. DataIORef x = TCPSocketDataIORef(y))
+   - Added DECLARE_REFTYPES macros to the declarations of all
+     classes that are subclasses of RefCountable, for convenience.
+   - Integrated Mika Lindqvist's patch to qt_muscled.pro so
+     that qt_muscled now includes the necessary zlib files
+     under Windows.
+   o Removed explicit Ref-type-casting code from a number of 
+     locations where it is no longer necessary.
+
+6.38 Released 1/11/2017
+   - Added an Atoxll() function; it is the same as Atoull()
+     except that it parses hexadecimal strings into uint64s
+     rather than decimal strings.
+   - hexterm now allows you to optionally specify a local port 
+     number to bind an otherwise transmit-only udp session to 
+     (e.g.  "./hexterm udp=127.0.0.1:5555_6666" would send to 
+     port 5555 but listen for incoming packets on port 6666)
+   * Fixed a bug in MessageField::IsEqualTo() that could cause
+     two Message objects to be considered equivalent to each
+     other when in fact they are different.
+
+6.37 Released 10/12/2016
+   o Added an AUTOCHOOSE_LEGACY_PRIMITIVE_KEY_TYPE_HACK for
+     (DataNode *) so that the code will again compile on old
+     (3.x) versions of g++ that don't support SFINAE properly.
+   - HandleStandardDaemonArgs() now prints out a list of network
+     interface information if the command line argument
+     "printnetworkinterfaces" is supplied by the user.
+   - ParseHexBytes() (and therefore any programs that depend on it,
+     such as hexterm) now understands C-style escaped-control-char
+     conventions, e.g. \r means carriage-return, \n means newline.
+   * Added a work-around for Windows' GetAdaptersAddresses() info
+     returning 255.255.255.255 as the broadcast address for an
+     IPv4 interface.  GetNetworkInterfaceInfos() will now detect
+     when this happens and replace that address with the direct 
+     broadcast address for the subnet (e.g. 192.168.0.255) instead.
+
+6.36 Released 6/24/2016
+   - The NetworkInterfaceInfo class now has a GetMACAddress()
+     method that will return the 48-bit MAC address associated
+     with the interface.
+   - udpproxy will now join a UDP socket to its multicast group
+     if the provided IP address is a multicast IP address.
+   - Added a new function Crash() which does just what it says.
+     The MCRASH macro now calls Crash() after it prints a
+     stack trace.
+   o The POSIX implementation of PrintStackTrace() now calls
+     backtrace_symbols_fd() rather than backtrace_symbols(), to
+     avoid having to allocate memory when the heap might be corrupted.
+
+6.35 Released 5/25/2016
+   o Revised MessageIOGateway::DoInputImplementation() so that if
+     a subclass's override of UnflattenHeaderAndMessage() has retained
+     a reference to its scratch-input-buffer, DoInputImplementation()
+     will recognize that and refrain from trying to reuse that buffer
+     as a place to store subsequent incoming Message data.
+   - Added Visual Studio 15 project files (Intel and ARM versions), 
+     as provided by Mika Lindqvist.
+   * Fixed the MuscleQThreadSocketNotifier constructor so that it 
+     will compile in conjunction with Qt 4.x.
+   * Merged in some ARM compatibility tweaks from Mika Lindqvist.
+   * Suppressed some MSVC type-conversion warnings in SetupSystem.cpp
+
+6.34 Released 3/14/2016
+   - Added GetQThread() accessor methods to the Thread class.  These
+     methods are only available when MUSCLE_USE_QT_THREADS is defined.
+   - Added support for a new preprocessor flag,
+     MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION.  When this flag
+     is defined, the Thread::InternalThreadEntry() will use 
+     QThread::exec() as its event loop rather than a simple 
+     while(WaitForNextMessageFromOwner()) loop.  This allows for
+     better integration with QObjects living inside the thread.
+   - Modified the ThreadedInternalSession class in the 
+     qt_advanced_example to use a QTimer for its periodic messages
+     when MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION is defined,
+     rather than calling WaitForNextMessageFromOwner(), just as an 
+     example of what can be done with better Qt integration.
+   o Replaced the Thread class's writable GetInternalSocketSet()
+     method with a more user-friendly API, including new methods
+     RegisterInternalThreadSocket(), UnregisterInternalThreadSocket(),
+     UnregisterAllInternalThreadSockets(), and IsInternalThreadSocketReady().
+   o Replaced the Thread class's writable GetOwnerSocketSet()
+     method with a more user-friendly API, including new methods
+     RegisterOwnerThreadSocket(), UnregisterOwnerThreadSocket(),
+     UnregisterAllOwnerThreadSockets(), and IsOwnerThreadSocketReady().
+   * Fixed a potential stack overflow in PlainTextMessageIOGateway::
+     DoOutputImplementation().
+   * Removed some unnecessary "#include <pthread.h>" directives from
+     the qt_advanced_example cpp files that were causing the example
+     program not to build under Windows.
+   * Added an #ifdef around IPAddressAndPort::WithInterfaceIndex()
+     so that code will again compile if MUSCLE_AVOID_IPV6 is defined.
+
+6.33 Released 2/25/2016
+   - When MUSCLE_USE_CPLUSPLUS11 is defined, the Queue class 
+     no longer bothers resetting values in its internal array 
+     to their default state, if ItemType is a trivial type.
+   - When MUSCLE_USE_CPLUSPLUS11 is defined, the Hashtable class 
+     no longer bothers resetting values in its internal array 
+     to their default state, if their type (KeyType or ValueType)
+     is a trivial type.
+   - When MUSCLE_USE_CPLUSPLUS11 is defined, the SanitySetupSystem
+     class constructor now does some basic sanity checks on the
+     std::is_trivial() method to make sure it is working as expected.
+   - hexterm now prints time-since-previous-received-data whenever
+     it prints incoming data, for easier performance checking.
+   - Added GetBuildFlags(), PrintBuildFlags() and LogBuildFlags() 
+     functions to SystemInfo.h so that it's easy for a MUSCLE-based
+     executable to report the preprocessor flags it was built with.
+     This can be handy for debugging purposes.
+   - muscled now reports its build-flags at startup, if is launched
+     with log level "debug" or higher (e.g. "displaylevel=debug").
+   - Added a WithInterfaceIndex() convenience method to the
+     IPAddressAndPort class.
+   - Usage of the DetectNetworkConfigChangesSession class has
+     been simplified.  In particular, it is no longer necessary
+     to subclass this class in order to use it; instead you can 
+     now just have any of your existing session or factory subclasses
+     implement the new INetworkConfigChangesTarget interface, and
+     the DetectNetworkConfigChangesSession will call their
+     INetworkConfigChangesTarget methods when appropriate.
+   - The Windows-only "console" command line argument now can take 
+     an optional value; e.g. console=foo.txt will cause the program's 
+     stdout and stderr output to be redirected to file foo.txt.
+   - The Win32AllocateStdioConsole() function now takes an optional 
+     argument, as described above.
+   - hexterm now looks for a "nojoin" command line argument when a 
+     multicast group is specified; if found, it will deliberately
+     not join the multicast group (and become a send-only UDP session)
+   o DetectNetworkConfigChangesSession::SetEnabled(false) now also
+     suppresses calls to ComputerIsAboutSleep() and ComputerJustWokeUp().
+   o The DECLARE_REFTYPES macro now specifies the muscle namespace
+     explicitly, to make it easier to use from other namespaces.
+   * Fixed an underflow bug in LogHexBytes() and friends that would
+     cause 4 billion dashes to be printed if the title text was
+     too long.
+   * hexterm.vcproj now includes the necessary shlwapi.lib dependency
+
+6.32 Released 12/3/2015
+   - Added support for a new compiler flag,
+     -DMUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS,
+     that makes it easier to track down the cause of
+     RefCountable objects not getting freed properly on
+     process exit.  See BUILDOPTIONS.TXT for details.
+   * Tweaked SetupSystem.cpp so that using it no longer
+     requires MiscUtilityFunctions.cpp to be compiled also.
+   * The _childProcessCrashed flag is now reset by 
+     WaitForChildProcessToExit() only when there is a child
+     process handle available to wait on.  That way multiple
+     calls to WaitForChildProcessToExit() won't obliterate 
+     the child-process-crashed information.
+   * Under Windows, the default handled-signals set now
+     also includes CTRL_C_EVENT and CTRL_BREAK_EVENT, so
+     that when running "muscled.exe catchsignals", these
+     keystrokes can also be used to cleanly shut down the
+     muscled process. 
+
 6.31 Released 8/27/2015
    - The ChildProcessDataIO class now has a DidChildProcessCrash()
      method that will return true iff WaitForChildProcessToExit()
@@ -16,8 +1398,8 @@ key:  - new feature
      visible.  To avoid that misbehavior, the child process's windows
      are now hidden only if the CHILD_PROCESS_LAUNCH_BIT_WIN32_HIDE_GUI
      bit is set in the (launchBits) argument.
-   * Some of the the DOxygen comments for enumerations in the 
-     header files were not formed correctly, so the DOxygen 
+   * Some of the the Doxygen comments for enumerations in the 
+     header files were not formed correctly, so the Doxygen 
      HTML pages would leave them undocumented.  Fixed.
    * Fixed a compiler warning in MessageField::IsEqualTo().
 
@@ -191,7 +1573,7 @@ key:  - new feature
    o Added work-arounds for gcc-3.x SFINAE incompatibilities
      to MuscleSupport.h
    o Updated the muscle.dox file using doxygen -u so that
-     it is now up-to-date (as of DOxygen 1.8.8)
+     it is now up-to-date (as of Doxygen 1.8.8)
    * If a string like "for 10 seconds" was passed to 
      ParseHumanReadableTimeIntervalString(), the "for"
      prefix would cause the returned value to be twice
@@ -983,7 +2365,7 @@ key:  - new feature
      that subclasses can easily re-enable logging if they want to.
    * Gave the README.TXT file a badly needed rewrite/update.
    * Tweaked the doxygen.dox file to yield better-looking
-     DOxygen HTML documentation.
+     Doxygen HTML documentation.
    * genDocs.sh now automatically extracts the current
      MUSCLE version number from MuscleSupport.h, so it's
      no longer necessary to manually update the muscle.dox
@@ -1086,10 +2468,10 @@ key:  - new feature
      MuscleSupport.h.  This function returns a reference to
      a default-constructed static object of the specified type.
    - Added a description of the Hashtable class's feature set
-     to the Hashtable DOxygen documentation.
+     to the Hashtable Doxygen documentation.
    - Added a const [] operator to the Hashtable class.  The 
      [] operator behaves the same as the GetWithDefault() method.
-   - Expanded and enhanced the DOxygen per-class documentation
+   - Expanded and enhanced the Doxygen per-class documentation
      of various classes.
    o Reduced sizeof(Queue), sizeof(Hashtable), and 
      sizeof(ObjectPool) by removing their default-object member
@@ -2596,15 +3978,15 @@ v4.22 Released 3/4/2008
 v4.21 Released 1/22/2008
   - Optimized Hashtable::GetOrPut(), CopyToTable(), MoveToTable(),
     Put(), and Remove() to be more efficient.
-  o Updated the muscle.dox DOxygen file to reflect changes to
-    newer versions of DOxygen
+  o Updated the muscle.dox Doxygen file to reflect changes to
+    newer versions of Doxygen
   * Hashtable::Put() and Hashtable::Remove() now do the right
     thing if they are passed (*this) as an argument.
   * Fixed a nasty bug in the ObjectPool destructor that would
     cause it to go into an infinite loop, calling delete on
     the same array over and over again.
-  * Filled in and fixed up the DOxygen comments to the point where 
-    DOxygen no longer gives any warnings when generating the autodocs.
+  * Filled in and fixed up the Doxygen comments to the point where 
+    Doxygen no longer gives any warnings when generating the autodocs.
   o Updated all copyright notice headers to read 2000-2008 Meyer Sound.
 
 v4.20 Released 12/31/2007
@@ -3076,7 +4458,7 @@ v3.34 Released 7/12/2007
     really needed it for some reason, you could still 
     call SetSocketNaglesAlgorithmEnabled() manually on 
     the resulting sockets afterwards)
-  o tests/cvscopy.cpp is now tests/svncopy.cpp, since I
+  o test/cvscopy.cpp is now test/svncopy.cpp, since I
     don't use CVS anymore.
   * Thread::WaitForNextMessageAux() wasn't handling file
     descriptors properly when called with a wakeupTime
@@ -3131,7 +4513,7 @@ v3.32 Released 5/2/2007
     a list of NetworkInterfaceInfo objects describing the
     various network interfaces currently available on the
     host machine.
-  - tests/testnetutil.cpp Now tests GetNetworkInterfaceInfos()
+  - test/testnetutil.cpp Now tests GetNetworkInterfaceInfos()
     by calling it and printing out the results. 
   - Added a new argument (emitEndMessageBatchIfNecessary)
     to the QMessageTransceiverHandler::Reset() and 
@@ -3204,7 +4586,7 @@ v3.31 Released 3/14/2007
     platform that isn't autodetected inside of MuscleSupport.
   - Added INT32_FORMAT_SPEC and UINT32_FORMAT_SPEC macros so
     that printf() statements can be made less architecture-specific.
-  - Added a section  to the tests/testtypdefs.cpp test that checks
+  - Added a section  to the test/testtypdefs.cpp test that checks
     to make sure the *_FORMAT_SPEC macros are working correctly on
     the current platform.
   - DataNode::GetChildIterator() now takes an optional flags parameter 
@@ -3385,7 +4767,7 @@ v3.24 Released 11/28/2006
     a new child node.
   - Also added a SetMaxKnownChildIDHint() method to the DataNode
     class.  This lets you manually reset the hint if you need to.
-  - Updated tests/testhashtable.cpp so that it now tests for the 
+  - Updated test/testhashtable.cpp so that it now tests for the 
     HashtableIterator bug described below.
   - The MessageReplaceFunc callback used by CloneDataNodeSubtree()
     now takes a node-path as its first argument, in addition to the
@@ -3910,7 +5292,7 @@ v2.61 Released 11/04/2004
   - Added PLOCK() and PUNLOCK() macros to Mutex.h, and a new utility
     called deadlockfinder.cpp to the test subfolder.  Together, these 
     are useful for tracking down potential synchronization deadlocks in
-    multithreaded programs.  See tests/deadlockfinder.cpp for details.
+    multithreaded programs.  See test/deadlockfinder.cpp for details.
   * Added Peter Vorwerk's Tru64-compatibility patches.
   * Added Julien Torres' AMD64-compatibility patches.
   * Added an #ifdef to Thread.{cpp,h} so that the Thread class will
@@ -3919,7 +5301,7 @@ v2.61 Released 11/04/2004
   * muscleFree now checks its argument for NULL-ness when memory
     tracking is disabled.
 
-v2.60 Released 9/25/04
+v2.60 Released 9/25/2004
   - Added in the initial implementation of the MiniMessage code.
     MiniMessage is a minimalist C-only implementation of the Message 
     dictionary class, for use with C programs or C++ programs where
@@ -3950,7 +5332,7 @@ v2.60 Released 9/25/04
   * Calling Destroy() more than once on a Python MessageTransceiverThread 
     object would cause an exception to be thrown.  Fixed.
 
-v2.52 Released 8/13/04
+v2.52 Released 8/13/2004
   - Added a GetInternalQThreadPriority() hook to the Qt implementation
     of the Thread class.  This lets you specify the Thread priority
     of MUSCLE Threads launched from Qt programs, if you wish to.
@@ -3968,7 +5350,7 @@ v2.52 Released 8/13/04
   * ParseArgs() now properly parses arguments with commas in them.
   * Integrated Wilson Yeung's fix for a race condition in the C# code.
 
-v2.51 Released 6/27/04
+v2.51 Released 6/27/2004
   - Wilson Yeung contributed an alpha version of a C# port of the Java 
     client code (included in the "csharp" subdirectory).  Thanks Wilson!
   - GetRunTime64() can now use the PowerPC time-base register,
@@ -3989,7 +5371,7 @@ v2.51 Released 6/27/04
     callback now does the right thing, instead of just immediately 
     disconnecting the newly installed gateway (or DataIO) object afterwards.
 
-v2.50 Released 6/01/04
+v2.50 Released 6/01/2004
   - If using gcc on a PowerPC or x86 target, inline assembly will be used 
     in the B_SWAP_* byte swapping macros, which is more efficient than the
     traditional muscleSwapBytes() template function.
@@ -4002,7 +5384,7 @@ v2.50 Released 6/01/04
     may need to add -D_GNU_SOURCE to your Makefile in order to use this
     code.
 
-v2.49 Released 5/07/04
+v2.49 Released 5/07/2004
   - The "daemon" keyword now takes an optional argument specifying
     where the daemon process's stdout and stderr should be redirected
     to.  If no argument is specified, /dev/null will be used by default.
@@ -4025,7 +5407,7 @@ v2.49 Released 5/07/04
   * ByteBuffer::SetNumBytes() wasn't updating number-of-valid-bytes 
     value correctly when called with retainData=true.  Fixed.
 
-v2.48 - Released 3/17/04
+v2.48 - Released 3/17/2004
   - Added a GetGroupSize() accessor method to the 
     SharedUsageLimitProxyMemoryAllocator class.
   - Added ParsePort() and ParseConnectArg() convenience methods to the 
@@ -4050,7 +5432,7 @@ v2.48 - Released 3/17/04
     Thanks to pyCube for reporting this bug!
   * Cleaned up miscellaneous errors in the autodoc header comments.
 
-v2.47 - Released 2/26/04
+v2.47 - Released 2/26/2004
   - The muscle code now supports a -DMUSCLE_AVOID_NAMESPACES compile
     flag that will cause all namespacing directives to be commented out.
   * Fixed an off-by-one error in String::SwapContents() that would cause 
@@ -4062,7 +5444,7 @@ v2.47 - Released 2/26/04
     PR_RESULT_DATAITEMS Message, if a subscribed database node was updated 
     and then deleted immediately afterwards.
 
-v2.46 - Released 1/27/04
+v2.46 - Released 1/27/2004
   - Added some UDP support:  There is now a UDPSocketDataIO class, and the 
     following new NetworkUtilityFunctions:  CreateUDPSocket(), BindUDPSocket(),
     SetUDPSocketTarget(), SendDataUDP(), and ReceiveDataUDP().
@@ -4102,7 +5484,7 @@ v2.46 - Released 1/27/04
   * SharedMemory::SetArea() with a zero createSize parameter now works 
     correctly under Windows.
 
-v2.45 - Released 11/10/03
+v2.45 - Released 11/10/2003
   - Added GetNextKeyAndValue() convenience methods to the Hashtable class.
   - Added an Atoll() function to MiscUtilityFunctions, to complement
     the already included Atoull() function.
@@ -4132,7 +5514,7 @@ v2.45 - Released 11/10/03
   * The FileDescriptorDataIO class now handles EINTR and EWOULDBLOCK
     return values appropriately, instead of erroring out.
 
-v2.44 - Released 09/15/03
+v2.44 - Released 09/15/2003
   - The QAcceptSocketsThread and QMessageTransceiverThread constructors
     now take optional parent and name arguments, which are passed on to the
     QObject constructor.
@@ -4150,7 +5532,7 @@ v2.44 - Released 09/15/03
     class, so that it can be compiled against Qt 2.3.
   * Replaced calls to QThread::postEvent() with QApplication::postEvent().
 
-v2.43 - Released 08/19/03
+v2.43 - Released 08/19/2003
   - Added an optional (count) argument to String::Append() and
     String::Prepend().
   - Added a DisconnectSession() method to the AbstractReflectSession class.
@@ -4170,7 +5552,7 @@ v2.43 - Released 08/19/03
   * The Win32 implementation of GetHumanReadableTimeString() was returning
     date strings 369 years too early.  Fixed.
 
-v2.42 - Released 7/15/03
+v2.42 - Released 7/15/2003
   o DebugTimer's default minimum-print time is now 1000 (1 millisecond)
   o DeflateMessage()'s force parameter now defaults to true.
   * Fixed a bug in PathMatcher::MatchesPath() that would cause absolute
@@ -4183,7 +5565,7 @@ v2.42 - Released 7/15/03
     has the best idea of how many slots are needed, and thus shouldn't be
     second-guessed.
 
-v2.41 - Released 6/27/03
+v2.41 - Released 6/27/2003
   - Added an sdlsupport folder with Shard's SDLMessageTransceiverThread class
     in it.  This class interfaces MUSCLE to the SDL game library.  Thanks Shard!
   - Added a PRINT_CALLS_PER_SECOND macro to TimeUtilityFunctions.h
@@ -4221,7 +5603,7 @@ v2.41 - Released 6/27/03
   * The (independent) flag to ZLibCodec::Deflate() wasn't working properly.
     Fixed.  (The ZLibCodec header format has also changed slightly)
 
-v2.40 - Released 6/2/03
+v2.40 - Released 6/2/2003
   - MUSCLE is now licensed under the standard BSD Open Source License.
     (Previously it used an equivalent but non-standard license)
   - Added the optional zlib compression library to the MUSCLE archive.
@@ -4300,7 +5682,7 @@ v2.40 - Released 6/2/03
     MessageTransceiverThread to be sent back to the user thread.
   * StorageReflectSession::FindMatchingSessions() was broken.  Fixed.
 
-v2.31 - Released 4/14/03
+v2.31 - Released 4/14/2003
   - Rewrote the Hashtable class so that it no longer needs to
     allocate HashtableEntries dynamically during hash clashes.
   - Added in a remapping layer to the HashtableEntries so that
@@ -4352,7 +5734,7 @@ v2.31 - Released 4/14/03
     on to a large memory buffer instead of freeing it immediately.  Fixed.
   * muscleAbs() was returning int instead of the templated type.  Fixed.
 
-v2.30 - Released 3/03/03
+v2.30 - Released 3/03/2003
   - Added a SharedMemory class to the system folder.  This class
     acts as a platform-neutral wrapper API for the host OS's 
     cross-process-shared-memory-area facilitities.
@@ -4415,7 +5797,7 @@ v2.30 - Released 3/03/03
     for paths with leading slashes.  Fixed.
   * TCPSocketDataIO::FlushOutput() wasn't working in OS/X.  Fixed.
 
-v2.25 - Released 2/04/03
+v2.25 - Released 2/04/2003
   - Renamed Hashtable::Get() to GetValue() (Get() is preserved
     as a synonym for compatibility with existing code)
   - Added two Hashtable::GetKey() methods to allow quick lookup
@@ -4437,7 +5819,7 @@ v2.25 - Released 2/04/03
   * DataNode::InsertIndexEntryAt() now uses GetKey() so as not
     to have to iterate over the node's child list.
 
-v2.24 - Released 11/15/02
+v2.24 - Released 11/15/2002
   - Added an "oldData" argument to StorageReflectSession's
     NotifySubscribersThatNodeChanged() and NodeChanged() methods,
     and removed the NodeCreated() and NotifySubscribersOfNewNode()
@@ -4464,7 +5846,7 @@ v2.24 - Released 11/15/02
   * QMessageTransceiverThread was using an illegal event code to
     signal the master thread of new network events.  Fixed.
 
-v2.23 - Released 11/01/02
+v2.23 - Released 11/01/2002
   - Added RS232DataIO.{cpp,h} to allow for simple serial port I/O.  
     Currently it only works under Windows and Linux; support for 
     other OS's may be added in the future, if there is need for it.
@@ -4475,7 +5857,7 @@ v2.23 - Released 11/01/02
     return (Class &) instead of (const Class &)
   * Tweaked the code to compile cleanly under gcc 3.x.
 
-v2.22 - Released 10/16/02
+v2.22 - Released 10/16/2002
   - Added PR_COMMAND_SETDATATREE, PR_COMMAND_GETDATATREE,
     and PR_JETTISON_SUBTREES commands, and a PR_RESULT_DATATREE 
     reply.  These can be used to conveniently get and set 
@@ -4489,7 +5871,7 @@ v2.22 - Released 10/16/02
     leaked, as of v2.18.  Sorry guys, that was a really dumb 
     mistake.  :^( 
 
-v2.21 - Released 10/08/02
+v2.21 - Released 10/08/2002
   - Added a muscleAbs() utility template to MuscleSupport.h
   - Queue::RemoveItemAt() and Queue::InsertItemAt() have been
     optimized a bit -- they should be about twice as fast now.
@@ -4516,7 +5898,7 @@ v2.21 - Released 10/08/02
   * The PowerPC assembly implementation of atomic increment and
     decrement wasn't being used under OS/X.  Fixed.
 
-v2.20 - Released 9/05/02
+v2.20 - Released 9/05/2002
   - Added a () convenience operator to the MessageFieldNameIterator
     class.  It operates as a synonym for GetNextFieldNameString().
   - Added PythonUtilityFunctions.{cpp,h}, which currently includes
@@ -4557,7 +5939,7 @@ v2.20 - Released 9/05/02
   * When set to a numeric-range pattern like "<0-50>", StringMatcher
     now only considers matches on strings that start with a digit.
 
-v2.19 - Released 7/22/02
+v2.19 - Released 7/22/2002
   - Added a GetPathClauseString() method to PathMatcher.{cpp.h}.
     This version returns a String object containing just the one
     clause you specified.
@@ -4576,7 +5958,7 @@ v2.19 - Released 7/22/02
     would cause net_server to half-close the connection after 60 
     seconds if no send or receive activity had occurred by then.  Fixed.
 
-v2.18 - Released 7/4/02
+v2.18 - Released 7/4/2002
   - Removed checks for DISABLE_MUSCLE_MEMORY_TRACKING, and put in
     checks for MUSCLE_ENABLE_MEMORY_TRACKING instead.  In other words,
     memory tracking is now disabled unless the Makefile says otherwise.  
@@ -4606,7 +5988,7 @@ v2.18 - Released 7/4/02
   * Folded in Charlie Buckheit's SGI compatibility changes into the
     muscled Makefile, made the Makefile simpler, and added comments.
 
-v2.17 - Released 6/14/02
+v2.17 - Released 6/14/2002
   - Message class now uses ObjectPools to cache extra AbstractDataArray
     objects, to avoid having to dynamically allocate them most of the 
     time.  You can define MUSCLE_DISABLE_MESSAGE_FIELD_POOLS to suppress 
@@ -4625,7 +6007,7 @@ v2.17 - Released 6/14/02
   * AtomicCounter::AtomicIncrement() and RefCountable::IncrementRefCount()
     now return void instead of bool (Linux doesn't support returning bool)
 
-v2.16 - Released 6/5/02
+v2.16 - Released 6/5/2002
   - Added SetNewInputPolicy(), SetNewOutputPolicy(), and
     RemoveSessions() methods to the MessageTransceiverThread class.
     These methods allow for some on-the-fly control of existing
@@ -4647,7 +6029,7 @@ v2.16 - Released 6/5/02
     that used to return (Key *) now return (const Key *).
   * Folded in VitViper's Visual C++ compatibility fixes.
 
-v2.15 - Released 5/17/02
+v2.15 - Released 5/17/2002
   - The Hashtable class now uses a HashFunctor template argument
     to calculate hash codes, instead of a function callback.  This
     allows for more efficient code, but will break some source 
@@ -4684,7 +6066,7 @@ v2.15 - Released 5/17/02
   * Fixed a race condition in the Thread class that would cause
     the thread's owner to not be signalled correctly in some cases.
 
-v2.14 - Released 5/2/02
+v2.14 - Released 5/2/2002
   * The Python Message implementation now flattens/unflattens
     B_INT64_TYPE fields properly even under old (pre 2.2) versions
     of Python.
@@ -4703,7 +6085,7 @@ v2.14 - Released 5/2/02
   * The Windows version of Thread::StartInternalThread() was broken.
     Thanks to VitViper for finding and fixing this bug!
 
-v2.13 - Released 4/26/02
+v2.13 - Released 4/26/2002
   - Added Python support, with Message and MessageTransceiverThread
     classes, and pythonchat, a BeShare-compatible command-line
     demo chat app.  Check out the README.TXT file in the python 
@@ -4721,7 +6103,7 @@ v2.13 - Released 4/26/02
   * Added a couple of checks to Message::Unflatten() to keep it from
     crashing if given a mangled flattened-Message to parse.
 
-v2.12 - Released 4/4/02
+v2.12 - Released 4/4/2002
   - Added a SetAboutToFlattenCallback() method to the MessageIOGateway
     class.  This allows you to install a hook that gets called when
     a Message is about to be flattened, in which you can modify or
@@ -4741,7 +6123,7 @@ v2.12 - Released 4/4/02
   o Removed TCPSocketDataIO::PollSocketReadiness(), since it is never
     used, encourages polling, and causes warnings under C++Builder5.5.
 
-v2.11 - Released 2/28/02
+v2.11 - Released 2/28/2002
   - Added RemoveDataNodes() and DoRemoveData() convenience methods
     to the StorageReflectSession API.
   - Changed the Thread class to have separate 
@@ -4753,7 +6135,7 @@ v2.11 - Released 2/28/02
   * ThreadSupervisorSession::MessageReceivedFromOwner()'s argument list
     was missing a parameter, and thus it wasn't getting called.  Fixed.
 
-v2.10 - Released 2/7/02
+v2.10 - Released 2/7/2002
   - MUSCLE now supports compilation under Win32 using Borland's 
     C++Builder 5.5 compiler.  (use the Makefile in the 'borland' folder)
   - StringMatcher can now (as a special case) do simple integer range 
@@ -4806,7 +6188,7 @@ v2.10 - Released 2/7/02
     fact failed.  Fixed.
   * ConnectAsync() was broken under Windows.  Fixed.
 
-v2.00 - Released 1/19/02
+v2.00 - Released 1/19/2002
   - All MUSCLE code is now declared as being in the 'muscle' namespace.
     This, plus all the changes listed below, pretty much guarantee that
     any source code that compilable with previous versions of MUSCLE won't
@@ -5022,7 +6404,7 @@ v2.00 - Released 1/19/02
        StorageReflectSession::DataNode::RemoveIndexEntry()
        StringMatcher::SetPattern() Flattenable::ReadData()
 
-v1.93 - Released 12/05/01
+v1.93 - Released 12/05/2001
   - Added an optional second argument to PortableHashtable::GetIterator(), 
     that lets you traverse the hashtable's contents backwards.
   - Added PortableHashtable::GetIteratorAt(), to allow iterations
@@ -5039,7 +6421,7 @@ v1.93 - Released 12/05/01
   - Added the PR_COMMAND_REORDERDATA message type, to let clients reorder their
     indices without having to delete and reupload the associated data nodes.
 
-v1.92 - Released 11/23/01
+v1.92 - Released 11/23/2001
   - PortableHashtables now retain the ordering of the items you Put() into them.
     (And since PortableMessage uses a PortableHashtable internally, this means 
      also that PortableMessage now retains the ordering of the data fields you 
@@ -5069,7 +6451,7 @@ v1.92 - Released 11/23/01
   * Fixed the GrowTable() method -- the user compare function wasn't
     being retained.
   
-v1.91 - Released 11/01/01
+v1.91 - Released 11/01/2001
   - Added atomic inc/decs for Linux and Windows into PortableRefCount.h
   - The admin tool now waits for a response from the server, and informs you
     if your admin commands failed due to a privilege violation.
@@ -5079,7 +6461,7 @@ v1.91 - Released 11/01/01
   * Integrated Vitaliy's patches to get QMessageTransceiverThread to work
     under Windows.
 
-v1.90 - Released 10/26/01
+v1.90 - Released 10/26/2001
   - Changed the PortableRefCount class to require that the items it 
     reference-counts are subclasses of PortableRefCountable.  This has the 
     advantage of removing all the RefCountMem and RefCountMemPool dependencies; 
@@ -5121,7 +6503,7 @@ v1.90 - Released 10/26/01
     correct results for traversals that used multiple query strings and
     didn't start from the global database root.  Fixed.
 
-v1.84 - Released 10/15/01
+v1.84 - Released 10/15/2001
   - Added a SpawnDaemonProcess() function to NetworkUtilityFunctions.h
   - Added a Snooze64() function to NetworkUtilityFunctions.h
   - Added ReleaseFile() and GetFile() methods to FileDataIO.h
@@ -5165,7 +6547,7 @@ v1.84 - Released 10/15/01
     was false instead of NULL.  Fixed.
   * Made several methods in StorageReflectSession inline and const tagged.
 
-v1.83 - Released 9/12/01
+v1.83 - Released 9/12/2001
   - Added a qtsupport folder, containing QMessageTransceiverThread
     and QThreadSafeObjectPool classes for use with the Qt API.
   - Added more of David Rene's Visual C++ compatibility changes in.
@@ -5196,7 +6578,7 @@ v1.83 - Released 9/12/01
   - Added an overloaded () operator to the StringTokenizer class, as
     a convenience.  It works as a synonym for GetNextToken().
     
-v1.82 - Released 8/21/01
+v1.82 - Released 8/21/2001
   - During a memory shortage, muscled now kicks users whose output
     message queues have grown too large.  This keeps someone with
     a bad network connection and an ambitious subscription request
@@ -5212,7 +6594,7 @@ v1.82 - Released 8/21/01
     actually been sent) and will drop any clients that have been 
     stalled for more than 20 minutes.
 
-v1.81 - Released 7/16/01
+v1.81 - Released 7/16/2001
   - Added Alan's stream operators ("<<") to the PortableString class.
   * Made AtheOS refcounts use atomic_add(), for thread safety.
   * Merged in David Rene's header tweaks to help MUSCLE code compile
@@ -5223,7 +6605,7 @@ v1.81 - Released 7/16/01
   * Fixed a potential source of problems during out-of-memory
     conditions in the PortableMessageIOGateway class.
 
-v1.80 - Released 6/26/01
+v1.80 - Released 6/26/2001
   - Added an atheossupport directory, which is a AtheOS port of
     the BeOS code in the besupport directory.
   - Added testatheosclient.cpp and testatheossupport.cpp testing
@@ -5235,7 +6617,7 @@ v1.80 - Released 6/26/01
     it will compile again.  :^(  (this change was necessary in 
     order to avoid #include space conflicts with the STL headers)
 
-v1.72 - Released 6/22/01
+v1.72 - Released 6/22/2001
   - Added a "maxnodespersession" parameter to muscled, which lets
     you specify the maximum number of nodes any given session may
     have in its server-side database at one time.
@@ -5260,7 +6642,7 @@ v1.72 - Released 6/22/01
     class (in case the regular old PORTABLE_MESSAGES_RECEIVED message
     isn't good enough for you)
 
-v1.71 - Released 6/11/01
+v1.71 - Released 6/11/2001
   - Renamed ReflectServer::AddAcceptPort() to PutAcceptPort().  
     Changed ReflectServer to allocate accept-sockets inside the
     PutAcceptPort() call instead of at the beginning of the 
@@ -5275,7 +6657,7 @@ v1.71 - Released 6/11/01
     so that it will link properly under Linux.
   * Added some missing constants to StorageReflectSession.java
 
-v1.70 - Released 5/20/01
+v1.70 - Released 5/20/2001
   - Changed the Makefiles to reflect the changed, final location 
     of the BONE headers (/boot/develop/headers/be/bone)
   - Changed the Put() methods of PortableHashtable to return
@@ -5299,7 +6681,7 @@ v1.70 - Released 5/20/01
     This should fix some of the memory leaks that occur when the server
     has hit its memory cap.
 
-v1.64 - Released 5/07/01
+v1.64 - Released 5/07/2001
   - Added dataio/MemoryBufferDataIO.h.  This class lets you use
     an in-memory array as a limited input or output device.
   - Added a new first parameter to BecomeDaemonProcess().  This
@@ -5331,7 +6713,7 @@ v1.64 - Released 5/07/01
   * Boolean PortableMessage fields were broken on architectures
     where sizeof(bool) was not equal to one.  Fixed.
 
-v1.63 - Released 3/25/01
+v1.63 - Released 3/25/2001
   - iogateway/PlainTextMessageIOGateway.cpp now works.  While not
     used by muscled, this class can be used by other programs for
     easy communication with servers that speak ASCII text (e.g.
@@ -5356,7 +6738,7 @@ v1.63 - Released 3/25/01
     both suppress SIGPIPE signals, as these can be raised when sending
     to a remotely-closed socket, killing the thread.
 
-v1.62 - Released 3/2/01
+v1.62 - Released 3/2/2001
   - Added a PR_NAME_SERVER_VERSION parameter to the parameter set
     returned by the server.  This field contains a string to indicate
     the version of MUSCLE the muscled server was compiled from.
@@ -5370,7 +6752,7 @@ v1.62 - Released 3/2/01
   * Made the _empty Hashtable in PortableMessage.java demand allocated,
     otherwise IE would barf on it.
 
-v1.61 - Released 2/16/01
+v1.61 - Released 2/16/2001
   - Changed the Pulse()/GetPulseTime() callbacks to use uint64s instead of
     timeval structs--uint64's are much easier to use than timevals.
   - Added a BecomeDaemonProcess() function to NetworkUtilityFunctions.h
@@ -5383,7 +6765,7 @@ v1.61 - Released 2/16/01
     and file logging.  Before it was using the same callback for both, but
     certain versions of Linux crash if I try to re-use a va_list object.
 
-v1.60 - Released 2/1/01
+v1.60 - Released 2/1/2001
   - Added Java client support to MUSCLE!  (See README-JAVA.txt)
   - Changed header comments to JavaDoc style throughout.
   - Added extra commenting to a lot of previously uncommented header code.
@@ -5416,7 +6798,7 @@ v1.60 - Released 2/1/01
     to private and added protected accessor methods where necessary.
   * HTML-ized the README.TXT file (now named README.html)
 
-v1.51 - Released 1/3/01
+v1.51 - Released 1/3/2001
   - Added PR_COMMAND_KICK, PR_COMMAND_ADDBANS, and PR_COMMAND_REMOVEBANS
     commands.  Messages of these types instruct the muscle server to
     disconnect other clients, forbid IP addresses from connecting to
@@ -5438,7 +6820,7 @@ v1.51 - Released 1/3/01
     operator to specify which clients are allowed to kick, ban,
     and unban other clients.
   
-v1.50 - Released 12/29/00
+v1.50 - Released 12/29/2000
   - Loosened up the flattened-PortableMessage protocol specification
     a little bit.  It is now legal to add fields with arbitrary typecodes
     to a PortableMessage, and PortableMessages with fields that have
@@ -5453,7 +6835,7 @@ v1.50 - Released 12/29/00
   * Tweaked StorageReflectSession.{cpp,h} to get it to compile under
     Red Hat Linux 7.0.
 
-v1.45 - Released 12/22/00
+v1.45 - Released 12/22/2000
   - Added a GetPeerInfo() function into NetworkUtilityFunctions.{cpp,h}.
     This function returns the remote host IP and port of a connected socket.
   - Added a ClientConnected() virtual method and 
@@ -5483,7 +6865,7 @@ v1.45 - Released 12/22/00
   * Fixed an uninitialized-pointer problem that could make muscled
     crash while denying a login.
 
-v1.44 - Released 12/21/00
+v1.44 - Released 12/21/2000
   - Modified PortableHashtable to maintain a linked list of 
     PortableHashtableEntry objects.  This should speed up traversals 
     somewhat, as the PortableHashtableIterator no longer needs to 
@@ -5494,7 +6876,7 @@ v1.44 - Released 12/21/00
     to PortableString that take chars instead of (const char *)'s 
     as their second argument.
 
-v1.43 - Released 12/01/00
+v1.43 - Released 12/01/2000
   - Added a "Custom Servers.html" file to muscle/html.  This file contains
     information on making your own custom MUSCLE server.
   - Changed ObjectPool to reuse items in LIFO order rather than FIFO.
@@ -5528,7 +6910,7 @@ v1.43 - Released 12/01/00
     means that if you are running muscled on a PowerPC BeOS machine, the
     memory allocation limits will be ignored.
 
-v1.42 - Released 10/18/00
+v1.42 - Released 10/18/2000
   - Added a new function, AddOutOfMemoryHandler((void *)()).  This lets you
     install your own handler that will be called in the event of a memory
     allocation failure.
@@ -5542,7 +6924,7 @@ v1.42 - Released 10/18/00
   * The memory-tracking new and delete operators now count their own 
     4-byte-per-allocation overhead in the allocated-memory total.
 
-v1.41 - Released 10/8/00
+v1.41 - Released 10/8/2000
   - Added a FindDataPointer() method to the PortableMessage class.
     This method returns a writable pointer to a field's data
     array, for efficiency.
@@ -5570,7 +6952,7 @@ v1.41 - Released 10/8/00
   * Now compiles cleanly with full warnings enabled, thanks
     to Christopher Tate.
 
-v1.40 - Released 9/8/00
+v1.40 - Released 9/8/2000
   - Added ordered-child-indexing to StorageReflectSession.  Support
     for this includes the new PR_COMMAND_INSERTORDEREDDATA code, 
     the PR_RESULT_INDEXUPDATED result code, and the INDEX_OP_*
@@ -5582,7 +6964,7 @@ v1.40 - Released 9/8/00
   - Added Head(), Tail(), HeadPointer(), TailPointer(), and 
     InsertItemAt() to PortableQueue.
 
-v1.31 - Released 7/30/00
+v1.31 - Released 7/30/2000
   - Added custom-callback capability to the SysLog module.
     (AddLogCallback(), RemoveLogCallback())
   - Added the OnceEvery() function to NetworkUtilityFunctions.
@@ -5590,7 +6972,7 @@ v1.31 - Released 7/30/00
     this was causing muscled to panic and exit sometimes under FreeBSD.
     (Thanks to Peter Schultz for helping track down this bug!)
 
-v1.30 - Released 6/30/00
+v1.30 - Released 6/30/2000
   - Added optional object-allocation tracking into the code.
     This tracking is useful for hunting down memory leaks;  to enable it
     uncomment the -DMUSCLE_WATCH_MEM_USAGE line in the Makefile and
@@ -5641,25 +7023,25 @@ v1.30 - Released 6/30/00
     was completely broken.
   * StringMatcher::Match() is now tagged as const.
 
-v1.24 - 6/17/00
+v1.24 - 6/17/2000
   - muscled now splits its PR_RESULT_DATAITEMS messages into multiple 
     messages if the message has more than 50 items in it.  This allows 
     for more fine-grained updates.
   - Added a PR_NAME_MAX_UPDATE_MESSAGE_ITEMS parameter that can
     be set by the client to change the above threshold if desired.
 
-v1.23 - 6/15/00
+v1.23 - 6/15/2000
   - Added a StartServerThread() method to the MessageTransceiverThread
     class.  Now the MessageTransceiverThread can be used to accept
     multiple overlapping connections, instead of just a series of
     single connections.
   * make clean now removes .xSYM files.
 
-v1.22 - 6/14/00
+v1.22 - 6/14/2000
   * MessageTransceiverThread::WaitForAllMessagesToBeSent() was broken.
     Changed it to use benaphores instead of BLockers, and now all is well.
 
-v1.21 - 6/12/00
+v1.21 - 6/12/2000
   - Added Prepend() and Append() methods to PortableString.
   - Added InetNtoA() convenience method to NetworkUtilityFunctions.cpp
   - Added EscapeRegexTokens() to StorageReflectUtils.h
@@ -5668,7 +7050,7 @@ v1.21 - 6/12/00
   * Fixed several bugs in the MessageTransceiverThread class.
   * muscled now handles connections from localhost correctly.
 
-v1.20 - 6/8/00
+v1.20 - 6/8/2000
   - Added new accessors to PortableHashtable and PortableMessage that 
     return key and value objects by pointer rather than by value.  
     This can make access and traversals more efficient, as it eliminates 
@@ -5681,18 +7063,18 @@ v1.20 - 6/8/00
     message queue has become empty.
   * Made ObjectPool's destructor virtual. 
 
-v1.10 - 6/1/00
+v1.10 - 6/1/2000
   - Added ReplaceSession() method, by which a server-side session object
     can replace itself with a different one.
   - AbstractMessageIOGateway objects can now request Pulse() callbacks.
   - Added system logging, to the console or to a log file, or both.
   * Fixed some minor compilation problems
 
-v1.01 - 4/11/00
+v1.01 - 4/11/2000
   o Redesigned the Pulse() support to work based on absolute wakeup times
     rather than relative periods.
   - Added some convenience methods for working with timeval structs to
-    NetworkUtilityFunctios.h
+    NetworkUtilityFunctions.h
 
-v1.00 - 3/29/00
+v1.00 - 3/29/2000
   - Initial release

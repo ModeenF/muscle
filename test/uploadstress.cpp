@@ -1,9 +1,6 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
-#include <netdb.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <time.h>
+#include <stdio.h>
 
 #include "dataio/TCPSocketDataIO.h"
 #include "iogateway/MessageIOGateway.h"
@@ -14,7 +11,7 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Test failed, line %i\n",__LINE__)
+#define TEST(x) if ((x).IsError()) printf("Test failed, line %i\n",__LINE__)
 
 // This client just uploads a bunch of stuff to the server, trying to batter it down.
 int main(int argc, char ** argv)
@@ -39,14 +36,14 @@ int main(int argc, char ** argv)
       gw.SetDataIO(DataIORef(new TCPSocketDataIO(s, false)));
       while(true)
       {
-         int fd = s.GetFileDescriptor();
+         const int fd = s.GetFileDescriptor();
          multiplexer.RegisterSocketForReadReady(fd);
          multiplexer.RegisterSocketForWriteReady(fd);
 
          if (multiplexer.WaitForEvents() < 0) printf("uploadstress: WaitForEvents() failed!\n");
 
-         bool reading = multiplexer.IsSocketReadyForRead(fd);
-         bool writing = multiplexer.IsSocketReadyForWrite(fd);
+         const bool reading = multiplexer.IsSocketReadyForRead(fd);
+         const bool writing = multiplexer.IsSocketReadyForWrite(fd);
 
          if (gw.HasBytesToOutput() == false)
          {
@@ -61,8 +58,8 @@ int main(int argc, char ** argv)
             gw.AddOutgoingMessage(smsg);
          }
 
-         bool writeError = ((writing)&&(gw.DoOutput() < 0));
-         bool readError  = ((reading)&&(gw.DoInput(inQueue) < 0));
+         const bool writeError = ((writing)&&(gw.DoOutput() < 0));
+         const bool readError  = ((reading)&&(gw.DoInput(inQueue) < 0));
          if ((readError)||(writeError))
          {
             printf("Connection closed, exiting.\n");
@@ -70,7 +67,7 @@ int main(int argc, char ** argv)
          }
 
          MessageRef incoming;
-         while(inQueue.RemoveHead(incoming) == B_NO_ERROR)
+         while(inQueue.RemoveHead(incoming).IsOK())
          {
             printf("Heard message from server:-----------------------------------\n");
             incoming()->PrintToStream();

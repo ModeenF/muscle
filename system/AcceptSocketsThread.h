@@ -14,12 +14,12 @@ enum {
    AST_LAST_EVENT                              /**< guard value */
 };
 
-#define AST_NAME_SOCKET "socket"  // field name where we store our ConstSocketRef in our reply Messages.
+#define AST_NAME_SOCKET "socket"  /**< field name where we store our ConstSocketRef in our reply Messages. */
 
 /** A thread that waits for TCP connections on a given port, and when it gets one, 
   * it sends the socket to its owner via a ConstSocketRef.
   */
-class AcceptSocketsThread : public Thread, private CountedObject<AcceptSocketsThread>
+class AcceptSocketsThread : public Thread
 {
 public:
    /** Default constructor.  You'll need to call SetPort() before calling StartInternalThread(). */
@@ -31,7 +31,7 @@ public:
      * @param optFrom If specified, the IP address to accept connections from.  If left as zero,
      *                then connections will be accepted from any IP address.
      */
-   AcceptSocketsThread(uint16 port, const ip_address & optFrom = invalidIP);
+   AcceptSocketsThread(uint16 port, const IPAddress & optFrom = invalidIP);
 
    /** Destructor.  Closes the accept socket and frees the port */
    virtual ~AcceptSocketsThread();
@@ -48,10 +48,10 @@ public:
      * @param optInterfaceIP if specified, this should be the IP address of a local network interface
      *                       to listen for incoming connections on.  If left unspecified (or set to invalidIP)
      *                       then we will accept connections on all network interfaces.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (port couldn't be allocated, or internal
-     *          thread was already running)
+     * @returns B_NO_ERROR on success, or an error code on failure (port couldn't be allocated, or the 
+     *          internal thread was already running)
      */
-   status_t SetPort(uint16 port, const ip_address & optInterfaceIP = invalidIP);
+   status_t SetPort(uint16 port, const IPAddress & optInterfaceIP = invalidIP);
 
 protected:
    virtual void InternalThreadEntry();
@@ -60,7 +60,10 @@ private:
    uint16 _port;
    ConstSocketRef _notifySocket;
    ConstSocketRef _acceptSocket;
+
+   DECLARE_COUNTED_OBJECT(AcceptSocketsThread);
 };
+DECLARE_REFTYPES(AcceptSocketsThread);
 
 };
 

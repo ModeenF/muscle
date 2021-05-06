@@ -37,17 +37,12 @@ public:
    /** Destructor.  */
    virtual ~SharedUsageLimitProxyMemoryAllocator();
 
-   /** Overridden to return B_ERROR if memory usage would exceed the aggregate maximum due to this allocation. */
    virtual status_t AboutToAllocate(size_t currentlyAllocatedBytes, size_t allocRequestBytes);
-
-   /** Overridden to record this amount of memory being freed */
-   virtual void AboutToFree(size_t currentlyAllocatedBytes, size_t allocRequestBytes);
+   virtual void AboutToFree(size_t currentlyAllocatedBytes, size_t freeBytes);
+   virtual size_t GetNumAvailableBytes(size_t currentlyAllocated) const;
 
    /** Overridden to return our total memory size as passed in to our ctor. */
    virtual size_t GetMaxNumBytes() const {return _maxBytes;}
-
-   /** Overridden to return the number of bytes actually available to us. */
-   virtual size_t GetNumAvailableBytes(size_t currentlyAllocated) const;
 
    /** Returns our own process's member ID value, as passed in to the constructor */
    int32 GetMemberID() const {return _memberID;}
@@ -63,7 +58,7 @@ public:
     *                     will be placed here.  This value should always be the sum of the values returned in (retCounts).
     *                     (although it is possible it might not be if the shared memory area becomes inconsistent).
     *                     Defaults to NULL.
-    *  @returns B_NO_ERROR on success, or B_ERROR if the information could not be accessed.
+    *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the shared-memory region couldn't be locked-for-read.
     */
    status_t GetCurrentMemoryUsage(size_t * retCounts, size_t * optRetTotal = NULL) const;
 
@@ -78,6 +73,8 @@ private:
    status_t ChangeDaemonCounterAux(int32 byteDelta);  // Note: this assumes the SharedMemory is not locked yet
    size_t CalculateTotalAllocationSum() const;
    uint32 GetNumSlots() const {return _shared.GetAreaSize()/sizeof(size_t);}
+   size_t * GetArrayPointer() {return (size_t *) _shared();}
+   const size_t * GetArrayPointer() const {return (const size_t *) _shared();}
 
    size_t _localAllocated;
    size_t _maxBytes;
@@ -86,7 +83,8 @@ private:
    uint32 _groupSize;
    size_t _localCachedBytes;
 };
+DECLARE_REFTYPES(SharedUsageLimitProxyMemoryAllocator);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

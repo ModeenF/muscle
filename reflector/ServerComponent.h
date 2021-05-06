@@ -5,9 +5,9 @@
 
 #include "message/Message.h"
 #include "support/NotCopyable.h"
-#include "util/RefCount.h"
+#include "util/IPAddress.h"
 #include "util/PulseNode.h"
-#include "util/NetworkUtilityFunctions.h"  // for ip_address
+#include "util/RefCount.h"
 
 namespace muscle {
 
@@ -19,6 +19,12 @@ DECLARE_REFTYPES(AbstractReflectSession);
 DECLARE_REFTYPES(ReflectSessionFactory);
 
 #ifndef MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS
+/** Defines the maximum amount of time (in microseconds) that an asynchronous TCP connection should be allowed to remain in the "still-connecting" state 
+  * before the MUSCLE TCP async-connect logic decides it is taking too long and aborts the connection.  Default value is MUSCLE_TIME_NEVER, meaning that
+  * MUSCLE will not enforce any explicit time limit (rather only the timeouts implemented by the operating system's network stack will apply).  This value
+  * can be overridden at compile-time via e.g. -DMUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS=MinutesToMicros(2), or you can specify an explicit 
+  * per-connection timeout value at runtime, as an argument to your AddNewConnectSession() calls, etc.
+  */
 # define MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS MUSCLE_TIME_NEVER
 #endif
 
@@ -27,7 +33,7 @@ DECLARE_REFTYPES(ReflectSessionFactory);
  *  in one way or another, to help define the ReflectServer's behaviour.  This
  *  class provides callback wrappers that let you operate on the server's state.
  */
-class ServerComponent : public RefCountable, public PulseNode, private CountedObject<ServerComponent>, private NotCopyable
+class ServerComponent : public RefCountable, public PulseNode, private NotCopyable
 {
 public:
    /** Default Constructor. */
@@ -35,6 +41,13 @@ public:
 
    /** Destructor. */
    virtual ~ServerComponent();
+
+   /** Returns a pretty/human-readable string identifying this class.
+     * Default implementation generates a type-name from our subclass's
+     * RTTI info; subclasses may override this to return something prettier, 
+     * if they wish.
+     */
+   virtual const char * GetTypeName() const;
 
    /**
     * This method is called when this object has been added to
@@ -90,13 +103,17 @@ public:
      */
    bool IsFullyAttachedToServer() const {return _fullyAttached;}
 
-   /** Sets the fully-attached-to-server flag for this session.  Typically only the ReflectServer class should call this. */
+   /** Sets the fully-attached-to-server flag for this session.  Typically only the ReflectServer class should call this.
+     * @param fullyAttached true iff we are not fully attached; false if we are no longer fully attacked
+     */
    void SetFullyAttachedToServer(bool fullyAttached) {_fullyAttached = fullyAttached;}
 
    /** Returns the ReflectServer we are currently attached to, or NULL if we aren't currently attached to a ReflectServer. */
    ReflectServer * GetOwner() const {return _owner;}
 
-   /** Sets the ReflectServer we are currently attached to.  Don't call this if you don't know what you are doing. */
+   /** Sets the ReflectServer we are currently attached to.  Don't call this if you don't know what you are doing.
+     * @param s the ReflectServer object that we should use for method-call forwarding to ReflectServer functionality
+     */
    void SetOwner(ReflectServer * s) {_owner = s;}
 
 protected:
@@ -115,11 +132,27 @@ protected:
    /** Returns the number of bytes that are currently allocated */
    uint64 GetNumUsedBytes() const;
 
-   /** Passes through to ReflectServer::PutAcceptFactory() */
-   status_t PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & factoryRef, const ip_address & interfaceIP = invalidIP, uint16 * optRetPort = NULL);
+   /** Passes through to ReflectServer::PutAcceptFactory()
+    *  @param port The TCP port the server will listen on.  (muscled's traditional port is 2960)
+    *              If this port is zero, then the server will choose an available port number to use.
+    *              If this port is the same as one specified in a previous call to PutAcceptFactory(),
+    *              the old factory associated with that port will be replaced with this one.
+    *  @param factoryRef Reference to a factory object that can generate new sessions when needed.
+    *  @param optInterfaceIP Optional local interface address to listen on.  If not specified, or if specified
+    *                        as (invalidIP), then connections will be accepted from all local network interfaces.
+    *  @param optRetPort If specified non-NULL, then on success the port that the factory was bound to will
+    *                    be placed into this parameter.
+    *  @return B_NO_ERROR on success, or an error code on failure (couldn't bind to socket?)
+    */
+   status_t PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & factoryRef, const IPAddress & optInterfaceIP = invalidIP, uint16 * optRetPort = NULL);
 
-   /** Passes through to ReflectServer::RemoveAcceptFactory() */
-   status_t RemoveAcceptFactory(uint16 port, const ip_address & interfaceIP = invalidIP);
+   /** Passes through to ReflectServer::RemoveAcceptFactory()
+    *  @param port whose callback should be removed.  If (port) is set to zero, all callbacks will be removed.
+    *  @param optInterfaceIP Interface(s) that the specified callbacks were assigned to in their PutAcceptFactory() call.
+    *                        This parameter is ignored when (port) is zero.
+    *  @returns B_NO_ERROR on success, or B_DATA_NOT_FOUND if a factory for the specified port was not found.
+    */
+   status_t RemoveAcceptFactory(uint16 port, const IPAddress & optInterfaceIP = invalidIP);
 
    /** Tells the whole server process to quit ASAP.  */
    void EndServer();
@@ -144,7 +177,7 @@ protected:
     *               CreateDefaultSocket() method will be called to supply the ConstSocketRef.
     *               If that also returns a NULL reference, then the client will run without
     *               a connection to anything.
-    * @return B_NO_ERROR if the session was successfully added, or B_ERROR on error.
+    * @return B_NO_ERROR if the session was successfully added, or an error code on error.
     */
    status_t AddNewSession(const AbstractReflectSessionRef & session, const ConstSocketRef & socket = ConstSocketRef());
 
@@ -170,10 +203,10 @@ protected:
     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
     *                              is used; typically this means that it will be left up to the operating system how long to wait
     *                              before timing out the connection attempt.
-    * @return B_NO_ERROR if the session was successfully added, or B_ERROR on error 
+    * @return B_NO_ERROR if the session was successfully added, or an error code on error 
     *                    (out-of-memory or the connect attempt failed immediately).
     */
-   status_t AddNewConnectSession(const AbstractReflectSessionRef & session, const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
+   status_t AddNewConnectSession(const AbstractReflectSessionRef & session, const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
    /**
     * Like AddNewConnectSession(), except that the added session will not initiate
@@ -195,10 +228,10 @@ protected:
     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
     *                              is used; typically this means that it will be left up to the operating system how long to wait
     *                              before timing out the connection attempt.
-    * @return B_NO_ERROR if the session was successfully added, or B_ERROR on error
+    * @return B_NO_ERROR if the session was successfully added, or an error code on error
     *                    (out-of-memory, or the connect attempt failed immediately)
     */
-   status_t AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
+   status_t AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
    /** Returns our server's table of attached sessions. */
    const Hashtable<const String *, AbstractReflectSessionRef> & GetSessions() const;
@@ -233,7 +266,7 @@ protected:
    /** Convenience method:  Populates the specified table with sessions of the specified session type.
      * @param results The list of matching sessions is returned here.
      * @param maxSessionsToReturn No more than this many sessions will be placed into the table.  Defaults to MUSCLE_NO_LIMIT.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory)
+     * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    template <class SessionType> status_t FindSessionsOfType(Queue<AbstractReflectSessionRef> & results, uint32 maxSessionsToReturn = MUSCLE_NO_LIMIT) const
    {
@@ -244,7 +277,7 @@ protected:
             SessionType * ret = dynamic_cast<SessionType *>(iter.GetValue()());
             if (ret)
             {
-               if (results.AddTail(iter.GetValue()) != B_NO_ERROR) return B_ERROR;
+               if (results.AddTail(iter.GetValue()).IsError()) return B_OUT_OF_MEMORY;
                if (--maxSessionsToReturn == 0) break;
             }
          }
@@ -262,8 +295,13 @@ such factory exists. */
 private:
    ReflectServer * _owner;
    bool _fullyAttached;
-};
 
-}; // end namespace muscle
+   mutable String _rttiTypeName;
+
+   DECLARE_COUNTED_OBJECT(ServerComponent);
+};
+DECLARE_REFTYPES(ServerComponent);
+
+} // end namespace muscle
 
 #endif

@@ -125,34 +125,39 @@ status_t GetSystemPath(uint32 whichPath, String & outStr)
       case SYSTEM_PATH_EXECUTABLE: // executable's directory
       {
 #ifdef WIN32
-         DWORD len = GetModuleFileNameA(NULL, buf, sizeof(buf));
+         const DWORD len = GetModuleFileNameA(NULL, buf, sizeof(buf));
          if ((len > 0)&&(len < sizeof(buf)))
          {
             found = true;
-            PathRemoveFileSpecA(buf);
+            char * lastSlash = strrchr(buf, '\\');
+            if (lastSlash) *lastSlash = '\0';   // was: PathRemoveFileSpecA(buf), but it's not worth the linker-hassles for something this trivial
             outStr = buf;
          }
 #else
 # ifdef __APPLE__
-         CFURLRef bundleURL = CFBundleCopyExecutableURL(CFBundleGetMainBundle());
-         CFStringRef cfPath = CFURLCopyFileSystemPath(bundleURL, kCFURLPOSIXPathStyle);
-         char bsdPath[2048];
-         if (CFStringGetCString((CFStringRef)cfPath, bsdPath, sizeof(bsdPath), kCFStringEncodingUTF8))
+         const CFURLRef bundleURL = CFBundleCopyExecutableURL(CFBundleGetMainBundle());
+         if (bundleURL)
          {
-            found = true;
-            outStr = bsdPath;
+            const CFStringRef cfPath = CFURLCopyFileSystemPath(bundleURL, kCFURLPOSIXPathStyle);
+            if (cfPath)
+            {
+               if (outStr.SetFromCFStringRef(cfPath).IsOK())
+               {
+                  found = true;
 
-            int32 lastSlash = outStr.LastIndexOf(GetFilePathSeparator());
-            if (lastSlash >= 0) outStr = outStr.Substring(0, lastSlash+1);
+                  int32 lastSlash = outStr.LastIndexOf(GetFilePathSeparator());
+                  if (lastSlash >= 0) outStr = outStr.Substring(0, lastSlash+1);
+               }
+               CFRelease(cfPath);
+            }
+            CFRelease(bundleURL);
          }
-         CFRelease(cfPath);
-         CFRelease(bundleURL);
 # else
          // For Linux, anyway, we can try to find out our pid's executable via the /proc filesystem
          // And it can't hurt to at least try it under other OS's, anyway...
          char linkName[64]; muscleSprintf(linkName, "/proc/%i/exe", getpid());
          char linkVal[1024];
-         int rl = readlink(linkName, linkVal, sizeof(linkVal));
+         const int rl = readlink(linkName, linkVal, sizeof(linkVal));
          if ((rl >= 0)&&(rl < (int)sizeof(linkVal)))
          {
             linkVal[rl] = '\0';  // gotta terminate the string!
@@ -202,7 +207,7 @@ status_t GetSystemPath(uint32 whichPath, String & outStr)
       break;
 
       case SYSTEM_PATH_DESKTOP:  // user's desktop directory
-         if (GetSystemPath(SYSTEM_PATH_USERHOME, outStr) == B_NO_ERROR)
+         if (GetSystemPath(SYSTEM_PATH_USERHOME, outStr).IsOK())
          {
             found = true;
             outStr += "Desktop";  // it's the same under WinXP, Linux, and OS/X, yay!
@@ -210,7 +215,7 @@ status_t GetSystemPath(uint32 whichPath, String & outStr)
       break;
 
       case SYSTEM_PATH_DOCUMENTS:  // user's documents directory
-         if (GetSystemPath(SYSTEM_PATH_USERHOME, outStr) == B_NO_ERROR)
+         if (GetSystemPath(SYSTEM_PATH_USERHOME, outStr).IsOK())
          {
             found = true;
 #ifndef WIN32
@@ -223,7 +228,7 @@ status_t GetSystemPath(uint32 whichPath, String & outStr)
       {
 #ifdef WIN32
          char homeDrive[4096];
-         DWORD res = GetEnvironmentVariableA("HOMEDRIVE", homeDrive, sizeof(homeDrive));
+         const DWORD res = GetEnvironmentVariableA("HOMEDRIVE", homeDrive, sizeof(homeDrive));
          if (res > 0)
          {
             outStr = homeDrive;
@@ -244,18 +249,19 @@ status_t GetSystemPath(uint32 whichPath, String & outStr)
       if (outStr.EndsWith(c) == false) outStr += c;
    }
 
-   return found ? B_NO_ERROR : B_ERROR;
+   return found ? B_NO_ERROR : B_BAD_ARGUMENT;
 };
 
 status_t GetNumberOfProcessors(uint32 & retNumProcessors)
 {
 #if defined(__BEOS__) || defined(__HAIKU__)
    system_info info;
-   if (get_system_info(&info) == B_NO_ERROR)
+   if (get_system_info(&info).IsOK())
    {
       retNumProcessors = info.cpu_count;
       return B_NO_ERROR;  
    }
+   else return B_ERRNO;
 #elif defined(__APPLE__)
    host_basic_info_data_t hostInfo;
    mach_msg_type_number_t infoCount = HOST_BASIC_INFO_COUNT;
@@ -264,6 +270,7 @@ status_t GetNumberOfProcessors(uint32 & retNumProcessors)
       retNumProcessors = (uint32) hostInfo.max_cpus;
       return B_NO_ERROR;
    }
+   else return B_ERRNO;
 #elif defined(WIN32)
    SYSTEM_INFO info;
    GetSystemInfo(&info);
@@ -279,11 +286,11 @@ status_t GetNumberOfProcessors(uint32 & retNumProcessors)
       fclose(f);
       return B_NO_ERROR;
    }
+   else return B_ERRNO;
 #else
    (void) retNumProcessors;  // dunno how to do it on this OS!
+   return B_UNIMPLEMENTED;
 #endif
-
-   return B_ERROR;
 }
 
-}; // end namespace muscle
+} // end namespace muscle

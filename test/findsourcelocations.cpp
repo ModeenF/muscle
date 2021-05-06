@@ -1,6 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
 #include <stdio.h>
+
 #include "dataio/FileDataIO.h"
 #include "iogateway/PlainTextMessageIOGateway.h"
 #include "util/Directory.h"
@@ -28,12 +29,12 @@ static void CheckFile(const String & path, uint32 code)
       // Now parse the lines, and see if any match
       uint32 lineNumber = 1;
       MessageRef msg;
-      while(q.RemoveHead(msg) == B_NO_ERROR)
+      while(q.RemoveHead(msg).IsOK())
       {
          const String * line;
-         for (uint32 i=0; msg()->FindString(PR_NAME_TEXT_LINE, i, &line) == B_NO_ERROR; i++)
+         for (uint32 i=0; msg()->FindString(PR_NAME_TEXT_LINE, i, &line).IsOK(); i++)
          {
-            if (GenerateSourceCodeLocationKey(fileName(), lineNumber) == code) printf("%s:" UINT32_FORMAT_SPEC": %s\n", path(), lineNumber, line->Cstr());
+            if (GenerateSourceCodeLocationKey(fileName(), lineNumber) == code) printf("%s:" UINT32_FORMAT_SPEC ": %s\n", path(), lineNumber, line->Cstr());
             lineNumber++;
          }
       }
@@ -50,7 +51,7 @@ static void DoSearch(const String & path, uint32 code)
       {
          if (nextName[0] != '.')
          {
-            String subPath = path + GetFilePathSeparator() + nextName;
+            const String subPath = path + GetFilePathSeparator() + nextName;
             FilePathInfo fpi(subPath());
                  if (fpi.IsDirectory()) DoSearch(subPath, code);
             else if (fpi.IsRegularFile())

@@ -21,7 +21,8 @@
 # endif
 #else
 # ifndef MUSCLE_USE_SELECT
-#  define MUSCLE_USE_SELECT 1  // we use select() by default if none of the above MUSCLE_USE_* compiler flags were defined
+/** Causes SocketMultiplexer() to use the select() system call in its implementation.  This constant is defined implicitly if none of the other MUSCLE_USE_* preprocessor constants (e.g. MUSCLE_USE_KQUEUE, MUSCLE_USE_EPOLL, MUSCLE_USE_POLL, etc) were defined explicitly. */
+#  define MUSCLE_USE_SELECT 1
 # endif
 #endif
 
@@ -52,30 +53,30 @@ public:
    /** Destructor. */
    ~SocketMultiplexer();
 
-   /** Call this to indicate that you want the next call to Wait() to return if the specified
+   /** Call this to indicate that you want the next call to WaitForEvents() to return if/when the specified
      * socket has data ready to read.
      * @note this registration is cleared after WaitForEvents() returns, so you will generally want to re-register
      *       your socket on each iteration of your event loop.
      * @param fd The file descriptor to watch for data-ready-to-read.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory or bad fd value?)
+     * @returns B_NO_ERROR on success, or an error code on failure (out of memory or bad fd value?)
      */
    inline status_t RegisterSocketForReadReady(int fd) {return GetCurrentFDState().RegisterSocket(fd, FDSTATE_SET_READ);}
 
-   /** Call this to indicate that you want the next call to WaitForEvents() to return if the specified
+   /** Call this to indicate that you want the next call to WaitForEvents() to return if/when the specified
      * socket has buffer space available to write to.
      * @note this registration is cleared after WaitForEvents() returns, so you will generally want to re-register
      *       your socket on each iteration of your event loop.
      * @param fd The file descriptor to watch for space-available-to-write.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory or bad fd value?)
+     * @returns B_NO_ERROR on success, or an error code on failure (out of memory or bad fd value?)
      */
    inline status_t RegisterSocketForWriteReady(int fd) {return GetCurrentFDState().RegisterSocket(fd, FDSTATE_SET_WRITE);}
 
-   /** Call this to indicate that you want the next call to WaitForEvents() to return if the specified
+   /** Call this to indicate that you want the next call to WaitForEvents() to return if/when the specified
      * socket has buffer space available to write to.
      * @note this registration is cleared after WaitForEvents() returns, so you will generally want to re-register
      *       your socket on each iteration of your event loop.
      * @param fd The file descriptor to watch for space-available-to-write.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory or bad fd value?)
+     * @returns B_NO_ERROR on success, or an error code on failure (out of memory or bad fd value?)
      */
    inline status_t RegisterSocketForExceptionRaised(int fd) {return GetCurrentFDState().RegisterSocket(fd, FDSTATE_SET_EXCEPT);}
 
@@ -85,16 +86,16 @@ public:
      *       your socket on each iteration of your event loop.
      * @param fd The file descriptor to watch for the event type specified by (whichSet)
      * @param whichSet A FDSTATE_SET_* value indicating the type of event to watch the socket for.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory or bad fd value?)
+     * @returns B_NO_ERROR on success, or an error code on failure (out of memory or bad fd value?)
      */
    inline status_t RegisterSocketForEventsByTypeIndex(int fd, uint32 whichSet) {return GetCurrentFDState().RegisterSocket(fd, whichSet);}
 
    /** Blocks until at least one of the events specified in previous RegisterSocketFor*()
-     * calls becomes valid, or for (optMaxWaitTimeMicros) microseconds, whichever comes first.
+     * calls becomes valid, or until (timeoutAtTime), whichever comes first.
      * @note All socket-registrations will be cleared after this method call returns.  You will typically 
      *       want to re-register them (by calling RegisterSocketFor*() again) before calling WaitForEvents() again.
-     * @param timeoutAtTime The time to return 0 at if no events occur before then, or MUSCLE_TIME_NEVER
-     *                      if not timeout is desired.  Uses the sameDefaults to MUSCLE_TIME_NEVER.
+     * @param timeoutAtTime The time to return 0 at, if no events occur before then, or MUSCLE_TIME_NEVER
+     *                      if no timeout is desired.  Defaults to MUSCLE_TIME_NEVER.
      *                      Specifying 0 (or any other value not greater than the current value returned
      *                      by GetRunTime64()) will effect a poll, guaranteed to return immediately.
      * @returns The number of socket-registrations that indicated that they are currently ready, 
@@ -136,6 +137,7 @@ public:
      */
    inline bool IsSocketEventOfTypeFlagged(int fd, uint32 whichSet) const {return GetAlternateFDState().IsSocketReady(fd, whichSet);}
 
+   /** Enumeration of different types of socket-sets we support (same as those supported by select()) */
    enum {
       FDSTATE_SET_READ = 0, /**< read-ready attribute of the file descriptors */
       FDSTATE_SET_WRITE,    /**< write-ready attribute of the file descriptors */
@@ -154,19 +156,19 @@ private:
 
       inline status_t RegisterSocket(int fd, int whichSet)
       {
-         if (fd < 0) return B_ERROR;
+         if (fd < 0) return B_BAD_ARGUMENT;
 
 #if defined(MUSCLE_USE_KQUEUE) || defined(MUSCLE_USE_EPOLL)
          uint16 * b = _bits.GetOrPut(fd);
-         if (b == NULL) return B_ERROR;
+         if (b == NULL) return B_OUT_OF_MEMORY;
          *b |= (1<<whichSet);
 #elif defined(MUSCLE_USE_POLL)
          uint32 idx;
-         if (_pollFDToArrayIndex.Get(fd, idx) == B_NO_ERROR) _pollFDArray[idx].events |= GetPollBitsForFDSet(whichSet, true);
-                                                        else return PollRegisterNewSocket(fd, whichSet);
+         if (_pollFDToArrayIndex.Get(fd, idx).IsOK()) _pollFDArray[idx].events |= GetPollBitsForFDSet(whichSet, true);
+                                                 else return PollRegisterNewSocket(fd, whichSet);
 #else
 # ifndef WIN32  // Window supports file descriptors that are greater than FD_SETSIZE!  Other OS's do not
-         if (fd >= FD_SETSIZE) return B_ERROR;
+         if (fd >= FD_SETSIZE) return B_BAD_ARGUMENT;
 # endif
          FD_SET(fd, &_fdSets[whichSet]);
          _maxFD[whichSet] = muscleMax(_maxFD[whichSet], fd);
@@ -180,7 +182,7 @@ private:
          return ((_bits.GetWithDefault(fd) & (1<<(whichSet+8))) != 0);
 #elif defined(MUSCLE_USE_POLL)
          uint32 idx;
-         return ((_pollFDToArrayIndex.Get(fd, idx) == B_NO_ERROR)&&((_pollFDArray[idx].revents & GetPollBitsForFDSet(whichSet, false)) != 0));
+         return ((_pollFDToArrayIndex.Get(fd, idx).IsOK())&&((_pollFDArray[idx].revents & GetPollBitsForFDSet(whichSet, false)) != 0));
 #else
          return (FD_ISSET(fd, const_cast<fd_set *>(&_fdSets[whichSet])) != 0);
 #endif
@@ -261,6 +263,6 @@ private:
 #endif
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

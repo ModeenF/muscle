@@ -70,7 +70,7 @@ public:
    void SetWhen(const time_t & when) {_when = when;}
 
    /** Set the MUSCLE_LOG_* severity level of this Log message 
-     * param ll A MUSCLE_LOG_* value
+     * @param ll A MUSCLE_LOG_* value
      */
    void SetLogLevel(int ll) {_logLevel = ll;}
 
@@ -114,7 +114,7 @@ private:
  *  objects will have their Log() methods called.  All log callbacks
  *  are synchronized via a global lock, hence they will be thread safe.
  */
-class LogCallback : public RefCountable, private CountedObject<LogCallback>
+class LogCallback : public RefCountable
 {
 public:
    /** Default constructor */
@@ -132,6 +132,9 @@ public:
      * held buffers out.  (i.e. call fflush() or whatever)
      */
    virtual void Flush() = 0;
+
+private:
+   DECLARE_COUNTED_OBJECT(LogCallback);
 };
 DECLARE_REFTYPES(LogCallback);
 
@@ -141,7 +144,7 @@ DECLARE_REFTYPES(LogCallback);
  *  that all have to do this themselves.  Assumes that all log
  *  lines will be less than 2048 characters long.
  */
-class LogLineCallback : public LogCallback, private CountedObject<LogLineCallback>
+class LogLineCallback : public LogCallback
 {
 public:
    /** Constructor */
@@ -150,7 +153,9 @@ public:
    /** Destructor */
    virtual ~LogLineCallback();
 
-   /** Implemented to call LogLine() when appropriate */
+   /** Implemented to call LogLine() when appropriate
+     * @param a all of the information about this log call (severity, text, etc)
+     */
    virtual void Log(const LogCallbackArgs & a);
 
    /** Implemented to call LogLine() when appropriate */
@@ -168,21 +173,25 @@ private:
    LogCallbackArgs _lastLog; // stored for use by Flush()
    char * _writeTo;     // points to the next spot in (_buf) to muscleSprintf() into
    char _buf[2048];     // where we assemble our text
+
+   DECLARE_COUNTED_OBJECT(LogLineCallback);
 };
+DECLARE_REFTYPES(LogLineCallback);
 
 /** Add a custom LogCallback object to the global log callbacks set.
  *  @param cbRef Reference to a LogCallback object. 
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log-lock couldn't be locked.
  */
 status_t PutLogCallback(const LogCallbackRef & cbRef);
 
 /** Removes the given callback from our list.  
  *  @param cbRef Reference of the LogCallback to remove from the callback list.
- *  @returns B_NO_ERROR on success, or B_ERROR if the given callback wasn't found, or the lock couldn't be locked.
+ *  @returns B_NO_ERROR on success, or B_DATA_NOT_FOUND if the given callback wasn't found, or B_LOCK_FAILED if the log-lock couldn't be locked.
  */
 status_t RemoveLogCallback(const LogCallbackRef & cbRef);
 
 /** Removes all log callbacks from the callback set
- *  @returns B_NO_ERROR on success, or B_ERROR if the log lock couldn't be locked for some reason.
+ *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if the log-lock couldn't be locked.
  */ 
 status_t ClearLogCallbacks();
 
@@ -210,6 +219,7 @@ public:
 private:
    int _consoleLogLevel;
 };
+DECLARE_REFTYPES(DefaultConsoleLogger);
 
 /** This class is used to send log information to a file, rotate log files, etc.  An object of this class 
   * is instantiated and used internally by MUSCLE, so typically you don't need to instantiate one yourself, 
@@ -299,7 +309,8 @@ private:
    bool _logFileOpenAttemptFailed;
    Queue<String> _oldLogFileNames;
 };
+DECLARE_REFTYPES(DefaultFileLogger);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -1,5 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#include <stdio.h>
+
 #ifdef __APPLE__
 # include <sys/resource.h>
 #endif
@@ -36,15 +38,15 @@ int main(int argc, char ** argv)
    
    for (uint32 i=0; i<numPairs; i++) 
    {
-      if (CreateConnectedSocketPair(senders[i], receivers[i]) != B_NO_ERROR)
+      if (CreateConnectedSocketPair(senders[i], receivers[i]).IsError())
       {
-         printf("Error, failed to create socket pair #" UINT32_FORMAT_SPEC"!\n", i);
+         printf("Error, failed to create socket pair #" UINT32_FORMAT_SPEC "!\n", i);
          return 10;
       }
    }
 
    // Start the game off
-   char c = 'C';
+   const char c = 'C';
    if (SendData(senders[0], &c, 1, false) != 1)
    {
       printf("Error, couldn't send initial byte!\n");
@@ -56,33 +58,33 @@ int main(int argc, char ** argv)
    uint64 minRunTime = (uint64)-1;
    uint64 maxRunTime = 0;
    SocketMultiplexer multiplexer;
-   uint64 endTime = GetRunTime64() + SecondsToMicros(10);
+   const uint64 endTime = GetRunTime64() + SecondsToMicros(10);
    bool error = false;
    while(error==false)
    {
       for (uint32 i=0; i<numPairs; i++)
       {
-         if (multiplexer.RegisterSocketForReadReady(receivers[i].GetFileDescriptor()) != B_NO_ERROR)
+         if (multiplexer.RegisterSocketForReadReady(receivers[i].GetFileDescriptor()).IsError())
          {
-            printf("Error, RegisterSocketForRead() failed for receiver #" UINT32_FORMAT_SPEC"!\n", i);
+            printf("Error, RegisterSocketForRead() failed for receiver #" UINT32_FORMAT_SPEC "!\n", i);
             error = true;
             break;
          }
       }
       if (error) break;
 
-      uint64 then = GetRunTime64();
+      const uint64 then = GetRunTime64();
       if (then >= endTime) break;
 
-      int ret = multiplexer.WaitForEvents();
+      const int ret = multiplexer.WaitForEvents();
       if (ret < 0)
       {
          printf("WaitForEvents errored out, aborting test!\n"); 
          break;
       }
 
-      uint64 elapsed = GetRunTime64()-then; 
-      if (quiet == false) printf("WaitForEvents returned %i after " UINT64_FORMAT_SPEC" microseconds.\n", ret, elapsed);
+      const uint64 elapsed = GetRunTime64()-then; 
+      if (quiet == false) printf("WaitForEvents returned %i after " UINT64_FORMAT_SPEC " microseconds.\n", ret, elapsed);
 
       count++;
       tally += elapsed;
@@ -94,17 +96,17 @@ int main(int argc, char ** argv)
          if (multiplexer.IsSocketReadyForRead(receivers[i].GetFileDescriptor()))
          {
             char buf[64];
-            int32 numBytesReceived = ReceiveData(receivers[i], buf, sizeof(buf), false);
-            if (quiet == false) printf("Receiver #" UINT32_FORMAT_SPEC" signalled ready-for-read, read " INT32_FORMAT_SPEC" bytes.\n", i, numBytesReceived);
+            const int32 numBytesReceived = ReceiveData(receivers[i], buf, sizeof(buf), false);
+            if (quiet == false) printf("Receiver #" UINT32_FORMAT_SPEC " signalled ready-for-read, read " INT32_FORMAT_SPEC " bytes.\n", i, numBytesReceived);
             if (numBytesReceived > 0)
             {
-               uint32 nextIdx = (i+1)%numPairs;
-               int32 sentBytes = SendData(senders[nextIdx], buf, numBytesReceived, false);
-               if (quiet == false) printf("Sent " INT32_FORMAT_SPEC" bytes on sender #" UINT32_FORMAT_SPEC"\n", sentBytes, nextIdx);
+               const uint32 nextIdx = (i+1)%numPairs;
+               const int32 sentBytes = SendData(senders[nextIdx], buf, numBytesReceived, false);
+               if (quiet == false) printf("Sent " INT32_FORMAT_SPEC " bytes on sender #" UINT32_FORMAT_SPEC "\n", sentBytes, nextIdx);
             }
          }
       }
    }
-   printf("Test complete:  WaitEvents() called " UINT64_FORMAT_SPEC" times, averageTime=" UINT64_FORMAT_SPEC"uS, minimumTime=" UINT64_FORMAT_SPEC"uS, maximumTime=" UINT64_FORMAT_SPEC"uS.\n", count, tally/(count?count:1), minRunTime, maxRunTime);
+   printf("Test complete:  WaitEvents() called " UINT64_FORMAT_SPEC " times, averageTime=" UINT64_FORMAT_SPEC "uS, minimumTime=" UINT64_FORMAT_SPEC "uS, maximumTime=" UINT64_FORMAT_SPEC "uS.\n", count, tally/(count?count:1), minRunTime, maxRunTime);
    return 0;
 }

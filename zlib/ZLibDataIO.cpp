@@ -17,16 +17,18 @@ static void muscleZLibFree(void *, void * address) {muscleFree(address);}
 # define MUSCLE_ZLIB_FREE  Z_NULL
 #endif
 
-ZLibDataIO :: ZLibDataIO(int compressionLevel) : _compressionLevel(compressionLevel)
+ZLibDataIO :: ZLibDataIO(int compressionLevel)
+   : _compressionLevel(compressionLevel)
 {
    Init();
-   SetSlaveIO(DataIORef());
+   SetChildDataIO(DataIORef());  // necessary to get the ZLib stuff initialized
 }
 
-ZLibDataIO :: ZLibDataIO(const DataIORef & slaveIO, int compressionLevel) : _compressionLevel(compressionLevel)
+ZLibDataIO :: ZLibDataIO(const DataIORef & childIO, int compressionLevel)
+   : _compressionLevel(compressionLevel)  // deliberately NOT calling ProxyDataIO(childIO) ctor here!
 {
    Init();
-   SetSlaveIO(slaveIO);
+   SetChildDataIO(childIO);  // necessary to get the ZLib stuff initialized
 }
 
 ZLibDataIO :: ~ZLibDataIO()
@@ -72,16 +74,16 @@ void ZLibDataIO :: Init()
 
    InitStream(_writeDeflater, _toDeflateBuf, _deflatedBuf, sizeof(_deflatedBuf));
    _deflateAllocated = false;
-   _sendToSlave = _deflatedBuf;
+   _sendToChild = _deflatedBuf;
 }
 
-void ZLibDataIO :: SetSlaveIO(const DataIORef & dio)
+void ZLibDataIO :: SetChildDataIO(const DataIORef & dio)
 {
    CleanupZLib();
    Init();
 
-   _slaveIO = dio;
-   _inputStreamOkay = (_slaveIO() != NULL);
+   ProxyDataIO::SetChildDataIO(dio);
+   _inputStreamOkay = (GetChildDataIO()() != NULL);
    _inflateAllocated = _inflateOkay = ((_inputStreamOkay)&&(inflateInit(&_readInflater) == Z_OK));
    _deflateAllocated = (deflateInit(&_writeDeflater, _compressionLevel) == Z_OK);
 }
@@ -89,7 +91,7 @@ void ZLibDataIO :: SetSlaveIO(const DataIORef & dio)
 #define ZLIB_READ_COPY_TO_USER                                                            \
    if (_readInflater.next_out > _sendToUser)                                              \
    {                                                                                      \
-      uint32 bytesToCopy = muscleMin(size, (uint32)(_readInflater.next_out-_sendToUser)); \
+      const uint32 bytesToCopy = muscleMin(size, (uint32)(_readInflater.next_out-_sendToUser)); \
       memcpy(buffer, _sendToUser, bytesToCopy);                                           \
       uint8 * buf8 = (uint8 *) buffer;                                                    \
       buffer       = buf8+bytesToCopy;                                                    \
@@ -106,7 +108,7 @@ void ZLibDataIO :: SetSlaveIO(const DataIORef & dio)
 #define ZLIB_READ_INFLATE                                              \
    if (_inflateOkay)                                                   \
    {                                                                   \
-      int zRet = inflate(&_readInflater, Z_NO_FLUSH);                  \
+      const int zRet = inflate(&_readInflater, Z_NO_FLUSH);            \
       if ((zRet != Z_OK)&&(zRet != Z_BUF_ERROR)) _inflateOkay = false; \
       ZLIB_READ_COPY_TO_USER;                                          \
    }
@@ -114,7 +116,7 @@ void ZLibDataIO :: SetSlaveIO(const DataIORef & dio)
 int32 ZLibDataIO :: Read(void * buffer, uint32 size)
 {
    int32 bytesAdded = 0;
-   if (_slaveIO())
+   if (GetChildDataIO()())
    {
       ZLIB_READ_COPY_TO_USER; // First, hand any pre-inflated bytes over to the user
       ZLIB_READ_INFLATE;      // Then try to inflate some more bytes
@@ -123,7 +125,7 @@ int32 ZLibDataIO :: Read(void * buffer, uint32 size)
       if (_inputStreamOkay)
       {
          if (_readInflater.avail_in == 0) _readInflater.next_in = _toInflateBuf;
-         int32 bytesRead = _slaveIO()->Read(_readInflater.next_in, (int32)((_toInflateBuf+sizeof(_toInflateBuf))-_readInflater.next_in));
+         const int32 bytesRead = ProxyDataIO::Read(_readInflater.next_in, (int32)((_toInflateBuf+sizeof(_toInflateBuf))-_readInflater.next_in));
          if (bytesRead >= 0)
          {
             _readInflater.avail_in += bytesRead;
@@ -141,15 +143,15 @@ int32 ZLibDataIO :: Write(const void * buffer, uint32 size)
 }
 
 #define ZLIB_WRITE_SEND_TO_SLAVE                                                                           \
-   if (_writeDeflater.next_out > _sendToSlave)                                                             \
+   if (_writeDeflater.next_out > _sendToChild)                                                             \
    {                                                                                                       \
-      int32 bytesWritten = _slaveIO()->Write(_sendToSlave, (int32)(_writeDeflater.next_out-_sendToSlave)); \
+      const int32 bytesWritten = ProxyDataIO::Write(_sendToChild, (int32)(_writeDeflater.next_out-_sendToChild)); \
       if (bytesWritten >= 0)                                                                               \
       {                                                                                                    \
-         _sendToSlave += bytesWritten;                                                                     \
-         if (_sendToSlave == _writeDeflater.next_out)                                                      \
+         _sendToChild += bytesWritten;                                                                     \
+         if (_sendToChild == _writeDeflater.next_out)                                                      \
          {                                                                                                 \
-            _sendToSlave = _writeDeflater.next_out = _deflatedBuf;                                         \
+            _sendToChild = _writeDeflater.next_out = _deflatedBuf;                                         \
             _writeDeflater.avail_out = sizeof(_deflatedBuf);                                               \
          }                                                                                                 \
       }                                                                                                    \
@@ -158,17 +160,17 @@ int32 ZLibDataIO :: Write(const void * buffer, uint32 size)
 
 int32 ZLibDataIO :: WriteAux(const void * buffer, uint32 size, bool flushAtEnd)
 {
-   if ((_slaveIO())&&(_deflateAllocated))
+   if ((GetChildDataIO()())&&(_deflateAllocated))
    {
       int32 bytesCompressed = 0;
 
       ZLIB_WRITE_SEND_TO_SLAVE;
-      if (_sendToSlave == _deflatedBuf)
+      if (_sendToChild == _deflatedBuf)
       {
          if (_writeDeflater.avail_in == 0) _writeDeflater.next_in = _toDeflateBuf;
          if (buffer)
          {
-            uint32 bytesToCopy = muscleMin((uint32)((_toDeflateBuf+sizeof(_toDeflateBuf))-_writeDeflater.next_in), size);
+            const uint32 bytesToCopy = muscleMin((uint32)((_toDeflateBuf+sizeof(_toDeflateBuf))-_writeDeflater.next_in), size);
             memcpy(_writeDeflater.next_in, buffer, bytesToCopy);
             bytesCompressed += bytesToCopy;
 #ifdef REMOVED_TO_SUPPRESS_CLANG_STATIC_ANALYZER_WARNING_BUT_REENABLE_THIS_IF_THERES_ANOTHER_STEP_ADDED_IN_THE_FUTURE
@@ -179,7 +181,7 @@ int32 ZLibDataIO :: WriteAux(const void * buffer, uint32 size, bool flushAtEnd)
             _writeDeflater.avail_in += bytesToCopy;
          }
 
-         int zRet = deflate(&_writeDeflater, ((flushAtEnd)&&(_writeDeflater.avail_in == 0)) ? Z_SYNC_FLUSH : Z_NO_FLUSH);
+         const int zRet = deflate(&_writeDeflater, ((flushAtEnd)&&(_writeDeflater.avail_in == 0)) ? Z_SYNC_FLUSH : Z_NO_FLUSH);
          if ((zRet != Z_OK)&&(zRet != Z_BUF_ERROR)) return -1;
          ZLIB_WRITE_SEND_TO_SLAVE;
       }
@@ -188,59 +190,23 @@ int32 ZLibDataIO :: WriteAux(const void * buffer, uint32 size, bool flushAtEnd)
    return -1;
 }
 
-status_t ZLibDataIO :: Seek(int64 offset, int whence)
-{
-   return _slaveIO() ? _slaveIO()->Seek(offset, whence) : B_ERROR;
-}
-
-int64 ZLibDataIO :: GetPosition() const
-{
-   return _slaveIO() ? _slaveIO()->GetPosition() : -1;
-}
-
-uint64 ZLibDataIO :: GetOutputStallLimit() const
-{
-   return _slaveIO() ? _slaveIO()->GetOutputStallLimit() : MUSCLE_TIME_NEVER;
-}
-
 void ZLibDataIO :: FlushOutput()
 {
-   if (_slaveIO())
-   {
-      for (uint32 i=0; i<3; i++) WriteAux(NULL, 0, true);  // try to flush any/all buffered data out first...
-      _slaveIO()->FlushOutput();
-   }
+   if (GetChildDataIO()()) for (uint32 i=0; i<3; i++) WriteAux(NULL, 0, true);  // try to flush any/all buffered data out first...
+   ProxyDataIO::FlushOutput();
 }
 
 void ZLibDataIO :: Shutdown()
 {
-   if (_slaveIO()) 
-   {
-      FlushOutput();
-      _slaveIO()->Shutdown();
-      CleanupZLib();
-      _inputStreamOkay = false;
-   }
-}
-
-const ConstSocketRef & ZLibDataIO :: GetReadSelectSocket() const
-{
-   return (_slaveIO()) ? _slaveIO()->GetReadSelectSocket() : GetNullSocket();
-}
-
-const ConstSocketRef & ZLibDataIO :: GetWriteSelectSocket() const
-{
-   return (_slaveIO()) ? _slaveIO()->GetWriteSelectSocket() : GetNullSocket();
-}
-
-status_t ZLibDataIO :: GetReadByteTimeStamp(int32 whichByte, uint64 & retStamp) const
-{
-   return (_slaveIO()) ? _slaveIO()->GetReadByteTimeStamp(whichByte, retStamp) : B_ERROR;
+   FlushOutput();
+   ProxyDataIO::Shutdown();
+   CleanupZLib();
+   _inputStreamOkay = false;
 }
 
 bool ZLibDataIO :: HasBufferedOutput() const
 {
-   return ((_sendToSlave < _writeDeflater.next_out)||(_writeDeflater.avail_in > 0));
+   return ((_sendToChild < _writeDeflater.next_out)||(_writeDeflater.avail_in > 0));
 }
 
 void ZLibDataIO :: WriteBufferedOutput()
@@ -248,6 +214,6 @@ void ZLibDataIO :: WriteBufferedOutput()
    (void) WriteAux(NULL, 0, false);
 }
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

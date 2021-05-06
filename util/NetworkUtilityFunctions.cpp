@@ -5,11 +5,20 @@
 #include "util/MiscUtilityFunctions.h"  // for GetConnectString() (which is deliberately defined here)
 #include "util/NetworkUtilityFunctions.h"
 #include "util/SocketMultiplexer.h"
+#include "util/Hashtable.h"
 
 #if defined(__BEOS__) || defined(__HAIKU__)
 # include <kernel/OS.h>     // for snooze()
 #elif __ATHEOS__
 # include <atheos/kernel.h> // for snooze()
+#endif
+
+#ifdef __APPLE__
+# include <CoreFoundation/CoreFoundation.h>
+# include <TargetConditionals.h>
+# if !(TARGET_OS_IPHONE)
+#  include <SystemConfiguration/SystemConfiguration.h>
+# endif
 #endif
 
 #ifdef WIN32
@@ -52,7 +61,21 @@ typedef void sockopt_arg;  // Whereas sane operating systems use void pointers
 #  define USE_GETIFADDRS 1
 #  define USE_SOCKETPAIR 1
 #  include <ifaddrs.h>
+#  if defined(__linux__)
+#   include <linux/if_packet.h>  // for sockaddr_ll
+#else
+#   include <net/if_dl.h>  // for the LLADDR macro
+#  endif
 # endif
+#endif
+
+#if defined(__APPLE__)
+# include <net/if_types.h>
+# include <sys/sockio.h>
+#endif
+
+#if defined(__linux__) && !defined(MUSCLE_AVOID_LINUX_DETECT_NETWORK_HARDWARE_TYPES)
+# include <net/if_arp.h>
 #endif
 
 #include "system/GlobalMemoryAllocator.h"  // for muscleAlloc()/muscleFree()
@@ -65,24 +88,21 @@ void SetAutomaticIPv4AddressMappingEnabled(bool e) {_automaticIPv4AddressMapping
 bool GetAutomaticIPv4AddressMappingEnabled()       {return _automaticIPv4AddressMappingEnabled;}
 
 # define MUSCLE_SOCKET_FAMILY AF_INET6
-static inline void GET_SOCKADDR_IP(const struct sockaddr_in6 & sockAddr, ip_address & ipAddr)
+static inline void GET_SOCKADDR_IP(const struct sockaddr_in6 & sockAddr, IPAddress & ipAddr)
 {
    switch(sockAddr.sin6_family)
    {
       case AF_INET6:
       {
-         uint32 tmp = sockAddr.sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
-         ipAddr.ReadFromNetworkArray(sockAddr.sin6_addr.s6_addr, &tmp);
-         if ((_automaticIPv4AddressMappingEnabled)&&(ipAddr != localhostIP)&&(IsValidAddress(ipAddr))&&(IsIPv4Address(ipAddr))) ipAddr.SetLowBits(ipAddr.GetLowBits() & ((uint64)0xFFFFFFFF));  // remove IPv4-mapped-IPv6-bits
+         ipAddr.UnsetInterfaceIndex();
+         const uint32 tmp = sockAddr.sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
+         ipAddr.ReadFromNetworkArray(sockAddr.sin6_addr.s6_addr, tmp ? &tmp : NULL);
+         if ((_automaticIPv4AddressMappingEnabled)&&(ipAddr != localhostIP)&&(ipAddr.IsValid())&&(ipAddr.IsIPv4())) ipAddr.SetLowBits(ipAddr.GetLowBits() & ((uint64)0xFFFFFFFF));  // remove IPv4-mapped-IPv6-bits
       }
       break;
 
       case AF_INET:
-      {
-         uint32 ipAddr32 = ntohl(((const struct sockaddr_in &)sockAddr).sin_addr.s_addr);
-         ipAddr.SetBits(ipAddr32, 0);
-         ipAddr.SetInterfaceIndex(0);
-      }
+         ipAddr.SetIPv4AddressFromUint32(ntohl(((const struct sockaddr_in &)sockAddr).sin_addr.s_addr));
       break;
 
       default:
@@ -90,12 +110,12 @@ static inline void GET_SOCKADDR_IP(const struct sockaddr_in6 & sockAddr, ip_addr
       break;
   }
 }
-static inline void SET_SOCKADDR_IP(struct sockaddr_in6 & sockAddr, const ip_address & ipAddr)
+static inline void SET_SOCKADDR_IP(struct sockaddr_in6 & sockAddr, const IPAddress & ipAddr)
 {
    uint32 tmp;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
-   if ((_automaticIPv4AddressMappingEnabled)&&(ipAddr != localhostIP)&&(IsValidAddress(ipAddr))&&(IsIPv4Address(ipAddr)))
+   if ((_automaticIPv4AddressMappingEnabled)&&(ipAddr != localhostIP)&&(ipAddr.IsValid())&&(ipAddr.IsIPv4()))
    {
-      ip_address tmpAddr = ipAddr;
+      IPAddress tmpAddr = ipAddr;
       tmpAddr.SetLowBits(tmpAddr.GetLowBits() | (((uint64)0xFFFF)<<32));  // add IPv4-mapped-IPv6-bits
       tmpAddr.WriteToNetworkArray(sockAddr.sin6_addr.s6_addr, &tmp);
    }
@@ -116,7 +136,7 @@ static inline uint16 GET_SOCKADDR_PORT(const struct sockaddr_in6 & addr)
 static inline void SET_SOCKADDR_PORT(struct sockaddr_in6 & addr, uint16 port) {addr.sin6_port = htons(port);}
 static inline uint16 GET_SOCKADDR_FAMILY(const struct sockaddr_in6 & addr) {return addr.sin6_family;}
 static inline void SET_SOCKADDR_FAMILY(struct sockaddr_in6 & addr, uint16 family) {addr.sin6_family = family;}
-static void InitializeSockAddr6(struct sockaddr_in6 & addr, const ip_address * optFrom, uint16 port)
+static void InitializeSockAddr6(struct sockaddr_in6 & addr, const IPAddress * optFrom, uint16 port)
 {
    memset(&addr, 0, sizeof(struct sockaddr_in6));
 #ifdef SIN6_LEN
@@ -129,13 +149,13 @@ static void InitializeSockAddr6(struct sockaddr_in6 & addr, const ip_address * o
 # define DECLARE_SOCKADDR(addr, ip, port) struct sockaddr_in6 addr; InitializeSockAddr6(addr, ip, port);
 #else
 # define MUSCLE_SOCKET_FAMILY AF_INET
-static inline void GET_SOCKADDR_IP(const struct sockaddr_in & sockAddr, ip_address & ipAddr) {ipAddr = ntohl(sockAddr.sin_addr.s_addr);}
-static inline void SET_SOCKADDR_IP(struct sockaddr_in & sockAddr, const ip_address & ipAddr) {sockAddr.sin_addr.s_addr = htonl(ipAddr);}
+static inline void GET_SOCKADDR_IP(const struct sockaddr_in & sockAddr, IPAddress & ipAddr) {ipAddr.SetIPv4AddressFromUint32(ntohl(sockAddr.sin_addr.s_addr));}
+static inline void SET_SOCKADDR_IP(struct sockaddr_in & sockAddr, const IPAddress & ipAddr) {sockAddr.sin_addr.s_addr = htonl(ipAddr.GetIPv4AddressAsUint32());}
 static inline uint16 GET_SOCKADDR_PORT(const struct sockaddr_in & addr) {return ntohs(addr.sin_port);}
 static inline void SET_SOCKADDR_PORT(struct sockaddr_in & addr, uint16 port) {addr.sin_port = htons(port);}
 static inline uint16 GET_SOCKADDR_FAMILY(const struct sockaddr_in & addr) {return addr.sin_family;}
 static inline void SET_SOCKADDR_FAMILY(struct sockaddr_in & addr, uint16 family) {addr.sin_family = family;}
-static void InitializeSockAddr4(struct sockaddr_in & addr, const ip_address * optFrom, uint16 port)
+static void InitializeSockAddr4(struct sockaddr_in & addr, const IPAddress * optFrom, uint16 port)
 {
    memset(&addr, 0, sizeof(struct sockaddr_in));
    SET_SOCKADDR_FAMILY(addr, MUSCLE_SOCKET_FAMILY);
@@ -151,16 +171,22 @@ GlobalSocketCallback * GetGlobalSocketCallback() {return _globalSocketCallback;}
 
 static status_t DoGlobalSocketCallback(uint32 eventType, const ConstSocketRef & s)
 {
-   if (s() == NULL) return B_ERROR;
+   if (s() == NULL) return B_BAD_ARGUMENT;
    if (_globalSocketCallback == NULL) return B_NO_ERROR;
    return _globalSocketCallback->SocketCallback(eventType, s);
 }
 
 static ConstSocketRef CreateMuscleSocket(int socketType, uint32 createType)
 {
-   int s = (int) socket(MUSCLE_SOCKET_FAMILY, socketType, 0);
+   const int s = (int) socket(MUSCLE_SOCKET_FAMILY, socketType, 0);
    if (s >= 0)
    {
+#if defined(__APPLE__) || defined(BSD)
+      // This is here just so that MUSCLE programs can be run in a debugger without having the debugger catch spurious SIGPIPE signals --jaf
+      const int value = 1; // Set NOSIGPIPE to ON
+      if (setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const sockopt_arg *) &value, sizeof(value)) != 0) LogTime(MUSCLE_LOG_DEBUG, "Could not disable SIGPIPE signals on socket %i [%s]\n", s, B_ERRNO());
+#endif
+
       ConstSocketRef ret = GetConstSocketRefFromPool(s);
       if (ret())
       {
@@ -169,10 +195,10 @@ static ConstSocketRef CreateMuscleSocket(int socketType, uint32 createType)
          if (_automaticIPv4AddressMappingEnabled)
          {
             int v6OnlyEnabled = 0;  // we want v6-only mode disabled, which is to say we want v6-to-v4 compatibility
-            if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const sockopt_arg *) &v6OnlyEnabled, sizeof(v6OnlyEnabled)) != 0) LogTime(MUSCLE_LOG_DEBUG, "Could not disable v6-only mode for socket %i\n", s);
+            if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const sockopt_arg *) &v6OnlyEnabled, sizeof(v6OnlyEnabled)) != 0) LogTime(MUSCLE_LOG_DEBUG, "Could not disable v6-only mode for socket %i [%s]\n", s, B_ERRNO());
          }
 #endif
-         if (DoGlobalSocketCallback(createType, ret) == B_NO_ERROR) return ret;
+         if (DoGlobalSocketCallback(createType, ret).IsOK()) return ret;
       }
    }
    return ConstSocketRef();
@@ -194,10 +220,10 @@ ConstSocketRef CreateUDPSocket()
    return ret;
 }
 
-status_t BindUDPSocket(const ConstSocketRef & sock, uint16 port, uint16 * optRetPort, const ip_address & optFrom, bool allowShared)
+status_t BindUDPSocket(const ConstSocketRef & sock, uint16 port, uint16 * optRetPort, const IPAddress & optFrom, bool allowShared)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    if (allowShared)
    {
@@ -219,34 +245,34 @@ status_t BindUDPSocket(const ConstSocketRef & sock, uint16 port, uint16 * optRet
             *optRetPort = GET_SOCKADDR_PORT(saSocket);
             return B_NO_ERROR;
          }
-         else return B_ERROR;
+         else return B_ERRNO;
       }
       return B_NO_ERROR;
    }
-   else return B_ERROR;
+   else return B_ERRNO;
 }
 
-status_t SetUDPSocketTarget(const ConstSocketRef & sock, const ip_address & remoteIP, uint16 remotePort)
+status_t SetUDPSocketTarget(const ConstSocketRef & sock, const IPAddress & remoteIP, uint16 remotePort)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    DECLARE_SOCKADDR(saAddr, &remoteIP, remotePort);
-   return (connect(fd, (struct sockaddr *) &saAddr, sizeof(saAddr)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (connect(fd, (struct sockaddr *) &saAddr, sizeof(saAddr)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
 status_t SetUDPSocketTarget(const ConstSocketRef & sock, const char * remoteHostName, uint16 remotePort, bool expandLocalhost)
 {
-   ip_address hostIP = GetHostByName(remoteHostName, expandLocalhost);
-   return (hostIP != invalidIP) ? SetUDPSocketTarget(sock, hostIP, remotePort) : B_ERROR;
+   const IPAddress hostIP = GetHostByName(remoteHostName, expandLocalhost);
+   return (hostIP != invalidIP) ? SetUDPSocketTarget(sock, hostIP, remotePort) : B_ERROR("GetHostByName() failed");
 }
 
-ConstSocketRef CreateAcceptingSocket(uint16 port, int maxbacklog, uint16 * optRetPort, const ip_address & optInterfaceIP)
+ConstSocketRef CreateAcceptingSocket(uint16 port, int maxbacklog, uint16 * optRetPort, const IPAddress & optInterfaceIP)
 {
    ConstSocketRef ret = CreateMuscleSocket(SOCK_STREAM, GlobalSocketCallback::SOCKET_CALLBACK_CREATE_ACCEPTING);
    if (ret())
    {
-      int fd = ret.GetFileDescriptor();
+      const int fd = ret.GetFileDescriptor();
 
 #ifndef WIN32
       // (Not necessary under windows -- it has the behaviour we want by default)
@@ -270,7 +296,7 @@ ConstSocketRef CreateAcceptingSocket(uint16 port, int maxbacklog, uint16 * optRe
 
 int32 ReceiveData(const ConstSocketRef & sock, void * buffer, uint32 size, bool bm)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    return (fd >= 0) ? ConvertReturnValueToMuscleSemantics(recv_ignore_eintr(fd, (char *)buffer, size, 0L), size, bm) : -1;
 }
 
@@ -279,17 +305,17 @@ int32 ReadData(const ConstSocketRef & sock, void * buffer, uint32 size, bool bm)
 #ifdef WIN32
    return ReceiveData(sock, buffer, size, bm);  // Windows doesn't support read(), only recv()
 #else
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    return (fd >= 0) ? ConvertReturnValueToMuscleSemantics(read_ignore_eintr(fd, (char *)buffer, size), size, bm) : -1;
 #endif
 }
 
-int32 ReceiveDataUDP(const ConstSocketRef & sock, void * buffer, uint32 size, bool bm, ip_address * optFromIP, uint16 * optFromPort)
+int32 ReceiveDataUDP(const ConstSocketRef & sock, void * buffer, uint32 size, bool bm, IPAddress * optFromIP, uint16 * optFromPort)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd >= 0)
    {
-      int r;
+      long r;
       if ((optFromIP)||(optFromPort))
       {
          DECLARE_SOCKADDR(fromAddr, NULL, 0);
@@ -311,7 +337,7 @@ int32 ReceiveDataUDP(const ConstSocketRef & sock, void * buffer, uint32 size, bo
 
 int32 SendData(const ConstSocketRef & sock, const void * buffer, uint32 size, bool bm)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    return (fd >= 0) ? ConvertReturnValueToMuscleSemantics(send_ignore_eintr(fd, (const char *)buffer, size, 0L), size, bm) : -1;
 }
 
@@ -320,17 +346,17 @@ int32 WriteData(const ConstSocketRef & sock, const void * buffer, uint32 size, b
 #ifdef WIN32
    return SendData(sock, buffer, size, bm);  // Windows doesn't support write(), only send()
 #else
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    return (fd >= 0) ? ConvertReturnValueToMuscleSemantics(write_ignore_eintr(fd, (const char *)buffer, size), size, bm) : -1;
 #endif
 }
 
-int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size, bool bm, const ip_address & optToIP, uint16 optToPort)
+int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size, bool bm, const IPAddress & optToIP, uint16 optToPort)
 {
 #ifdef DEBUG_SENDING_UDP_PACKETS_ON_INTERFACE_ZERO
-   if ((optToIP != invalidIP)&&(optToIP.GetInterfaceIndex() == 0)&&(IsIPv4Address(optToIP) == false)&&(IsStandardLoopbackDeviceAddress(optToIP) == false))
+   if ((optToIP != invalidIP)&&(optToIP.IsInterfaceIndexValid() == false)&&(optToIP.IsIPv4() == false)&&(optToIP.IsStandardLoopbackDeviceAddress() == false))
    {
-      LogTime(MUSCLE_LOG_CRITICALERROR, "SendDataUDP:  Sending to interface 0!  [%s]:%u\n", Inet_NtoA(optToIP)(), optToPort);
+      LogTime(MUSCLE_LOG_CRITICALERROR, "SendDataUDP:  Sending to IP address with invalid interface-index!  [%s]:%u\n", Inet_NtoA(optToIP)(), optToPort);
       PrintStackTrace();
    }
 #endif
@@ -339,14 +365,14 @@ int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size,
 # define MUSCLE_USE_IFIDX_WORKAROUND 1
 #endif
 
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd >= 0)
    {
 #ifdef MUSCLE_USE_IFIDX_WORKAROUND
       int oldInterfaceIndex = -1;  // and remember to set it back afterwards
 #endif
 
-      int s;
+      long s;
       if ((optToPort)||(optToIP != invalidIP))
       {
          DECLARE_SOCKADDR(toAddr, NULL, 0);
@@ -362,13 +388,14 @@ int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size,
             SET_SOCKADDR_IP(toAddr, optToIP);
 #ifdef MUSCLE_USE_IFIDX_WORKAROUND
             // Work-around for MacOS/X problem (?) where the interface index in the specified IP address doesn't get used
-            if ((optToIP.GetInterfaceIndex() != 0)&&(IsMulticastIPAddress(optToIP)))
+            if ((optToIP.IsInterfaceIndexValid())&&(optToIP.IsMulticast()))
             {
-               int oidx = GetSocketMulticastSendInterfaceIndex(sock);
-               if (oidx != (int) optToIP.GetInterfaceIndex())
+               const int         oidx = GetSocketMulticastSendInterfaceIndex(sock);
+               const uint32 actualIdx = optToIP.GetInterfaceIndex();
+               if (oidx != ((int)actualIdx))
                {
                   // temporarily set the socket's interface index to the desired one
-                  if (SetSocketMulticastSendInterfaceIndex(sock, optToIP.GetInterfaceIndex()) != B_NO_ERROR) return -1;
+                  if (SetSocketMulticastSendInterfaceIndex(sock, actualIdx).IsError()) return -1;
                   oldInterfaceIndex = oidx;  // and remember to set it back afterwards
                }
             }
@@ -380,9 +407,18 @@ int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size,
       else s = send_ignore_eintr(fd, (const char *)buffer, size, 0L);
 
       if (s == 0) return 0;  // for UDP, zero is a valid send() size, since there is no EOS
-      int32 ret = ConvertReturnValueToMuscleSemantics(s, size, bm);
+
 #ifdef MUSCLE_USE_IFIDX_WORKAROUND
-      if (oldInterfaceIndex >= 0) (void) SetSocketMulticastSendInterfaceIndex(sock, oldInterfaceIndex);  // gotta do this AFTER computing the return value, as it clears errno!
+      const int errnoFromSendCall = GetErrno();
+#endif
+
+      const int32 ret = ConvertReturnValueToMuscleSemantics(s, size, bm);
+#ifdef MUSCLE_USE_IFIDX_WORKAROUND
+      if (oldInterfaceIndex >= 0) 
+      {
+         (void) SetSocketMulticastSendInterfaceIndex(sock, oldInterfaceIndex);  // gotta do this AFTER computing the return value, as it clears errno!
+         SetErrno(errnoFromSendCall);  // restore the errno from the send_ignore_eintr() call, in case our calling code wants to examine it
+      }
 #endif
       return ret;
    }
@@ -391,28 +427,30 @@ int32 SendDataUDP(const ConstSocketRef & sock, const void * buffer, uint32 size,
 
 status_t ShutdownSocket(const ConstSocketRef & sock, bool dRecv, bool dSend)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    if ((dRecv == false)&&(dSend == false)) return B_NO_ERROR;  // there's nothing we need to do!
 
    // Since these constants aren't defined everywhere, I'll define my own:
-   const int MUSCLE_SHUT_RD   = 0;
-   const int MUSCLE_SHUT_WR   = 1;
-   const int MUSCLE_SHUT_RDWR = 2;
-
-   return (shutdown(fd, dRecv?(dSend?MUSCLE_SHUT_RDWR:MUSCLE_SHUT_RD):MUSCLE_SHUT_WR) == 0) ? B_NO_ERROR : B_ERROR;
+   enum {
+      MUSCLE_SHUT_RD = 0,
+      MUSCLE_SHUT_WR,
+      MUSCLE_SHUT_RDWR,
+      NUM_MUSCLE_SHUTS
+   };
+   return (shutdown(fd, dRecv?(dSend?MUSCLE_SHUT_RDWR:MUSCLE_SHUT_RD):MUSCLE_SHUT_WR) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
-ConstSocketRef Accept(const ConstSocketRef & sock, ip_address * optRetInterfaceIP)
+ConstSocketRef Accept(const ConstSocketRef & sock, IPAddress * optRetInterfaceIP)
 {
    DECLARE_SOCKADDR(saSocket, NULL, 0);
    muscle_socklen_t nLen = sizeof(saSocket);
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd >= 0)
    {
       ConstSocketRef ret = GetConstSocketRefFromPool((int) accept(fd, (struct sockaddr *)&saSocket, &nLen));
-      if (DoGlobalSocketCallback(GlobalSocketCallback::SOCKET_CALLBACK_ACCEPT, ret) != B_NO_ERROR) return ConstSocketRef();  // called separately since accept() created this socket, not CreateMuscleSocket()
+      if (DoGlobalSocketCallback(GlobalSocketCallback::SOCKET_CALLBACK_ACCEPT, ret).IsError()) return ConstSocketRef();  // called separately since accept() created this socket, not CreateMuscleSocket()
 
       if ((ret())&&(optRetInterfaceIP))
       {
@@ -427,7 +465,7 @@ ConstSocketRef Accept(const ConstSocketRef & sock, ip_address * optRetInterfaceI
 
 ConstSocketRef Connect(const char * hostName, uint16 port, const char * debugTitle, bool errorsOnly, uint64 maxConnectTime, bool expandLocalhost)
 {
-   ip_address hostIP = GetHostByName(hostName, expandLocalhost);
+   const IPAddress hostIP = GetHostByName(hostName, expandLocalhost);
    if (hostIP != invalidIP) return Connect(hostIP, port, hostName, debugTitle, errorsOnly, maxConnectTime);
    else
    {
@@ -436,7 +474,7 @@ ConstSocketRef Connect(const char * hostName, uint16 port, const char * debugTit
    }
 }
 
-ConstSocketRef Connect(const ip_address & hostIP, uint16 port, const char * optDebugHostName, const char * debugTitle, bool errorsOnly, uint64 maxConnectTime)
+ConstSocketRef Connect(const IPAddress & hostIP, uint16 port, const char * optDebugHostName, const char * debugTitle, bool errorsOnly, uint64 maxConnectTime)
 {
    char ipbuf[64]; Inet_NtoA(hostIP, ipbuf);
 
@@ -450,7 +488,7 @@ ConstSocketRef Connect(const ip_address & hostIP, uint16 port, const char * optD
    ConstSocketRef s = (maxConnectTime == MUSCLE_TIME_NEVER) ? CreateMuscleSocket(SOCK_STREAM, GlobalSocketCallback::SOCKET_CALLBACK_CONNECT) : ConnectAsync(hostIP, port, socketIsReady);
    if (s())
    {
-      int fd = s.GetFileDescriptor();
+      const int fd = s.GetFileDescriptor();
       int ret = -1;
       if (maxConnectTime == MUSCLE_TIME_NEVER)
       {
@@ -481,7 +519,7 @@ ConstSocketRef Connect(const ip_address & hostIP, uint16 port, const char * optD
 #endif
                   if (multiplexer.IsSocketReadyForWrite(fd))
                   {
-                     if ((FinalizeAsyncConnect(s) == B_NO_ERROR)&&(SetSocketBlockingEnabled(s, true) == B_NO_ERROR)) ret = 0;
+                     if ((FinalizeAsyncConnect(s).IsOK())&&(SetSocketBlockingEnabled(s, true).IsOK())) ret = 0;
                      break;
                   }
                }
@@ -628,20 +666,20 @@ bool IsIPAddress(const char * s)
 #endif
 }
 
-static ip_address _cachedLocalhostAddress = invalidIP;
+static IPAddress _cachedLocalhostAddress = invalidIP;
 
-static void ExpandLocalhostAddress(ip_address & ipAddress)
+static void ExpandLocalhostAddress(IPAddress & ipAddress)
 {
-   if (IsStandardLoopbackDeviceAddress(ipAddress))
+   if (ipAddress.IsStandardLoopbackDeviceAddress())
    {
-      ip_address altRet = GetLocalHostIPOverride();  // see if the user manually specified a preferred local address
+      IPAddress altRet = GetLocalHostIPOverride();  // see if the user manually specified a preferred local address
       if (altRet == invalidIP)
       {
          // If not, try to grab one from the OS
          if (_cachedLocalhostAddress == invalidIP)
          {
             Queue<NetworkInterfaceInfo> ifs;
-            (void) GetNetworkInterfaceInfos(ifs, GNII_INCLUDE_ENABLED_INTERFACES|GNII_INCLUDE_NONLOOPBACK_INTERFACES|GNII_INCLUDE_MUSCLE_PREFERRED_INTERFACES);  // just to set _cachedLocalhostAddress
+            (void) GetNetworkInterfaceInfos(ifs, GNIIFlags(GNII_FLAG_INCLUDE_ENABLED_INTERFACES,GNII_FLAG_INCLUDE_NONLOOPBACK_INTERFACES,GNII_FLAG_INCLUDE_MUSCLE_PREFERRED_INTERFACES));  // just to set _cachedLocalhostAddress
          }
          altRet = _cachedLocalhostAddress;
       }
@@ -653,14 +691,18 @@ static void ExpandLocalhostAddress(ip_address & ipAddress)
 class DNSRecord
 {
 public:
-   DNSRecord() : _expirationTime(0) {/* empty */}
-   DNSRecord(const ip_address & ip, uint64 expTime) : _ipAddress(ip), _expirationTime(expTime) {/* empty */}
+   DNSRecord()
+      : _expirationTime(0) 
+   {
+      // empty
+   }
+   DNSRecord(const IPAddress & ip, uint64 expTime) : _ipAddress(ip), _expirationTime(expTime) {/* empty */}
 
-   const ip_address & GetIPAddress() const {return _ipAddress;}
+   const IPAddress & GetIPAddress() const {return _ipAddress;}
    uint64 GetExpirationTime() const {return _expirationTime;}
 
 private:
-   ip_address _ipAddress;
+   IPAddress _ipAddress;
    uint64 _expirationTime;
 };
 
@@ -686,18 +728,18 @@ static String GetHostByNameKey(const char * name, bool expandLocalhost, bool pre
    return ret;
 }
 
-ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv6)
+IPAddress GetHostByNameNative(const char * name, bool expandLocalhost, bool preferIPv6)
 {
    if (IsIPAddress(name))
    {
       // No point in ever caching this result, since Inet_AtoN() is always fast anyway
-      ip_address ret = Inet_AtoN(name);
+      IPAddress ret = Inet_AtoN(name);
       if (expandLocalhost) ExpandLocalhostAddress(ret);
       return ret;
    }
    else if (_maxHostCacheSize > 0)
    {
-      String s = GetHostByNameKey(name, expandLocalhost, preferIPv6);
+      const String s = GetHostByNameKey(name, expandLocalhost, preferIPv6);
       MutexGuard mg(_hostCacheMutex);
       const DNSRecord * r = _hostCache.Get(s);
       if (r)
@@ -710,16 +752,16 @@ ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv
       }
    }
 
-   ip_address ret = invalidIP;
+   IPAddress ret = invalidIP;
 #ifdef MUSCLE_AVOID_IPV6
    struct hostent * he = gethostbyname(name);
-   if (he) ret = ntohl(*((ip_address*)he->h_addr));
+   if (he) ret.SetIPv4AddressFromUint32(ntohl(*((uint32*)he->h_addr)));
 #else
    struct addrinfo * result;
    struct addrinfo hints; memset(&hints, 0, sizeof(hints));
    hints.ai_family   = AF_UNSPEC;     // We're not too particular, for now
    hints.ai_socktype = SOCK_STREAM;   // so we don't get every address twice (once for UDP and once for TCP)
-   ip_address ret6 = invalidIP;
+   IPAddress ret6 = invalidIP;
    if (getaddrinfo(name, NULL, &hints, &result) == 0)
    {
       struct addrinfo * next = result;
@@ -728,19 +770,19 @@ ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv
          switch(next->ai_family)
          {
             case AF_INET:
-               if (IsValidAddress(ret) == false)
+               if (ret.IsValid() == false)
                {
-                  ret.SetBits(ntohl(((struct sockaddr_in *) next->ai_addr)->sin_addr.s_addr), 0);  // read IPv4 address into low bits of IPv6 address structure
-                  ret.SetLowBits(ret.GetLowBits() | ((uint64)0xFFFF)<<32);                         // and make it IPv6-mapped (why doesn't AI_V4MAPPED do this?)
+                  ret.SetIPv4AddressFromUint32(ntohl(((struct sockaddr_in *) next->ai_addr)->sin_addr.s_addr)); // read IPv4 address into low bits of IPv6 address structure
+                  ret.SetLowBits(ret.GetLowBits() | ((uint64)0xFFFF)<<32);                                      // and make it IPv6-mapped (why doesn't AI_V4MAPPED do this?)
                }
             break;
 
             case AF_INET6:
-               if (IsValidAddress(ret6) == false)
+               if (ret6.IsValid() == false)
                {
                   struct sockaddr_in6 * sin6 = (struct sockaddr_in6 *) next->ai_addr;
-                  uint32 tmp = sin6->sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
-                  ret6.ReadFromNetworkArray(sin6->sin6_addr.s6_addr, &tmp);
+                  const uint32 tmp = sin6->sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
+                  ret6.ReadFromNetworkArray(sin6->sin6_addr.s6_addr, tmp ? &tmp : NULL);
                }
             break;
          }
@@ -748,9 +790,9 @@ ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv
       }
       freeaddrinfo(result);
 
-      if (IsValidAddress(ret))
+      if (ret.IsValid())
       {
-         if ((preferIPv6)&&(IsValidAddress(ret6))) ret = ret6;
+         if ((preferIPv6)&&(ret6.IsValid())) ret = ret6;
       }
       else ret = ret6;
    }
@@ -761,7 +803,7 @@ ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv
    if (_maxHostCacheSize > 0)
    {
       // Store our result in the cache for later
-      String s = GetHostByNameKey(name, expandLocalhost, preferIPv6);
+      const String s = GetHostByNameKey(name, expandLocalhost, preferIPv6);
       MutexGuard mg(_hostCacheMutex);
       DNSRecord * r = _hostCache.PutAndGet(s, DNSRecord(ret, (_hostCacheEntryLifespan==MUSCLE_TIME_NEVER)?MUSCLE_TIME_NEVER:(GetRunTime64()+_hostCacheEntryLifespan)));
       if (r)
@@ -774,19 +816,51 @@ ip_address GetHostByName(const char * name, bool expandLocalhost, bool preferIPv
    return ret;
 }
 
-ConstSocketRef ConnectAsync(const ip_address & hostIP, uint16 port, bool & retIsReady)
+static OrderedValuesHashtable<IHostNameResolverRef, int> _hostNameResolvers;
+status_t PutHostNameResolver(const IHostNameResolverRef & resolver, int priority) {return _hostNameResolvers.Put(resolver, priority);}
+status_t RemoveHostNameResolver(const IHostNameResolverRef & resolver) {return _hostNameResolvers.Remove(resolver);}
+void ClearHostNameResolvers() {_hostNameResolvers.Clear();}
+
+IPAddress GetHostByName(const char * name, bool expandLocalhost, bool preferIPv6)
+{
+   if (_hostNameResolvers.HasItems())
+   {
+      for (HashtableIterator<IHostNameResolverRef, int> iter(_hostNameResolvers, HTIT_FLAG_BACKWARDS); iter.HasData(); iter++)
+      {
+         if (iter.GetValue() < 0) break;  // we'll do any negative-priority callbacks only after our built-in functionality has failed
+
+         IPAddress ret;
+         if (iter.GetKey()()->GetIPAddressForHostName(name, expandLocalhost, preferIPv6, ret).IsOK()) return ret;
+      }
+   }
+
+   IPAddress ret = GetHostByNameNative(name, expandLocalhost, preferIPv6);
+   if (ret.IsValid()) return ret;
+
+   if (_hostNameResolvers.HasItems())
+   {
+      for (HashtableIterator<IHostNameResolverRef, int> iter(_hostNameResolvers, HTIT_FLAG_BACKWARDS); iter.HasData(); iter++)
+      {
+         if ((iter.GetValue() < 0)&&(iter.GetKey()()->GetIPAddressForHostName(name, expandLocalhost, preferIPv6, ret).IsOK())) return ret;
+      }
+   }
+
+   return IPAddress();
+}
+
+ConstSocketRef ConnectAsync(const IPAddress & hostIP, uint16 port, bool & retIsReady)
 {
    ConstSocketRef s = CreateMuscleSocket(SOCK_STREAM, GlobalSocketCallback::SOCKET_CALLBACK_CONNECT);
    if (s())
    {
-      if (SetSocketBlockingEnabled(s, false) == B_NO_ERROR)
+      if (SetSocketBlockingEnabled(s, false).IsOK())
       {
          DECLARE_SOCKADDR(saAddr, &hostIP, port);
-         int result = connect(s.GetFileDescriptor(), (struct sockaddr *) &saAddr, sizeof(saAddr));
+         const int result = connect(s.GetFileDescriptor(), (struct sockaddr *) &saAddr, sizeof(saAddr));
 #ifdef WIN32
-         bool inProgress = ((result < 0)&&(WSAGetLastError() == WSAEWOULDBLOCK));
+         const bool inProgress = ((result < 0)&&(WSAGetLastError() == WSAEWOULDBLOCK));
 #else
-         bool inProgress = ((result < 0)&&(errno == EINPROGRESS));
+         const bool inProgress = ((result < 0)&&(errno == EINPROGRESS));
 #endif
          if ((result == 0)||(inProgress))
          {
@@ -798,10 +872,10 @@ ConstSocketRef ConnectAsync(const ip_address & hostIP, uint16 port, bool & retIs
    return ConstSocketRef();
 }
 
-ip_address GetPeerIPAddress(const ConstSocketRef & sock, bool expandLocalhost, uint16 * optRetPort)
+IPAddress GetPeerIPAddress(const ConstSocketRef & sock, bool expandLocalhost, uint16 * optRetPort)
 {
-   ip_address ipAddress = invalidIP;
-   int fd = sock.GetFileDescriptor();
+   IPAddress ipAddress = invalidIP;
+   const int fd = sock.GetFileDescriptor();
    if (fd >= 0)
    {
       DECLARE_SOCKADDR(saTempAdd, NULL, 0);
@@ -827,8 +901,9 @@ status_t CreateConnectedSocketPair(ConstSocketRef & socket1, ConstSocketRef & so
    {
       socket1 = GetConstSocketRefFromPool(temp[0]);
       socket2 = GetConstSocketRefFromPool(temp[1]);
-      if ((SetSocketBlockingEnabled(socket1, blocking) == B_NO_ERROR)&&(SetSocketBlockingEnabled(socket2, blocking) == B_NO_ERROR)) return B_NO_ERROR;
+      if ((SetSocketBlockingEnabled(socket1, blocking).IsOK())&&(SetSocketBlockingEnabled(socket2, blocking).IsOK())) return B_NO_ERROR;
    }
+   else return B_ERRNO;
 #else
    uint16 port;
    socket1 = CreateAcceptingSocket(0, 1, &port, localhostIP);
@@ -841,7 +916,7 @@ status_t CreateConnectedSocketPair(ConstSocketRef & socket1, ConstSocketRef & so
          if (newfd())
          {
             socket1 = newfd;
-            if ((SetSocketBlockingEnabled(socket1, blocking) == B_NO_ERROR)&&(SetSocketBlockingEnabled(socket2, blocking) == B_NO_ERROR))
+            if ((SetSocketBlockingEnabled(socket1, blocking).IsOK())&&(SetSocketBlockingEnabled(socket2, blocking).IsOK()))
             {
                (void) SetSocketNaglesAlgorithmEnabled(socket1, false);
                (void) SetSocketNaglesAlgorithmEnabled(socket2, false);
@@ -854,33 +929,33 @@ status_t CreateConnectedSocketPair(ConstSocketRef & socket1, ConstSocketRef & so
 
    socket1.Reset();
    socket2.Reset();
-   return B_ERROR;
+   return B_IO_ERROR;
 }
 
 status_t SetSocketBlockingEnabled(const ConstSocketRef & sock, bool blocking)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
 #ifdef WIN32
    unsigned long mode = blocking ? 0 : 1;
-   return (ioctlsocket(fd, FIONBIO, &mode) == 0) ? B_NO_ERROR : B_ERROR;
+   return (ioctlsocket(fd, FIONBIO, &mode) == 0) ? B_NO_ERROR : B_ERRNO;
 #else
 # ifdef BEOS_OLD_NETSERVER
-   int b = blocking ? 0 : 1;
-   return (setsockopt(fd, SOL_SOCKET, SO_NONBLOCK, (const sockopt_arg *) &b, sizeof(b)) == 0) ? B_NO_ERROR : B_ERROR;
+   const int b = blocking ? 0 : 1;
+   return (setsockopt(fd, SOL_SOCKET, SO_NONBLOCK, (const sockopt_arg *) &b, sizeof(b)) == 0) ? B_NO_ERROR : B_ERRNO;
 # else
    int flags = fcntl(fd, F_GETFL, 0);
-   if (flags < 0) return B_ERROR;
+   if (flags < 0) return B_ERRNO;
    flags = blocking ? (flags&~O_NONBLOCK) : (flags|O_NONBLOCK);
-   return (fcntl(fd, F_SETFL, flags) == 0) ? B_NO_ERROR : B_ERROR;
+   return (fcntl(fd, F_SETFL, flags) == 0) ? B_NO_ERROR : B_ERRNO;
 # endif
 #endif
 }
 
 bool GetSocketBlockingEnabled(const ConstSocketRef & sock)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return false;
 
 #ifdef WIN32
@@ -893,7 +968,7 @@ bool GetSocketBlockingEnabled(const ConstSocketRef & sock)
    int len = sizeof(b);
    return (getsockopt(fd, SOL_SOCKET, SO_NONBLOCK, (sockopt_arg *) &b, &len) == 0) ? (b==0) : false;
 # else
-   int flags = fcntl(fd, F_GETFL, 0);
+   const int flags = fcntl(fd, F_GETFL, 0);
    return ((flags >= 0)&&((flags & O_NONBLOCK) == 0));
 # endif
 #endif
@@ -901,20 +976,20 @@ bool GetSocketBlockingEnabled(const ConstSocketRef & sock)
 
 status_t SetUDPSocketBroadcastEnabled(const ConstSocketRef & sock, bool broadcast)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    int val = (broadcast ? 1 : 0);
 #ifdef BEOS_OLD_NETSERVER
-   return (setsockopt(fd, SOL_SOCKET, INADDR_BROADCAST, (const sockopt_arg *) &val, sizeof(val)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (setsockopt(fd, SOL_SOCKET, INADDR_BROADCAST, (const sockopt_arg *) &val, sizeof(val)) == 0) ? B_NO_ERROR : B_ERRNO;
 #else
-   return (setsockopt(fd, SOL_SOCKET, SO_BROADCAST,     (const sockopt_arg *) &val, sizeof(val)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (setsockopt(fd, SOL_SOCKET, SO_BROADCAST,     (const sockopt_arg *) &val, sizeof(val)) == 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
 bool GetUDPSocketBroadcastEnabled(const ConstSocketRef & sock)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return false;
 
    int val;
@@ -928,21 +1003,21 @@ bool GetUDPSocketBroadcastEnabled(const ConstSocketRef & sock)
 
 status_t SetSocketNaglesAlgorithmEnabled(const ConstSocketRef & sock, bool enabled)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
 #ifdef BEOS_OLD_NETSERVER
    (void) enabled;  // prevent 'unused var' warning
-   return B_ERROR;  // old networking stack doesn't support this flag
+   return B_UNIMPLEMENTED;  // old networking stack doesn't support this flag
 #else
-   int enableNoDelay = enabled ? 0 : 1;
-   return (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const sockopt_arg *) &enableNoDelay, sizeof(enableNoDelay)) == 0) ? B_NO_ERROR : B_ERROR;
+   const int enableNoDelay = enabled ? 0 : 1;
+   return (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const sockopt_arg *) &enableNoDelay, sizeof(enableNoDelay)) == 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
 bool GetSocketNaglesAlgorithmEnabled(const ConstSocketRef & sock)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return false;
 
 #ifdef BEOS_OLD_NETSERVER
@@ -954,12 +1029,52 @@ bool GetSocketNaglesAlgorithmEnabled(const ConstSocketRef & sock)
 #endif
 }
 
+status_t SetSocketCorkAlgorithmEnabled(const ConstSocketRef & sock, bool enabled)
+{
+#if defined(__linux__) || defined(__FreeBSD__) || defined(BSD) || defined(__APPLE__)
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
+
+   const int iEnabled = enabled;  // it's gotta be an int!
+# if defined(__linux__)
+   const int corkOpt = TCP_CORK;
+# else
+   const int corkOpt = TCP_NOPUSH;
+# endif
+   return (setsockopt(fd, IPPROTO_TCP, corkOpt, (const sockopt_arg *) &iEnabled, sizeof(iEnabled)) == 0) ? B_NO_ERROR : B_ERRNO;
+#else
+   (void) sock;
+   (void) enabled;
+   return B_UNIMPLEMENTED;
+#endif
+}
+
+bool GetSocketCorkAlgorithmEnabled(const ConstSocketRef & sock)
+{
+#if defined(__linux__) || defined(__FreeBSD__) || defined(BSD) || defined(__APPLE__)
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return false;
+
+   int enabled;
+   socklen_t len = sizeof(enabled);
+# if defined(__linux__)
+   const int corkOpt = TCP_CORK;
+# else
+   const int corkOpt = TCP_NOPUSH;
+# endif
+   return (getsockopt(fd, IPPROTO_TCP, corkOpt, (sockopt_arg *) &enabled, &len) == 0) ? (bool)enabled : false;
+#else
+   (void) sock;
+   return false;
+#endif
+}
+
 status_t FinalizeAsyncConnect(const ConstSocketRef & sock)
 {
    TCHECKPOINT;
 
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
 #if defined(BEOS_OLD_NETSERVER)
    // net_server and BONE behave COMPLETELY differently as far as finalizing async connects
@@ -976,14 +1091,14 @@ status_t FinalizeAsyncConnect(const ConstSocketRef & sock)
    if (userIsRunningBone)
    {
       char junk;
-      return (send_ignore_eintr(fd, &junk, 0, 0L) == 0) ? B_NO_ERROR : B_ERROR;
+      return (send_ignore_eintr(fd, &junk, 0, 0L) == 0) ? B_NO_ERROR : B_ERRNO;
    }
    else
    {
       // net_server just HAS to do things differently from everyone else :^P
       struct sockaddr_in junk;
       memset(&junk, 0, sizeof(junk));
-      return (connect(fd, (struct sockaddr *) &junk, sizeof(junk)) == 0) ? B_NO_ERROR : B_ERROR;
+      return (connect(fd, (struct sockaddr *) &junk, sizeof(junk)) == 0) ? B_NO_ERROR : B_ERRNO;
    }
 #elif defined(__FreeBSD__) || defined(BSD)
    // Nathan Whitehorn reports that send() doesn't do this trick under FreeBSD 7,
@@ -991,11 +1106,11 @@ status_t FinalizeAsyncConnect(const ConstSocketRef & sock)
    struct sockaddr_in junk;
    socklen_t length = sizeof(junk);
    memset(&junk, 0, sizeof(junk));
-   return (getpeername(fd, (struct sockaddr *)&junk, &length) == 0) ? B_NO_ERROR : B_ERROR;
+   return (getpeername(fd, (struct sockaddr *)&junk, &length) == 0) ? B_NO_ERROR : B_ERRNO;
 #else
    // For most platforms, the code below is all we need
    char junk;
-   return (send_ignore_eintr(fd, &junk, 0, 0L) == 0) ? B_NO_ERROR : B_ERROR;
+   return (send_ignore_eintr(fd, &junk, 0, 0L) == 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
@@ -1005,13 +1120,13 @@ static status_t SetSocketBufferSizeAux(const ConstSocketRef & sock, uint32 numBy
    (void) sock;
    (void) numBytes;
    (void) optionName;
-   return B_ERROR;  // not supported!
+   return B_UNIMPLEMENTED;  // not supported!
 #else
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    int iSize = (int) numBytes;
-   return (setsockopt(fd, SOL_SOCKET, optionName, (const sockopt_arg *) &iSize, sizeof(iSize)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (setsockopt(fd, SOL_SOCKET, optionName, (const sockopt_arg *) &iSize, sizeof(iSize)) == 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 status_t SetSocketSendBufferSize(   const ConstSocketRef & sock, uint32 sendBufferSizeBytes) {return SetSocketBufferSizeAux(sock, sendBufferSizeBytes, SO_SNDBUF);}
@@ -1024,7 +1139,7 @@ static int32 GetSocketBufferSizeAux(const ConstSocketRef & sock, int optionName)
    (void) optionName;
    return -1;  // not supported!
 #else
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return -1;
 
    int iSize;
@@ -1035,42 +1150,111 @@ static int32 GetSocketBufferSizeAux(const ConstSocketRef & sock, int optionName)
 int32 GetSocketSendBufferSize(   const ConstSocketRef & sock) {return GetSocketBufferSizeAux(sock, SO_SNDBUF);}
 int32 GetSocketReceiveBufferSize(const ConstSocketRef & sock) {return GetSocketBufferSizeAux(sock, SO_RCVBUF);}
 
-NetworkInterfaceInfo :: NetworkInterfaceInfo() : _ip(invalidIP), _netmask(invalidIP), _broadcastIP(invalidIP), _enabled(false), _copper(false)
+NetworkInterfaceInfo :: NetworkInterfaceInfo()
+   : _ip(invalidIP)
+   , _netmask(invalidIP)
+   , _broadcastIP(invalidIP)
+   , _enabled(false)
+   , _copper(false)
+   , _macAddress(0)
+   , _hardwareType(NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)
 {
    // empty
 }
 
-NetworkInterfaceInfo :: NetworkInterfaceInfo(const String &name, const String & desc, const ip_address & ip, const ip_address & netmask, const ip_address & broadcastIP, bool enabled, bool copper) : _name(name), _desc(desc), _ip(ip), _netmask(netmask), _broadcastIP(broadcastIP), _enabled(enabled), _copper(copper)
+NetworkInterfaceInfo :: NetworkInterfaceInfo(const String &name, const String & desc, const IPAddress & ip, const IPAddress & netmask, const IPAddress & broadIP, bool enabled, bool copper, uint64 macAddress, uint32 hardwareType)
+   : _name(name)
+   , _desc(desc)
+   , _ip(ip)
+   , _netmask(netmask)
+   , _broadcastIP(broadIP)
+   , _enabled(enabled)
+   , _copper(copper)
+   , _macAddress(macAddress)
+   , _hardwareType(hardwareType)
 {
    // empty
+}
+
+static String MACAddressToString(uint64 mac)
+{
+   if (mac == 0) return "None";
+
+   char buf[128];
+   muscleSprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x", 
+       (unsigned) ((mac>>(5*8))&0xFF),
+       (unsigned) ((mac>>(4*8))&0xFF),
+       (unsigned) ((mac>>(3*8))&0xFF),
+       (unsigned) ((mac>>(2*8))&0xFF),
+       (unsigned) ((mac>>(1*8))&0xFF),
+       (unsigned) ((mac>>(0*8))&0xFF));
+   return buf;
+}
+
+const char * NetworkInterfaceInfo :: GetNetworkHardwareTypeString(uint32 hardwareType)
+{
+   static const char * _hardwareTypeStrs[NUM_NETWORK_INTERFACE_HARDWARE_TYPES] = {
+      "Unknown",
+      "Loopback",
+      "Ethernet",
+      "WiFi",
+      "TokenRing",
+      "PPP",
+      "ATM",
+      "Tunnel",
+      "Bridge",
+      "FireWire",
+      "Bluetooth",
+      "Bonded",
+      "IrDA",
+      "Dialup",
+      "Serial",
+      "VLAN",
+      "Cellular",
+   };
+   if (hardwareType >= ARRAYITEMS(_hardwareTypeStrs)) hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;
+   return _hardwareTypeStrs[hardwareType];
+}
+
+bool NetworkInterfaceInfo :: operator == (const NetworkInterfaceInfo & rhs) const
+{
+   return ((_name         == rhs._name)
+         &&(_desc         == rhs._desc)
+         &&(_ip           == rhs._ip)
+         &&(_netmask      == rhs._netmask)
+         &&(_broadcastIP  == rhs._broadcastIP)
+         &&(_enabled      == rhs._enabled)
+         &&(_copper       == rhs._copper)
+         &&(_macAddress   == rhs._macAddress)
+         &&(_hardwareType == rhs._hardwareType));
 }
 
 String NetworkInterfaceInfo :: ToString() const
 {
-   return String("Name=[%1] Description=[%2] IP=[%3] Netmask=[%4] Broadcast=[%5] Enabled=%6 Copper=%7").Arg(_name).Arg(_desc).Arg(Inet_NtoA(_ip)).Arg(Inet_NtoA(_netmask)).Arg(Inet_NtoA(_broadcastIP)).Arg(_enabled).Arg(_copper);
+   return String("Name=[%1] Description=[%2] Type=[%3] IP=[%4] Netmask=[%5] Broadcast=[%6] MAC=[%7] Enabled=%8 Copper=%9").Arg(_name).Arg(_desc).Arg(GetNetworkHardwareTypeString(_hardwareType)).Arg(Inet_NtoA(_ip)).Arg(Inet_NtoA(_netmask)).Arg(Inet_NtoA(_broadcastIP)).Arg(MACAddressToString(_macAddress)).Arg(_enabled).Arg(_copper);
 }
 
 uint32 NetworkInterfaceInfo :: HashCode() const
 {
-   return _name.HashCode() + _desc.HashCode() + GetHashCodeForIPAddress(_ip) + GetHashCodeForIPAddress(_netmask) + GetHashCodeForIPAddress(_broadcastIP) + _enabled + _copper;
+   return _name.HashCode() + _desc.HashCode() + _ip.HashCode() + _netmask.HashCode() + _broadcastIP.HashCode() + CalculateHashCode(_macAddress) +_enabled + _copper;
 }
 
 #if defined(USE_GETIFADDRS) || defined(WIN32)
-static ip_address SockAddrToIPAddr(const struct sockaddr * a)
+static IPAddress SockAddrToIPAddr(const struct sockaddr * a)
 {
    if (a)
    {
       switch(a->sa_family)
       {
-         case AF_INET:  return ip_address(ntohl(((struct sockaddr_in *)a)->sin_addr.s_addr));
+         case AF_INET:  return IPAddress(ntohl(((struct sockaddr_in *)a)->sin_addr.s_addr));
 
 #ifndef MUSCLE_AVOID_IPV6
          case AF_INET6:
          {
             struct sockaddr_in6 * sin6 = (struct sockaddr_in6 *) a;
-            ip_address ret;
-            uint32 tmp = sin6->sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
-            ret.ReadFromNetworkArray(sin6->sin6_addr.s6_addr, &tmp);
+            IPAddress ret;
+            const uint32 tmp = sin6->sin6_scope_id;  // MacOS/X uses __uint32_t, which isn't quite the same somehow
+            ret.ReadFromNetworkArray(sin6->sin6_addr.s6_addr, tmp ? &tmp : NULL);
             return ret;
          }
 #endif
@@ -1080,87 +1264,206 @@ static ip_address SockAddrToIPAddr(const struct sockaddr * a)
 }
 #endif
 
-bool IsIPv4Address(const ip_address & ip)
+bool IPAddress :: IsIPv4() const
 {
 #ifdef MUSCLE_AVOID_IPV6
-   (void) ip;
    return true;
 #else
-   if ((ip == invalidIP)||(ip == localhostIP)) return false;  // :: and ::1 are considered to be IPv6 addresses
+   if ((EqualsIgnoreInterfaceIndex(invalidIP))||(EqualsIgnoreInterfaceIndex(localhostIP_IPv6))) return false;  // :: and ::1 are considered to be IPv6 addresses
 
-   if (ip.GetHighBits() != 0) return false;
-   uint64 lb = (ip.GetLowBits()>>32);
+   if (GetHighBits() != 0) return false;
+   const uint64 lb = (_lowBits>>32);
    return ((lb == 0)||(lb == 0xFFFF));  // 32-bit and IPv4-mapped, respectively
 #endif
 }
 
-bool IsValidAddress(const ip_address & ip)
+bool IPAddress :: IsValid() const
 {
 #ifdef MUSCLE_AVOID_IPV6
-   return (ip != 0);
+   return ((_highBits == 0)&&((_lowBits & (((uint64)0xFFFFFFFF)<<32)) == 0)&&(_lowBits != 0));
 #else
-   return ((ip.GetHighBits() != 0)||(ip.GetLowBits() != 0));
+   return ((_highBits != 0)||(_lowBits != 0));
 #endif
 }
 
-bool IsMulticastIPAddress(const ip_address & ip)
+bool IPAddress :: IsMulticast() const
 {
 #ifndef MUSCLE_AVOID_IPV6
    // In IPv6, any address that starts with 0xFF is a multicast address
-   if (((ip.GetHighBits() >> 56)&((uint64)0xFF)) == 0xFF) return true;
+   if (((_highBits >> 56)&((uint64)0xFF)) == 0xFF) return true;
 
    const uint64 mapBits = (((uint64)0xFFFF)<<32);
-   if ((ip.GetHighBits() == 0)&&((ip.GetLowBits() & mapBits) == mapBits))
+   if ((_highBits == 0)&&((_lowBits & mapBits) == mapBits))
    {
-      ip_address temp = ip; temp.SetLowBits(temp.GetLowBits() & ~mapBits);
-      return IsMulticastIPAddress(temp);  // don't count the map-to-IPv6 bits when determining multicast-ness
+      IPAddress temp = *this; temp.SetLowBits(temp.GetLowBits() & ~mapBits);
+      return temp.IsMulticast();  // don't count the map-to-IPv6 bits when determining multicast-ness
    }
 #endif
 
    // check for IPv4 address-ness
-   ip_address minMulticastAddress = Inet_AtoN("224.0.0.0");
-   ip_address maxMulticastAddress = Inet_AtoN("239.255.255.255");
-   return muscleInRange(ip, minMulticastAddress, maxMulticastAddress);
+   const IPAddress minMulticastAddress = Inet_AtoN("224.0.0.0");
+   const IPAddress maxMulticastAddress = Inet_AtoN("239.255.255.255");
+   return muscleInRange(_lowBits, minMulticastAddress.GetLowBits(), maxMulticastAddress.GetLowBits());
 }
 
-bool IsStandardLoopbackDeviceAddress(const ip_address & ip)
+bool IPAddress :: IsIPv6LocalMulticast(uint8 scope) const
+{
+   if ((IsIPv4() == false)&&(IsMulticast()))
+   {
+      const uint64 highBits = GetHighBits();
+      const uint64 topEight = (((uint64)0xFF)<<56);
+      if ((highBits & topEight) == topEight)
+      {
+         const uint8 scopeBits = (highBits >> 48) & 0x0F;
+         return (scopeBits==scope); 
+      }
+   }
+   return false;
+}
+
+bool IPAddress :: IsStandardLoopbackDeviceAddress() const
 {
 #ifdef MUSCLE_AVOID_IPV6
-   return (ip == localhostIP);
+   return (*this == localhostIP_IPv4);
 #else
    // fe80::1 is another name for localhostIP in IPv6 land
-   static const ip_address localhostIP_linkScope(localhostIP.GetLowBits(), ((uint64)0xFE80)<<48);
-   return ((ip.EqualsIgnoreInterfaceIndex(localhostIP))||(ip.EqualsIgnoreInterfaceIndex(localhostIP_IPv4))||(ip.EqualsIgnoreInterfaceIndex(localhostIP_linkScope)));
+   static const IPAddress localhostIP_linkScope(localhostIP.GetLowBits(), ((uint64)0xFE80)<<48);
+   return ((EqualsIgnoreInterfaceIndex(localhostIP_IPv6))||(EqualsIgnoreInterfaceIndex(localhostIP_IPv4))||(EqualsIgnoreInterfaceIndex(localhostIP_linkScope)));
 #endif
 }
 
-static bool IsGNIIBitMatch(const ip_address & ip, bool isInterfaceEnabled, uint32 includeBits)
+bool IPAddress :: IsSelfAssigned() const
 {
-   if (((includeBits & GNII_INCLUDE_ENABLED_INTERFACES)  == 0)&&( isInterfaceEnabled)) return false;
-   if (((includeBits & GNII_INCLUDE_DISABLED_INTERFACES) == 0)&&(!isInterfaceEnabled)) return false;
+   if (IsIPv4())
+   {
+      // In IPv4-land, any IP address of the form 169.254.*.* is a self-assigned IP address
+      return ((((_lowBits >> 24) & 0xFF) == 169) && (((_lowBits >> 16) & 0xFF) == 254));
+   }
+
+#ifndef MUSCLE_AVOID_IPV6
+   // In IPv6-land, andy IP address of the form fe80::* is a self-assigned IP address
+   return (((_highBits >> 48) & 0xFFFF) == 0xFE80);
+#else
+   return false;
+#endif
+}
+
+static bool IsGNIIBitMatch(const IPAddress & ip, bool isInterfaceEnabled, GNIIFlags includeFlags)
+{
+   if ((includeFlags.IsBitSet(GNII_FLAG_INCLUDE_ENABLED_INTERFACES)  == false)&&( isInterfaceEnabled)) return false;
+   if ((includeFlags.IsBitSet(GNII_FLAG_INCLUDE_DISABLED_INTERFACES) == false)&&(!isInterfaceEnabled)) return false;
 
    if (ip == invalidIP)
    {
-      if ((includeBits & GNII_INCLUDE_UNADDRESSED_INTERFACES) == 0) return false;  // FogBugz #10286
+      if (includeFlags.IsBitSet(GNII_FLAG_INCLUDE_UNADDRESSED_INTERFACES) == false) return false;  // FogBugz #10286
    }
    else
    {
-      bool isLoopback = IsStandardLoopbackDeviceAddress(ip);
-      if (((includeBits & GNII_INCLUDE_LOOPBACK_INTERFACES)    == 0)&&( isLoopback)) return false;
-      if (((includeBits & GNII_INCLUDE_NONLOOPBACK_INTERFACES) == 0)&&(!isLoopback)) return false;
+      const bool isLoopback = ip.IsStandardLoopbackDeviceAddress();
+      if ((includeFlags.IsBitSet(GNII_FLAG_INCLUDE_LOOPBACK_INTERFACES)    == false)&&( isLoopback)) return false;
+      if ((includeFlags.IsBitSet(GNII_FLAG_INCLUDE_NONLOOPBACK_INTERFACES) == false)&&(!isLoopback)) return false;
 
-      bool isIPv4 = IsIPv4Address(ip);
-      if (( isIPv4)&&((includeBits & GNII_INCLUDE_IPV4_INTERFACES) == 0)) return false;
-      if ((!isIPv4)&&((includeBits & GNII_INCLUDE_IPV6_INTERFACES) == 0)) return false;
+      const bool isIPv4 = ip.IsIPv4();
+      if (( isIPv4)&&(includeFlags.IsBitSet(GNII_FLAG_INCLUDE_IPV4_INTERFACES) == false)) return false;
+      if ((!isIPv4)&&(includeFlags.IsBitSet(GNII_FLAG_INCLUDE_IPV6_INTERFACES) == false)) return false;
    }
 
    return true;
 }
 
-status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, uint32 includeBits)
+# if defined(__APPLE__) && !(TARGET_OS_IPHONE)
+// Given an Apple-style interface-type string, returns the corresponding NETWORK_INTERFACE_HARDWARE_TYPE_* value, or NETWORK_INTERFACE_TYPE_UNKNOWN.
+static uint32 ParseAppleInterfaceTypeString(CFStringRef appleTypeString)
 {
-   uint32 origResultsSize = results.GetNumItems();
-   status_t ret = B_ERROR;
+   static const CFStringRef _appleTypeStrings[] = {
+      kSCNetworkInterfaceType6to4,
+      kSCNetworkInterfaceTypeBluetooth,
+      kSCNetworkInterfaceTypeBond,
+      kSCNetworkInterfaceTypeEthernet,
+      kSCNetworkInterfaceTypeFireWire,
+      kSCNetworkInterfaceTypeIEEE80211,
+      kSCNetworkInterfaceTypeIPSec,
+      kSCNetworkInterfaceTypeIrDA,
+      kSCNetworkInterfaceTypeL2TP,
+      kSCNetworkInterfaceTypeModem,
+      kSCNetworkInterfaceTypePPP,
+      String("PPTP").ToCFStringRef(),   // was kSCNetworkInterfaceTypePPTP but I grew tired of the MacOS header complaining that it was deprecated --jaf
+      kSCNetworkInterfaceTypeSerial,
+      kSCNetworkInterfaceTypeVLAN,
+      kSCNetworkInterfaceTypeWWAN,
+      kSCNetworkInterfaceTypeIPv4,
+   };
+   static const uint32 _muscleTypes[] = {
+      NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL,
+      NETWORK_INTERFACE_HARDWARE_TYPE_BLUETOOTH,
+      NETWORK_INTERFACE_HARDWARE_TYPE_BONDED,
+      NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET,
+      NETWORK_INTERFACE_HARDWARE_TYPE_FIREWIRE,
+      NETWORK_INTERFACE_HARDWARE_TYPE_WIFI,
+      NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL,   // IPSec is a form of tunnel, no?
+      NETWORK_INTERFACE_HARDWARE_TYPE_IRDA,
+      NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL,   // L2TP is a form of tunnel, no?
+      NETWORK_INTERFACE_HARDWARE_TYPE_DIALUP,
+      NETWORK_INTERFACE_HARDWARE_TYPE_PPP,
+      NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL,   // PPTP is an obsolete form of tunnel
+      NETWORK_INTERFACE_HARDWARE_TYPE_SERIAL,
+      NETWORK_INTERFACE_HARDWARE_TYPE_VLAN,
+      NETWORK_INTERFACE_HARDWARE_TYPE_CELLULAR,
+      NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN,  // IPv4 isn't a hardware-type AFAIK!?
+   };
+
+   for (uint32 i=0; i<ARRAYITEMS(_appleTypeStrings); i++) if (CFStringCompare(appleTypeString, _appleTypeStrings[i], 0) == kCFCompareEqualTo) return _muscleTypes[i];
+
+   // There doesn't appear to be a constant declared for "Bridge", but Apple returns it sometimes, so we might as well recognize it
+   const String s(appleTypeString);
+   if (s.EqualsIgnoreCase("bridge")) return NETWORK_INTERFACE_HARDWARE_TYPE_BRIDGE; 
+   
+   return NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;
+}
+#endif
+
+#ifdef WIN32
+static uint32 ConvertWindowsInterfaceType(DWORD ifType)
+{
+   switch(ifType)
+   {
+      case IF_TYPE_ETHERNET_CSMACD:    return NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET;
+      case IF_TYPE_ISO88025_TOKENRING: return NETWORK_INTERFACE_HARDWARE_TYPE_TOKENRING;
+      case IF_TYPE_PPP:                return NETWORK_INTERFACE_HARDWARE_TYPE_PPP;
+      case IF_TYPE_SOFTWARE_LOOPBACK:  return NETWORK_INTERFACE_HARDWARE_TYPE_LOOPBACK;
+      case IF_TYPE_ATM:                return NETWORK_INTERFACE_HARDWARE_TYPE_ATM;
+      case IF_TYPE_IEEE80211:          return NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;
+      case IF_TYPE_TUNNEL:             return NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL;
+      case IF_TYPE_IEEE1394:           return NETWORK_INTERFACE_HARDWARE_TYPE_FIREWIRE;
+      case IF_TYPE_OTHER: default:     return NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;
+   }
+}
+#endif
+
+#if defined(__linux__) && !defined(MUSCLE_AVOID_LINUX_DETECT_NETWORK_HARDWARE_TYPES)
+static uint32 ConvertLinuxInterfaceType(int saFamily)
+{
+   switch(saFamily)
+   {
+      case ARPHRD_ETHER: case ARPHRD_EETHER:         return NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET;
+      case ARPHRD_PRONET:                            return NETWORK_INTERFACE_HARDWARE_TYPE_TOKENRING;
+      case ARPHRD_ATM:                               return NETWORK_INTERFACE_HARDWARE_TYPE_ATM;
+      case ARPHRD_IEEE802:                           return NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;
+      case ARPHRD_IEEE1394:                          return NETWORK_INTERFACE_HARDWARE_TYPE_FIREWIRE;
+      case ARPHRD_PPP:                               return NETWORK_INTERFACE_HARDWARE_TYPE_PPP;
+      case ARPHRD_TUNNEL: case ARPHRD_TUNNEL6:       return NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL;
+      case ARPHRD_LOOPBACK:                          return NETWORK_INTERFACE_HARDWARE_TYPE_LOOPBACK;
+      case ARPHRD_IRDA:                              return NETWORK_INTERFACE_HARDWARE_TYPE_IRDA;
+      case ARPHRD_IEEE802_TR: case ARPHRD_IEEE80211: return NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;
+      default:                                       return NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;
+   }
+}
+#endif
+
+status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, GNIIFlags includeFlags)
+{
+   const uint32 origResultsSize = results.GetNumItems();
+   status_t ret;
 
 #if defined(USE_GETIFADDRS)
    /////////////////////////////////////////////////////////////////////////////////////////////
@@ -1175,58 +1478,205 @@ status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, uint32 
 
    if (getifaddrs(&ifap) == 0)
    {
-      ret = B_NO_ERROR;
+#if defined(__FreeBSD__) || defined(BSD) || defined(__APPLE__)
+      Hashtable<String, uint32> inameToType;  // e.g. "en0" -> NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET
       {
+# if defined(__APPLE__) && !(TARGET_OS_IPHONE)
+         CFArrayRef interfaces = SCNetworkInterfaceCopyAll();  // we can use this to get network interface hardware types later
+         if (interfaces)
+         {
+            const CFIndex numInterfaces = CFArrayGetCount(interfaces);
+            for (CFIndex i=0; i<numInterfaces; i++)
+            {
+               SCNetworkInterfaceRef ifRef = (SCNetworkInterfaceRef)CFArrayGetValueAtIndex(interfaces, i);
+               if (ifRef)
+               {
+                  const uint32 typeVal = ParseAppleInterfaceTypeString(SCNetworkInterfaceGetInterfaceType(ifRef));
+                  if (typeVal != NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN) (void) inameToType.Put(String(SCNetworkInterfaceGetBSDName(ifRef)), typeVal);
+               }
+            }
+            CFRelease(interfaces);
+         }
+# endif  // defined(__APPLE__) && !(TARGET_OS_IPHONE)
+      }
+#endif
+
+      Hashtable<String, uint64> inameToMAC;
+      {
+         ConstSocketRef dummySocket;  // just for doing ioctl()s on; will be demand-allocated when required
          struct ifaddrs * p = ifap;
          while(p)
          {
-            ip_address unicastIP   = SockAddrToIPAddr(p->ifa_addr);
-            ip_address netmask     = SockAddrToIPAddr(p->ifa_netmask);
-            ip_address broadcastIP = SockAddrToIPAddr(p->ifa_broadaddr);
-            bool isEnabled         = ((p->ifa_flags & IFF_UP)      != 0);
-            bool hasCopper         = ((p->ifa_flags & IFF_RUNNING) != 0);
-            if (IsGNIIBitMatch(unicastIP, isEnabled, includeBits))
+            const String iname = p->ifa_name;
+            if (p->ifa_addr)
+            {
+#if defined(__FreeBSD__) || defined(BSD) || defined(__APPLE__)
+               if (p->ifa_addr->sa_family == AF_LINK)
+               {
+                  const unsigned char * ptr = (const unsigned char *)LLADDR((struct sockaddr_dl *)p->ifa_addr);
+                  uint64 mac = 0; for (uint32 i=0; i<6; i++) mac |= (((uint64)ptr[i])<<(8*(5-i)));
+                  (void) inameToMAC.Put(iname, mac);
+
+                  if (inameToType.ContainsKey(iname) == false)
+                  {
+                     // fall back to trying to get network-interface-type info from the BSD interface
+                     const struct if_data * ifd = (const struct if_data *) p->ifa_data;
+                     if (ifd)
+                     {
+                        uint32 devType = NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;
+                        switch(ifd->ifi_type)
+                        {
+                           case IFT_ETHER:      devType = NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET;  break; /* Ethernet or Wi-Fi (!?) */
+                           case IFT_ISO88023:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET;  break; /* CMSA CD */
+                           case IFT_ISO88025:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_TOKENRING; break; /* Token Ring */
+                           case IFT_PPP:        devType = NETWORK_INTERFACE_HARDWARE_TYPE_PPP;       break; /* RFC 1331 */
+                           case IFT_LOOP:       devType = NETWORK_INTERFACE_HARDWARE_TYPE_LOOPBACK;  break; /* loopback */
+                           case IFT_SLIP:       devType = NETWORK_INTERFACE_HARDWARE_TYPE_SERIAL;    break; /* IP over generic TTY */
+                           case IFT_RS232:      devType = NETWORK_INTERFACE_HARDWARE_TYPE_SERIAL;    break;
+                           case IFT_ATM:        devType = NETWORK_INTERFACE_HARDWARE_TYPE_ATM;       break; /* ATM cells */
+                           case IFT_MODEM:      devType = NETWORK_INTERFACE_HARDWARE_TYPE_DIALUP;    break; /* Generic Modem */
+                           case IFT_L2VLAN:     devType = NETWORK_INTERFACE_HARDWARE_TYPE_VLAN;      break; /* Layer 2 Virtual LAN using 802.1Q */
+                           case IFT_IEEE1394:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_FIREWIRE;  break; /* IEEE1394 High Performance SerialBus*/
+                           case IFT_BRIDGE:     devType = NETWORK_INTERFACE_HARDWARE_TYPE_BRIDGE;    break; /* Transparent bridge interface */
+                           case IFT_ENC:        devType = NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL;    break; /* Encapsulation */
+                           case IFT_CELLULAR:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_CELLULAR;  break; /* Packet Data over Cellular */
+                           default:             /* empty */                                          break;
+                        }
+
+#if defined(__APPLE__)
+                        if ((devType == NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)||(devType == NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET))
+                        {
+                           // Oops, IFT_ETHER is still ambiguous, since it could actually be Wired Ethernet or Wi-Fi or etc.
+                           // let's investigate a bit further and try to figure out what this network interface *really* is!
+                           if (dummySocket() == NULL) dummySocket = GetConstSocketRefFromPool(socket(AF_UNIX, SOCK_DGRAM, 0));
+                           if (dummySocket())
+                           {
+                              struct ifreq ifr; memset(&ifr, 0, sizeof(ifr));
+                              memcpy(ifr.ifr_name, iname(), iname.FlattenedSize());
+                              if (ioctl(dummySocket()->GetFileDescriptor(), SIOCGIFFUNCTIONALTYPE, &ifr) == 0)
+                              {
+                                 switch(ifr.ifr_ifru.ifru_functional_type)
+                                 {
+                                    case IFRTYPE_FUNCTIONAL_LOOPBACK:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_LOOPBACK; break;
+                                    case IFRTYPE_FUNCTIONAL_WIRED:      devType = NETWORK_INTERFACE_HARDWARE_TYPE_ETHERNET; break;
+                                    case IFRTYPE_FUNCTIONAL_WIFI_INFRA: devType = NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;     break;
+                                    case IFRTYPE_FUNCTIONAL_WIFI_AWDL:  devType = NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;     break;
+                                    case IFRTYPE_FUNCTIONAL_CELLULAR:   devType = NETWORK_INTERFACE_HARDWARE_TYPE_CELLULAR; break;
+                                    default:                            /* empty */                                         break;
+                                 }
+                              }
+                           }
+                        }
+#endif
+
+                        if (devType != NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN) (void) inameToType.Put(iname, devType);
+                     }
+                  }
+               }
+#elif defined(__linux__)
+               if (p->ifa_addr->sa_family == AF_PACKET)
+               {
+                  const struct sockaddr_ll * s = (const struct sockaddr_ll *) p->ifa_addr;
+                  uint64 mac = 0; for (uint32 i=0; i<6; i++) mac |= (((uint64)s->sll_addr[i])<<(8*(5-i)));
+                  (void) inameToMAC.Put(iname, mac);
+               }
+#endif
+            }
+
+            IPAddress unicastIP     = SockAddrToIPAddr(p->ifa_addr);
+            const IPAddress netmask = SockAddrToIPAddr(p->ifa_netmask);
+            const IPAddress broadIP = SockAddrToIPAddr(p->ifa_broadaddr);
+            const bool isEnabled    = ((p->ifa_flags & IFF_UP)      != 0);
+            const bool hasCopper    = ((p->ifa_flags & IFF_RUNNING) != 0);
+            uint32 hardwareType     = NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN;  // default
+#if defined(__APPLE__)
+            hardwareType = inameToType.GetWithDefault(iname, NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN);
+#elif defined(__linux__) && !defined(MUSCLE_AVOID_LINUX_DETECT_NETWORK_HARDWARE_TYPES)
+            if (dummySocket() == NULL) dummySocket = GetConstSocketRefFromPool(socket(AF_UNIX, SOCK_DGRAM, 0));
+            if (dummySocket())
+            {
+               struct ifreq ifr;
+               if (iname.Length() < sizeof(ifr.ifr_name))  // strictly less-than because there's also the NUL byte
+               {
+                  memcpy(ifr.ifr_name, iname(), iname.Length()+1);
+                  if (ioctl(dummySocket()->GetFileDescriptor(), SIOCGIFHWADDR, &ifr) == 0) hardwareType = ConvertLinuxInterfaceType(ifr.ifr_hwaddr.sa_family);
+               }
+            }
+#endif
+
+            if ((hardwareType == NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)&&(unicastIP.IsStandardLoopbackDeviceAddress())) hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_LOOPBACK;
+
+            if (IsGNIIBitMatch(unicastIP, isEnabled, includeFlags))
             {
 #ifndef MUSCLE_AVOID_IPV6
-               // FogBugz #10519:  I'm not setting the interface index for ::1 because trying to send UDP packets to ::1@1 causes ENOROUTE errors under MacOS/X
-               if (unicastIP != localhostIP) unicastIP.SetInterfaceIndex(if_nametoindex(p->ifa_name));  // so the user can find out; it will be ignore by the TCP stack
+               if (unicastIP.IsIPv4() == false) unicastIP.SetInterfaceIndex(if_nametoindex(iname()));  // so the user can find out; it will be ignored by the TCP stack
 #endif
-               if (results.AddTail(NetworkInterfaceInfo(p->ifa_name, "", unicastIP, netmask, broadcastIP, isEnabled, hasCopper)) == B_NO_ERROR)
+               if (results.AddTail(NetworkInterfaceInfo(iname, "", unicastIP, netmask, broadIP, isEnabled, hasCopper, 0, hardwareType)).IsOK(ret))  // MAC address will be set later
                {
                   if (_cachedLocalhostAddress == invalidIP) _cachedLocalhostAddress = unicastIP;
                }
-               else
-               {
-                  ret = B_ERROR;  // out of memory!?
-                  break;
-               }
+               else break;
             }
             p = p->ifa_next;
          }
       }
       freeifaddrs(ifap);
+
+      if (inameToMAC.HasItems()) for (uint32 i=0; i<results.GetNumItems(); i++) results[i]._macAddress = inameToMAC.GetWithDefault(results[i].GetName());
+
+      // If we have any interfaces that still have a unknown-hardware-type, see if we can figure out what they are by
+      // looking at other interfaces with the same name.  This helps e.g. with lo0 on Mac.
+      for (uint32 i=0; i<results.GetNumItems(); i++)
+      {
+         NetworkInterfaceInfo & nii = results[i];
+         if (nii.GetHardwareType() == NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)
+         {
+            for (uint32 j=0; j<results.GetNumItems(); j++)
+            {
+               const NetworkInterfaceInfo & anotherNII = results[j];
+               if ((i != j)&&(anotherNII.GetHardwareType() != NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)&&(anotherNII.GetName() == nii.GetName()))
+               {
+                  nii._hardwareType = anotherNII.GetHardwareType();
+                  break;
+               }
+            }
+         }
+
+         // and finally some heuristics as a last resort
+         if (nii.GetHardwareType() == NETWORK_INTERFACE_HARDWARE_TYPE_UNKNOWN)
+         {
+            const String & iname = nii.GetName();
+                 if (iname.ContainsIgnoreCase("tun"))    nii._hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_TUNNEL;
+            else if (iname.StartsWithIgnoreCase("ppp"))  nii._hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_PPP;
+            else if (iname.StartsWithIgnoreCase("bond")) nii._hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_BONDED;
+            else if (iname.StartsWithIgnoreCase("awdl")) nii._hardwareType = NETWORK_INTERFACE_HARDWARE_TYPE_WIFI;
+         }
+      }
    }
+   else ret = B_ERRNO;
 #elif defined(WIN32)
    // IPv6 implementation, adapted from
    // http://msdn.microsoft.com/en-us/library/aa365915(VS.85).aspx
    //
    SOCKET s = WSASocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
-   if (s == INVALID_SOCKET) return B_ERROR;
+   if (s == INVALID_SOCKET) return B_ERROR("WSASocket() Failed");
 
    INTERFACE_INFO localAddrs[64];  // Assume there will be no more than 64 IP interfaces
    DWORD bytesReturned;
    if (WSAIoctl(s, SIO_GET_INTERFACE_LIST, NULL, 0, &localAddrs, sizeof(localAddrs), &bytesReturned, NULL, NULL) == SOCKET_ERROR)
    {
+      ret = B_ERRNO;
       closesocket(s);
-      return B_ERROR;
+      return ret;
    }
    else closesocket(s);
 
    PIP_ADAPTER_ADDRESSES pAddresses = NULL;
    ULONG outBufLen = 0;
-   while(ret != B_NO_ERROR)  // keep going until we succeeded (on failure we'll return directly)
+   ret = B_ERROR;  // so we can enter the while-loop
+   while(ret.IsError())  // keep going until we succeeded (on failure we'll return directly)
    {
-      DWORD flags = GAA_FLAG_INCLUDE_PREFIX|GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER;
+      const DWORD flags = GAA_FLAG_INCLUDE_PREFIX|GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER;
       switch(GetAdaptersAddresses(AF_UNSPEC, flags, NULL, pAddresses, &outBufLen))
       {
          case ERROR_BUFFER_OVERFLOW:
@@ -1238,11 +1688,7 @@ status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, uint32 
             outBufLen *= 2;
 
             pAddresses = (IP_ADAPTER_ADDRESSES *) muscleAlloc(outBufLen);
-            if (pAddresses == NULL)
-            {
-               WARN_OUT_OF_MEMORY;
-               return B_ERROR;
-            }
+            MRETURN_OOM_ON_NULL(pAddresses);
          break;
 
          case ERROR_SUCCESS:
@@ -1251,39 +1697,54 @@ status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, uint32 
                PIP_ADAPTER_UNICAST_ADDRESS ua = pCurrAddresses->FirstUnicastAddress;
                while(ua)
                {
-                  ip_address unicastIP = SockAddrToIPAddr(ua->Address.lpSockaddr);
-                  bool isEnabled = true;  // for now.  TODO:  See if GetAdaptersAddresses() reports disabled interfaces
-                  if (IsGNIIBitMatch(unicastIP, isEnabled, includeBits))
+                  IPAddress unicastIP = SockAddrToIPAddr(ua->Address.lpSockaddr);
+                  const IPAddress ipv4_limited_broadcast_address(0xFFFFFFFF);
+
+                  const bool isEnabled = true;  // It appears that GetAdaptersAddresses() only returns enabled adapters
+                  if (IsGNIIBitMatch(unicastIP, isEnabled, includeFlags))
                   {
-                     ip_address broadcastIP, netmask;
-                     uint32 numLocalAddrs = (bytesReturned/sizeof(INTERFACE_INFO));
+                     IPAddress broadIP, netmask;
+                     const uint32 numLocalAddrs = (bytesReturned/sizeof(INTERFACE_INFO));
                      for (uint32 i=0; i<numLocalAddrs; i++)
                      {
-                        ip_address nextIP = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiAddress);
+                        const IPAddress nextIP = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiAddress);
                         if (nextIP == unicastIP)
                         {
-                           broadcastIP = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiBroadcastAddress);
-                           netmask     = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiNetmask);
+                           broadIP = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiBroadcastAddress);
+                           netmask = SockAddrToIPAddr((const sockaddr *) &localAddrs[i].iiNetmask);
+
+                           // Berkeley FogBugz #9902:  If GetAdaptersAddresses() wants to be dumb
+                           // and just return 255.255.255.255 as the broadcast address, then we'll
+                           // just have to compute the direct broadcast address ourselves!
+#ifdef MUSCLE_AVOID_IPV6
+                           if (broadIP == ipv4_limited_broadcast_address) broadIP = (unicastIP & netmask) | ~netmask;
+#else
+                           if ((unicastIP.IsIPv4())&&(broadIP.EqualsIgnoreInterfaceIndex(ipv4_limited_broadcast_address))) broadIP.SetLowBits((unicastIP.GetLowBits() & netmask.GetLowBits()) | (0xFFFFFFFF & ~(netmask.GetLowBits())));
+#endif
                            break;
                         }
                      }
 
 #ifndef MUSCLE_AVOID_IPV6
-                     // FogBugz #10519:  I'm not setting the interface index for ::1 because trying to send UDP packets to ::1@1 causes ENOROUTE errors under MacOS/X
-                     if (unicastIP != localhostIP) unicastIP.SetInterfaceIndex(pCurrAddresses->Ipv6IfIndex);  // so the user can find out; it will be ignore by the TCP stack
+                     unicastIP.SetInterfaceIndex(pCurrAddresses->Ipv6IfIndex);  // so the user can find out; it will be ignore by the TCP stack
 #endif
 
                      char outBuf[512];
                      if (WideCharToMultiByte(CP_UTF8, 0, pCurrAddresses->Description, -1, outBuf, sizeof(outBuf), NULL, NULL) <= 0) outBuf[0] = '\0';
 
-                     if (results.AddTail(NetworkInterfaceInfo(pCurrAddresses->AdapterName, outBuf, unicastIP, netmask, broadcastIP, isEnabled, false)) == B_NO_ERROR)
+                     uint64 mac = 0;
+                     if (pCurrAddresses->PhysicalAddressLength == 6) for (uint32 i=0; i<6; i++) mac |= (((uint64)(pCurrAddresses->PhysicalAddress[i]))<<(8*(5-i)));
+
+                     const bool hasCopper = (pCurrAddresses->OperStatus==IfOperStatusUp);
+                     const uint32 hardwareType = ConvertWindowsInterfaceType(pCurrAddresses->IfType);
+                     if (results.AddTail(NetworkInterfaceInfo(pCurrAddresses->AdapterName, outBuf, unicastIP, netmask, broadIP, isEnabled, hasCopper, mac, hardwareType)).IsOK(ret))
                      {
                         if (_cachedLocalhostAddress == invalidIP) _cachedLocalhostAddress = unicastIP;
                      }
                      else
                      {
                         if (pAddresses) muscleFree(pAddresses);
-                        return B_ERROR;
+                        return ret;
                      }
                   }
                   ua = ua->Next;
@@ -1295,21 +1756,21 @@ status_t GetNetworkInterfaceInfos(Queue<NetworkInterfaceInfo> & results, uint32 
 
          default:
            if (pAddresses) muscleFree(pAddresses);
-           return B_ERROR;
+           return B_ERRNO;
       }
    }
 #else
    (void) results;  // for other OS's, this function isn't implemented.
 #endif
 
-   return ((ret == B_NO_ERROR)&&(results.GetNumItems() == origResultsSize)&&(includeBits & GNII_INCLUDE_LOOPBACK_INTERFACES_ONLY_AS_LAST_RESORT)) ? GetNetworkInterfaceInfos(results, (includeBits|GNII_INCLUDE_LOOPBACK_INTERFACES)&~(GNII_INCLUDE_LOOPBACK_INTERFACES_ONLY_AS_LAST_RESORT)) : ret;
+   return ((ret.IsOK())&&(results.GetNumItems() == origResultsSize)&&(includeFlags.IsBitSet(GNII_FLAG_INCLUDE_LOOPBACK_INTERFACES_ONLY_AS_LAST_RESORT))) ? GetNetworkInterfaceInfos(results, includeFlags.WithBit(GNII_FLAG_INCLUDE_LOOPBACK_INTERFACES).WithoutBit(GNII_FLAG_INCLUDE_LOOPBACK_INTERFACES_ONLY_AS_LAST_RESORT)) : ret;
 }
 
-status_t GetNetworkInterfaceAddresses(Queue<ip_address> & results, uint32 includeBits)
+status_t GetNetworkInterfaceAddresses(Queue<IPAddress> & results, GNIIFlags includeFlags)
 {
    Queue<NetworkInterfaceInfo> infos;
-   if ((GetNetworkInterfaceInfos(infos, includeBits) != B_NO_ERROR)||(results.EnsureSize(infos.GetNumItems()) != B_NO_ERROR)) return B_ERROR;
-
+   MRETURN_ON_ERROR(GetNetworkInterfaceInfos(infos, includeFlags));
+   MRETURN_ON_ERROR(results.EnsureSize(infos.GetNumItems()));
    for (uint32 i=0; i<infos.GetNumItems(); i++) (void) results.AddTail(infos[i].GetLocalAddress());  // guaranteed not to fail
    return B_NO_ERROR;
 }
@@ -1319,25 +1780,24 @@ static void Inet4_NtoA(uint32 addr, char * buf)
    muscleSnprintf(buf, 16, INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC, (addr>>24)&0xFF, (addr>>16)&0xFF, (addr>>8)&0xFF, (addr>>0)&0xFF);
 }
 
-void Inet_NtoA(const ip_address & addr, char * ipbuf, bool preferIPv4)
+void Inet_NtoA(const IPAddress & addr, char * ipbuf, bool preferIPv4)
 {
 #ifdef MUSCLE_AVOID_IPV6
    (void) preferIPv4;
-   Inet4_NtoA(addr, ipbuf);
+   Inet4_NtoA(addr.GetIPv4AddressAsUint32(), ipbuf);
 #else
-   if ((preferIPv4)&&(IsIPv4Address(addr))) Inet4_NtoA(addr.GetLowBits()&0xFFFFFFFF, ipbuf);
+   if ((preferIPv4)&&(addr.IsIPv4())) Inet4_NtoA(addr.GetLowBits()&0xFFFFFFFF, ipbuf);
    else
    {
       const int MIN_IPBUF_LENGTH = 64;
-      uint32 iIdx = 0;
-      uint8 ip6[16]; addr.WriteToNetworkArray(ip6, &iIdx);
+      uint8 ip6[16]; addr.WriteToNetworkArray(ip6, NULL);
       if (Inet_NtoP(AF_INET6, (const in6_addr *) ip6, ipbuf, MIN_IPBUF_LENGTH) != NULL)
       {
-         if (iIdx > 0)
+         if (addr.IsInterfaceIndexValid())
          {
             // Add the index suffix
-            size_t ipbuflen = strlen(ipbuf);
-            muscleSnprintf(ipbuf+ipbuflen, MIN_IPBUF_LENGTH-ipbuflen, "@" UINT32_FORMAT_SPEC, iIdx);
+            const size_t ipbuflen = strlen(ipbuf);
+            muscleSnprintf(ipbuf+ipbuflen, MIN_IPBUF_LENGTH-ipbuflen, "@" UINT32_FORMAT_SPEC, addr.GetInterfaceIndex());
          }
       }
       else ipbuf[0] = '\0';
@@ -1345,17 +1805,17 @@ void Inet_NtoA(const ip_address & addr, char * ipbuf, bool preferIPv4)
 #endif
 }
 
-String Inet_NtoA(const ip_address & ipAddress, bool preferIPv4)
+String Inet_NtoA(const IPAddress & ipAddress, bool preferIPv4)
 {
    char buf[64]; 
    Inet_NtoA(ipAddress, buf, preferIPv4);
    return buf;
 }
 
-static uint32 Inet4_AtoN(const char * buf)
+static status_t Inet4_AtoN(const char * buf, IPAddress & retIP)
 {
    // net_server inexplicably doesn't have this function; so I'll just fake it
-   uint32 ret = 0;
+   uint32 bits = 0;
    int shift = 24;  // fill out the MSB first
    bool startQuad = true;
    while((shift >= 0)&&(*buf))
@@ -1363,61 +1823,61 @@ static uint32 Inet4_AtoN(const char * buf)
       if (startQuad)
       {
          uint8 quad = (uint8) atoi(buf);
-         ret |= (((uint32)quad) << shift);
+         bits |= (((uint32)quad) << shift);
          shift -= 8;
       }
       startQuad = (*buf == '.');
       buf++;
    }
-   return ret;
+   if (shift >= 0) return B_BAD_ARGUMENT;  // gotta have four dotted quads
+
+   retIP.SetIPv4AddressFromUint32(bits);
+   return B_NO_ERROR;
 }
 
 #ifndef MUSCLE_AVOID_IPV6
-static ip_address Inet6_AtoN(const char * buf, uint32 iIdx)
+static status_t Inet6_AtoN(const char * buf, uint32 iIdx, IPAddress & retIP)
 {
    struct in6_addr dst;
    if (Inet_PtoN(AF_INET6, buf, &dst) > 0)
    {
-      ip_address ret;
-      ret.ReadFromNetworkArray(dst.s6_addr, &iIdx);
-
-      return ret;
+      retIP.ReadFromNetworkArray(dst.s6_addr, iIdx ? &iIdx : NULL);
+      return B_NO_ERROR;
    }
-   else return (IsIP4Address(buf)) ? ip_address(Inet4_AtoN(buf), 0) : invalidIP;
+   else return IsIP4Address(buf) ? Inet4_AtoN(buf, retIP) : B_BAD_ARGUMENT;
 }
 #endif
 
-ip_address Inet_AtoN(const char * buf)
+IPAddress Inet_AtoN(const char * buf)
+{
+   IPAddress ret;
+   return (ret.SetFromString(buf).IsOK()) ? ret : IPAddress();
+}
+
+String IPAddress :: ToString(bool preferIPv4Style) const
+{
+   return Inet_NtoA(*this, preferIPv4Style);
+}
+
+status_t IPAddress :: SetFromString(const String & ipAddressString)
 {
 #ifdef MUSCLE_AVOID_IPV6
-   return Inet4_AtoN(buf);
+   return Inet4_AtoN(ipAddressString(), *this);
 #else
-   const char * at = strchr(buf, '@');
-   if (at)
+   const int32 atIdx = ipAddressString.IndexOf('@');
+   if (atIdx >= 0)
    {
       // Gah... Inet_PtoN() won't accept the @idx suffix, so
-      // I have to chop that out and parse it separately.  What a pain.
-      uint32 charsBeforeAt = (uint32)(at-buf);
-      char * tmp = newnothrow_array(char, 1+charsBeforeAt);
-      if (tmp)
-      {
-         memcpy(tmp, buf, charsBeforeAt);
-         tmp[charsBeforeAt] = '\0';
-         ip_address ret = Inet6_AtoN(tmp, atoi(at+1));
-         delete [] tmp;
-         return ret;
-      }
-      else
-      {
-         WARN_OUT_OF_MEMORY;
-         return invalidIP;
-      }
+      // I have to chop that out and parse it separately.
+      const String withoutSuffix = ipAddressString.Substring(0, atIdx);
+      const String suffix        = ipAddressString.Substring(atIdx+1);
+      return Inet6_AtoN(withoutSuffix(), (uint32) Atoll(suffix()), *this);
    }
-   else return Inet6_AtoN(buf, 0);
+   else return Inet6_AtoN(ipAddressString(), MUSCLE_NO_LIMIT, *this);
 #endif
 }
 
-static ip_address ResolveIP(const String & s, bool allowDNSLookups)
+static IPAddress ResolveIP(const String & s, bool allowDNSLookups)
 {
    return allowDNSLookups ? GetHostByName(s()) : Inet_AtoN(s());
 }
@@ -1425,14 +1885,14 @@ static ip_address ResolveIP(const String & s, bool allowDNSLookups)
 void IPAddressAndPort :: SetFromString(const String & s, uint16 defaultPort, bool allowDNSLookups)
 {
 #ifndef MUSCLE_AVOID_IPV6
-   int32 rBracket = s.StartsWith('[') ? s.IndexOf(']') : -1;
+   const int32 rBracket = s.StartsWith('[') ? s.IndexOf(']') : -1;
    if (rBracket >= 0)
    {
       // If there are brackets, they are assumed to surround the address part, e.g. "[::1]:9999"
       _ip = ResolveIP(s.Substring(1,rBracket), allowDNSLookups);
 
-      int32 colIdx = s.IndexOf(':', rBracket+1);
-      _port = ((colIdx >= 0)&&(muscleInRange(s()[colIdx+1], '0', '9'))) ? atoi(s()+colIdx+1) : defaultPort;
+      const int32 colIdx = s.IndexOf(':', rBracket+1);
+      _port = ((colIdx >= 0)&&(muscleInRange(s()[colIdx+1], '0', '9'))) ? (uint16)atoi(s()+colIdx+1) : defaultPort;
       return;
    }
    else if (s.GetNumInstancesOf(':') != 1)  // I assume IPv6-style address strings never have exactly one colon in them
@@ -1444,11 +1904,11 @@ void IPAddressAndPort :: SetFromString(const String & s, uint16 defaultPort, boo
 #endif
 
    // Old style IPv4 parsing (e.g. "192.168.0.1" or "192.168.0.1:2960")
-   int colIdx = s.IndexOf(':');
+   const int colIdx = s.IndexOf(':');
    if ((colIdx >= 0)&&(muscleInRange(s()[colIdx+1], '0', '9')))
    {
       _ip   = ResolveIP(s.Substring(0, colIdx), allowDNSLookups);
-      _port = atoi(s()+colIdx+1);
+      _port = (uint16) atoi(s()+colIdx+1);
    }
    else
    {
@@ -1459,21 +1919,60 @@ void IPAddressAndPort :: SetFromString(const String & s, uint16 defaultPort, boo
 
 String IPAddressAndPort :: ToString(bool includePort, bool preferIPv4Style) const
 {
-   String s = Inet_NtoA(_ip, preferIPv4Style);
+   const String s = Inet_NtoA(_ip, preferIPv4Style);
 
    if ((includePort)&&(_port > 0))
    {
       char buf[128];
 #ifdef MUSCLE_AVOID_IPV6
-      bool useIPv4Style = true;
+      const bool useIPv4Style = true;
 #else
-      bool useIPv4Style = ((preferIPv4Style)&&(IsIPv4Address(_ip)));  // FogBugz #8985
+      const bool useIPv4Style = ((preferIPv4Style)&&(_ip.IsIPv4()));  // FogBugz #8985
 #endif
-      if (useIPv4Style) muscleSprintf(buf, "%s:%u", s(), _port);
+      if (useIPv4Style) muscleSprintf(buf, "%s:%u",   s(), _port);
                    else muscleSprintf(buf, "[%s]:%u", s(), _port);
       return buf;
    }
    else return s;
+}
+
+uint32 IPAddress :: CalculateChecksum() const
+{
+   return CalculateChecksumForUint64(_lowBits) + CalculateChecksumForUint64(_highBits) + _interfaceIndex;
+}
+
+void IPAddress :: Flatten(uint8 * buffer) const
+{
+   muscleCopyOut(buffer, B_HOST_TO_LENDIAN_INT64(_lowBits));        buffer += sizeof(_lowBits);
+   muscleCopyOut(buffer, B_HOST_TO_LENDIAN_INT64(_highBits));       buffer += sizeof(_highBits);
+   muscleCopyOut(buffer, B_HOST_TO_LENDIAN_INT32(_interfaceIndex)); //buffer += sizeof(_interfaceIndex);
+}
+
+status_t IPAddress :: Unflatten(const uint8 * buffer, uint32 size)
+{
+   if (size < FlattenedSize()) return B_BAD_DATA;
+
+   _lowBits        = B_LENDIAN_TO_HOST_INT64(muscleCopyIn<uint64>(buffer)); buffer += sizeof(_lowBits);
+   _highBits       = B_LENDIAN_TO_HOST_INT64(muscleCopyIn<uint64>(buffer)); buffer += sizeof(_highBits);
+   _interfaceIndex = B_LENDIAN_TO_HOST_INT32(muscleCopyIn<uint32>(buffer)); //buffer += sizeof(_interfaceIndex);
+   return B_NO_ERROR;
+}
+
+void IPAddressAndPort :: Flatten(uint8 * buffer) const
+{
+   _ip.Flatten(buffer); buffer += _ip.FlattenedSize();
+   muscleCopyOut(buffer, B_HOST_TO_LENDIAN_INT16(_port));
+}
+
+status_t IPAddressAndPort :: Unflatten(const uint8 * buffer, uint32 size)
+{
+   if (size < FlattenedSize()) return B_BAD_DATA;
+
+   MRETURN_ON_ERROR(_ip.Unflatten(buffer, size));
+
+   buffer += _ip.FlattenedSize();
+   _port = B_LENDIAN_TO_HOST_INT16(muscleCopyIn<uint16>(buffer));
+   return B_NO_ERROR;
 }
 
 // defined here to avoid having to pull in MiscUtilityFunctions.cpp for everything
@@ -1481,39 +1980,41 @@ String GetConnectString(const String & host, uint16 port)
 {
 #ifdef MUSCLE_AVOID_IPV6
    char buf[32]; muscleSprintf(buf, ":%u", port);
-   return host + buf;
+   return host.Append(buf);
 #else
    char buf[32]; muscleSprintf(buf, "]:%u", port);
-   return host.Prepend("[") + buf;
+   return host.Prepend("[").Append(buf);
 #endif
 }
 
-static ip_address _customLocalhostIP = invalidIP;  // disabled by default
-void SetLocalHostIPOverride(const ip_address & ip) {_customLocalhostIP = ip;}
-ip_address GetLocalHostIPOverride() {return _customLocalhostIP;}
+static IPAddress _customLocalhostIP = invalidIP;  // disabled by default
+void SetLocalHostIPOverride(const IPAddress & ip) {_customLocalhostIP = ip;}
+IPAddress GetLocalHostIPOverride() {return _customLocalhostIP;}
 
-#ifdef MUSCLE_ENABLE_KEEPALIVE_API
+#ifndef MUSCLE_DISABLE_KEEPALIVE_API
 
+#ifdef __linux__
 static inline int KeepAliveMicrosToSeconds(uint64 micros) {return ((micros+(MICROS_PER_SECOND-1))/MICROS_PER_SECOND);}  // round up to the nearest second!
 static inline uint64 KeepAliveSecondsToMicros(int second) {return (second*MICROS_PER_SECOND);}
+#endif
 
 status_t SetSocketKeepAliveBehavior(const ConstSocketRef & sock, uint32 maxProbeCount, uint64 idleTime, uint64 retransmitTime)
 {
 #ifdef __linux__
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    int arg = KeepAliveMicrosToSeconds(idleTime);
-   if (setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &arg, sizeof(arg)) != 0) return B_ERROR;
+   if (setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &arg, sizeof(arg)) != 0) return B_ERRNO;
 
    arg = (int) maxProbeCount;
-   if (setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &arg, sizeof(arg)) != 0) return B_ERROR;
+   if (setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &arg, sizeof(arg)) != 0) return B_ERRNO;
 
    arg = KeepAliveMicrosToSeconds(retransmitTime);
-   if (setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &arg, sizeof(arg)) != 0) return B_ERROR;
+   if (setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &arg, sizeof(arg)) != 0) return B_ERRNO;
 
    arg = (maxProbeCount>0);  // true iff we want keepalive enabled
-   if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (const sockopt_arg *) &arg, sizeof(arg)) != 0) return B_ERROR;
+   if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (const sockopt_arg *) &arg, sizeof(arg)) != 0) return B_ERRNO;
 
    return B_NO_ERROR;
 #else
@@ -1522,38 +2023,38 @@ status_t SetSocketKeepAliveBehavior(const ConstSocketRef & sock, uint32 maxProbe
    (void) maxProbeCount;
    (void) idleTime;
    (void) retransmitTime;
-   return B_ERROR;
+   return B_UNIMPLEMENTED;
 #endif
 }
 
 status_t GetSocketKeepAliveBehavior(const ConstSocketRef & sock, uint32 * retMaxProbeCount, uint64 * retIdleTime, uint64 * retRetransmitTime)
 {
 #ifdef __linux__
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    int val;
    muscle_socklen_t valLen;
    if (retMaxProbeCount)
    {
       *retMaxProbeCount = 0;
-      valLen = sizeof(val); if (getsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (sockopt_arg *) &val, &valLen) != 0) return B_ERROR;
+      valLen = sizeof(val); if (getsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (sockopt_arg *) &val, &valLen) != 0) return B_ERRNO;
       if (val != 0)  // we only set *retMaxProbeCount if SO_KEEPALIVE is enabled, otherwise we return 0 to indicate no-keepalive
       {
-         valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPCNT, (sockopt_arg *) &val, &valLen) != 0) return B_ERROR;
+         valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPCNT, (sockopt_arg *) &val, &valLen) != 0) return B_ERRNO;
          *retMaxProbeCount = val;
       } 
    }
 
    if (retIdleTime)
    {
-      valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPIDLE, (sockopt_arg *) &val, &valLen) != 0) return B_ERROR;
+      valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPIDLE, (sockopt_arg *) &val, &valLen) != 0) return B_ERRNO;
       *retIdleTime = KeepAliveSecondsToMicros(val);
    }
 
    if (retRetransmitTime)
    {
-      valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPINTVL, (sockopt_arg *) &val, &valLen) != 0) return B_ERROR;
+      valLen = sizeof(val); if (getsockopt(fd, SOL_TCP, TCP_KEEPINTVL, (sockopt_arg *) &val, &valLen) != 0) return B_ERRNO;
       *retRetransmitTime = KeepAliveSecondsToMicros(val);
    }
 
@@ -1564,7 +2065,7 @@ status_t GetSocketKeepAliveBehavior(const ConstSocketRef & sock, uint32 * retMax
    (void) retMaxProbeCount;
    (void) retIdleTime;
    (void) retRetransmitTime;
-   return B_ERROR;
+   return B_UNIMPLEMENTED;
 #endif
 }
 
@@ -1574,12 +2075,12 @@ status_t GetSocketKeepAliveBehavior(const ConstSocketRef & sock, uint32 * retMax
 
 status_t SetSocketMulticastToSelf(const ConstSocketRef & sock, bool multicastToSelf)
 {
-   uint8 toSelf = (uint8) multicastToSelf;
-   int fd = sock.GetFileDescriptor();
+   const int toSelf = multicastToSelf ? 1 : 0;
+   const int fd = sock.GetFileDescriptor();
 #ifdef MUSCLE_AVOID_IPV6
-   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IP,   IP_MULTICAST_LOOP,   (const sockopt_arg *) &toSelf, sizeof(toSelf)) == 0)) ? B_NO_ERROR : B_ERROR;
+   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IP,   IP_MULTICAST_LOOP,   (const sockopt_arg *) &toSelf, sizeof(toSelf)) == 0)) ? B_NO_ERROR : B_ERRNO;
 #else
-   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, (const sockopt_arg *) &toSelf, sizeof(toSelf)) == 0)) ? B_NO_ERROR : B_ERROR;
+   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, (const sockopt_arg *) &toSelf, sizeof(toSelf)) == 0)) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
@@ -1587,7 +2088,7 @@ bool GetSocketMulticastToSelf(const ConstSocketRef & sock)
 {
    uint8 toSelf;
    muscle_socklen_t size = sizeof(toSelf);
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
 #ifdef MUSCLE_AVOID_IPV6
    return ((fd>=0)&&(getsockopt(fd, IPPROTO_IP,   IP_MULTICAST_LOOP,   (sockopt_arg *) &toSelf, &size) == 0)&&(size == sizeof(toSelf))&&(toSelf));
 #else
@@ -1597,12 +2098,12 @@ bool GetSocketMulticastToSelf(const ConstSocketRef & sock)
 
 status_t SetSocketMulticastTimeToLive(const ConstSocketRef & sock, uint8 ttl)
 {
-   int fd = sock.GetFileDescriptor();
-   int ttl_arg = (int) ttl;  // MacOS/X won't take a uint8
+   const int fd = sock.GetFileDescriptor();
+   const int ttl_arg = (int) ttl;
 #ifdef MUSCLE_AVOID_IPV6
-   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IP,   IP_MULTICAST_TTL,    (const sockopt_arg *) &ttl_arg, sizeof(ttl_arg)) == 0)) ? B_NO_ERROR : B_ERROR;
+   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IP,   IP_MULTICAST_TTL,    (const sockopt_arg *) &ttl_arg, sizeof(ttl_arg)) == 0)) ? B_NO_ERROR : B_ERRNO;
 #else
-   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (const sockopt_arg *) &ttl_arg, sizeof(ttl_arg)) == 0)) ? B_NO_ERROR : B_ERROR;
+   return ((fd>=0)&&(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (const sockopt_arg *) &ttl_arg, sizeof(ttl_arg)) == 0)) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
 
@@ -1610,11 +2111,11 @@ uint8 GetSocketMulticastTimeToLive(const ConstSocketRef & sock)
 {
    int ttl = 0;
    muscle_socklen_t size = sizeof(ttl);
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
 #ifdef MUSCLE_AVOID_IPV6
-   return ((fd>=0)&&(getsockopt(fd, IPPROTO_IP,   IP_MULTICAST_TTL,    (sockopt_arg *) &ttl, &size) == 0)&&(size == sizeof(ttl))) ? ttl : 0;
+   return ((fd>=0)&&(getsockopt(fd, IPPROTO_IP,   IP_MULTICAST_TTL,    (sockopt_arg *) &ttl, &size) == 0)&&(size == sizeof(ttl))) ? (uint8)ttl : 0;
 #else
-   return ((fd>=0)&&(getsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (sockopt_arg *) &ttl, &size) == 0)&&(size == sizeof(ttl))) ? ttl : 0;
+   return ((fd>=0)&&(getsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (sockopt_arg *) &ttl, &size) == 0)&&(size == sizeof(ttl))) ? (uint8)ttl : 0;
 #endif
 }
 
@@ -1622,46 +2123,46 @@ uint8 GetSocketMulticastTimeToLive(const ConstSocketRef & sock)
 
 // IPv4 multicast implementation
 
-status_t SetSocketMulticastSendInterfaceAddress(const ConstSocketRef & sock, const ip_address & address)
+status_t SetSocketMulticastSendInterfaceAddress(const ConstSocketRef & sock, const IPAddress & address)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    struct in_addr localInterface; memset(&localInterface, 0, sizeof(localInterface));
-   localInterface.s_addr = htonl(address);
-   return (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, (const sockopt_arg *) &localInterface, sizeof(localInterface)) == 0) ? B_NO_ERROR : B_ERROR;
+   localInterface.s_addr = htonl(address.GetIPv4AddressAsUint32());
+   return (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, (const sockopt_arg *) &localInterface, sizeof(localInterface)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
-ip_address GetSocketMulticastSendInterfaceAddress(const ConstSocketRef & sock)
+IPAddress GetSocketMulticastSendInterfaceAddress(const ConstSocketRef & sock)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return invalidIP;
 
    struct in_addr localInterface; memset(&localInterface, 0, sizeof(localInterface));
    muscle_socklen_t len = sizeof(localInterface);
-   return ((getsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, (sockopt_arg *) &localInterface, &len) == 0)&&(len == sizeof(localInterface))) ? ntohl(localInterface.s_addr) : invalidIP;
+   return ((getsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, (sockopt_arg *) &localInterface, &len) == 0)&&(len == sizeof(localInterface))) ? IPAddress(ntohl(localInterface.s_addr)) : invalidIP;
 }
 
-status_t AddSocketToMulticastGroup(const ConstSocketRef & sock, const ip_address & groupAddress, const ip_address & localInterfaceAddress)
+status_t AddSocketToMulticastGroup(const ConstSocketRef & sock, const IPAddress & groupAddress, const IPAddress & localInterfaceAddress)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    struct ip_mreq req; memset(&req, 0, sizeof(req));
-   req.imr_multiaddr.s_addr = htonl(groupAddress);
-   req.imr_interface.s_addr = htonl(localInterfaceAddress);
-   return (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERROR;
+   req.imr_multiaddr.s_addr = htonl(groupAddress.GetIPv4AddressAsUint32());
+   req.imr_interface.s_addr = htonl(localInterfaceAddress.GetIPv4AddressAsUint32());
+   return (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
-status_t RemoveSocketFromMulticastGroup(const ConstSocketRef & sock, const ip_address & groupAddress, const ip_address & localInterfaceAddress)
+status_t RemoveSocketFromMulticastGroup(const ConstSocketRef & sock, const IPAddress & groupAddress, const IPAddress & localInterfaceAddress)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    struct ip_mreq req; memset(&req, 0, sizeof(req));
-   req.imr_multiaddr.s_addr = htonl(groupAddress);
-   req.imr_interface.s_addr = htonl(localInterfaceAddress);
-   return (setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERROR;
+   req.imr_multiaddr.s_addr = htonl(groupAddress.GetIPv4AddressAsUint32());
+   req.imr_interface.s_addr = htonl(localInterfaceAddress.GetIPv4AddressAsUint32());
+   return (setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
 #else  // end IPv4 multicast, begin IPv6 multicast
@@ -1676,16 +2177,16 @@ status_t RemoveSocketFromMulticastGroup(const ConstSocketRef & sock, const ip_ad
 
 status_t SetSocketMulticastSendInterfaceIndex(const ConstSocketRef & sock, uint32 interfaceIndex)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
-   int idx = interfaceIndex;
-   return (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, (const sockopt_arg *) &idx, sizeof(idx)) == 0) ? B_NO_ERROR : B_ERROR;
+   const int idx = (interfaceIndex == MUSCLE_NO_LIMIT) ? 0 : (int) interfaceIndex;
+   return (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, (const sockopt_arg *) &idx, sizeof(idx)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
 int32 GetSocketMulticastSendInterfaceIndex(const ConstSocketRef & sock)
 {
-   int fd = sock.GetFileDescriptor();
+   const int fd = sock.GetFileDescriptor();
    if (fd < 0) return -1;
 
    int idx = 0;
@@ -1693,32 +2194,32 @@ int32 GetSocketMulticastSendInterfaceIndex(const ConstSocketRef & sock)
    return ((getsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, (sockopt_arg *) &idx, &len) == 0)&&(len == sizeof(idx))) ? idx : -1;
 }
 
-status_t AddSocketToMulticastGroup(const ConstSocketRef & sock, const ip_address & groupAddress)
+status_t AddSocketToMulticastGroup(const ConstSocketRef & sock, const IPAddress & groupAddress)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    struct ipv6_mreq req; memset(&req, 0, sizeof(req));
    uint32 interfaceIdx;
    groupAddress.WriteToNetworkArray((uint8*)(&req.ipv6mr_multiaddr), &interfaceIdx);
    req.ipv6mr_interface = interfaceIdx;
-   return (setsockopt(fd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (setsockopt(fd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
-status_t RemoveSocketFromMulticastGroup(const ConstSocketRef & sock, const ip_address & groupAddress)
+status_t RemoveSocketFromMulticastGroup(const ConstSocketRef & sock, const IPAddress & groupAddress)
 {
-   int fd = sock.GetFileDescriptor();
-   if (fd < 0) return B_ERROR;
+   const int fd = sock.GetFileDescriptor();
+   if (fd < 0) return B_BAD_ARGUMENT;
 
    struct ipv6_mreq req; memset(&req, 0, sizeof(req));
    uint32 interfaceIdx;
    groupAddress.WriteToNetworkArray((uint8*)(&req.ipv6mr_multiaddr), &interfaceIdx);
    req.ipv6mr_interface = interfaceIdx;
-   return (setsockopt(fd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERROR;
+   return (setsockopt(fd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, (const sockopt_arg *) &req, sizeof(req)) == 0) ? B_NO_ERROR : B_ERRNO;
 }
 
 #endif  // IPv6 multicast
 
 #endif  // !MUSCLE_AVOID_MULTICAST_API
 
-}; // end namespace muscle
+} // end namespace muscle

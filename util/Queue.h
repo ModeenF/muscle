@@ -3,30 +3,33 @@
 #ifndef MuscleQueue_h
 #define MuscleQueue_h
 
-#include "support/MuscleSupport.h"
-
-#ifdef MUSCLE_USE_CPLUSPLUS11
-# include<initializer_list>
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+# include <initializer_list>
 #endif
+
+#include "support/MuscleSupport.h"
 
 namespace muscle {
 
 #ifndef SMALL_QUEUE_SIZE
+/** Specifies the number of items that should be held "inline" inside a Queue object.  Any Queue will be able to hold up to this many items without having to do a separate heap allocation.  Defaults to 3 if not specified otherwise by the compiler (e.g. via -DSMALL_QUEUE_SIZE=5) */
 # define SMALL_QUEUE_SIZE 3
 #endif
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
+#ifndef DOXYGEN_SHOULD_IGNORE_THIS
+# ifndef MUSCLE_AVOID_CPLUSPLUS11
 // Enable move semantics (when possible) for C++11
-# define QQ_UniversalSinkItemRef template<typename ItemParam>
-# define QQ_SinkItemParam  ItemParam &&
-# define QQ_PlunderItem(item) std::move(item)
-# define QQ_ForwardItem(item) std::forward<ItemParam>(item)
-#else
+#  define QQ_UniversalSinkItemRef template<typename ItemParam>
+#  define QQ_SinkItemParam  ItemParam &&
+#  define QQ_PlunderItem(item) std::move(item)
+#  define QQ_ForwardItem(item) std::forward<ItemParam>(item)
+# else
 // For earlier versions of C++, use the traditional copy/ref semantics
-# define QQ_UniversalSinkItemRef
-# define QQ_SinkItemParam const ItemType &
-# define QQ_PlunderItem(item) (item)
-# define QQ_ForwardItem(item) (item)
+#  define QQ_UniversalSinkItemRef
+#  define QQ_SinkItemParam const ItemType &
+#  define QQ_PlunderItem(item) (item)
+#  define QQ_ForwardItem(item) (item)
+# endif
 #endif
 
 /** This class implements a templated double-ended-queue data structure.
@@ -40,49 +43,74 @@ public:
    /** Default constructor.  */
    Queue();
 
-   /** Copy constructor. */
-   Queue(const Queue& copyMe);
+   /** @copydoc DoxyTemplate::DoxyTemplate(const DoxyTemplate &) */
+   Queue(const Queue& rhs);
 
    /** Destructor. */
    virtual ~Queue();
 
-   /** Assigment operator. */
-   Queue & operator=(const Queue & from);
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &) */
+   Queue & operator=(const Queue & rhs);
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
-   /** Initialize list Constructor */
-   Queue(const std::initializer_list<ItemType> & list) : _queue(NULL), _queueSize(0), _itemCount(0) {(void) AddTailMulti(list);}
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** Initializer-list Constructor (C++11 only)
+     * @param list the initializer-list of items to add to this Queue
+     */
+   Queue(const std::initializer_list<ItemType> & list) 
+      : _queue(NULL)
+      , _queueSize(0)
+      , _itemCount(0) 
+   {
+      (void) AddTailMulti(list);
+   }
 
-   /** C++11 Move Constructor */
-   Queue(Queue && rhs) : _queue(NULL), _queueSize(0), _itemCount(0) {if (rhs._queue == rhs._smallQueue) *this = rhs; else SwapContents(rhs);}
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
+   Queue(Queue && rhs) 
+      : _queue(NULL)
+      , _queueSize(0)
+      , _itemCount(0) 
+   {
+      if (rhs._queue == rhs._smallQueue) *this = rhs; else SwapContents(rhs);
+   }
 
-   /** C++11 Move Assignment Operator */
+   /** @copydoc DoxyTemplate::operator=(DoxyTemplate &&) */
    Queue & operator =(Queue && rhs) {if (rhs._queue == rhs._smallQueue) *this = rhs; else SwapContents(rhs); return *this;}
 #endif
 
-   /** Equality operator.  Queues are equal if they are the same length, and
-     * every nth item in this queue is == to the corresponding item in (rhs). */
+   /** @copydoc DoxyTemplate::operator==(const DoxyTemplate &) const */
    bool operator==(const Queue & rhs) const;
 
-   /** Returns the negation of the equality operator */
+   /** @copydoc DoxyTemplate::operator!=(const DoxyTemplate &) const */
    bool operator!=(const Queue & rhs) const {return !(*this == rhs);}
+
+   /** @copydoc DoxyTemplate::operator<(const DoxyTemplate &) const */
+   bool operator<(const Queue & rhs) const {return (lexicographicalCompare(rhs) < 0);}
+
+   /** @copydoc DoxyTemplate::operator<=(const DoxyTemplate &) const */
+   bool operator<=(const Queue & rhs) const {return (lexicographicalCompare(rhs) <= 0);}
+
+   /** @copydoc DoxyTemplate::operator>(const DoxyTemplate &) const */
+   bool operator>(const Queue & rhs) const {return (lexicographicalCompare(rhs) > 0);}
+
+   /** @copydoc DoxyTemplate::operator>=(const DoxyTemplate &) const */
+   bool operator>=(const Queue & rhs) const {return (lexicographicalCompare(rhs) >= 0);}
 
    /** Similar to the assignment operator, except this method returns a status code.
      * @param rhs This Queue's contents will become a copy of (rhs)'s items.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory?).
+     * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    status_t CopyFrom(const Queue<ItemType> & rhs);
 
    /** Appends (item) to the end of the queue.  Queue size grows by one.
     *  @param item The item to append. 
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
-   QQ_UniversalSinkItemRef status_t AddTail(QQ_SinkItemParam item) {return (AddTailAndGet(QQ_ForwardItem(item)) != NULL) ? B_NO_ERROR : B_ERROR;}
+   QQ_UniversalSinkItemRef status_t AddTail(QQ_SinkItemParam item) {return (AddTailAndGet(QQ_ForwardItem(item)) != NULL) ? B_NO_ERROR : B_OUT_OF_MEMORY;}
 
-   /** As above, except that a default item is appended.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+   /** As above, except that a default-initialized item is appended.
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
-   status_t AddTail() {return (AddTailAndGet() != NULL) ? B_NO_ERROR : B_ERROR;}
+   status_t AddTail() {return AddTail(GetDefaultItem());}
 
    /** Appends some or all items in (queue) to the end of our queue.  Queue size
     *  grows by at most (queue.GetNumItems()).
@@ -93,7 +121,7 @@ public:
     *  @param queue The queue to append to our queue.
     *  @param startIndex Index in (queue) to start adding at.  Default to zero.
     *  @param numItems Number of items to add.  If this number is too large, it will be capped appropriately.  Default is to add all items.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t AddTailMulti(const Queue<ItemType> & queue, uint32 startIndex = 0, uint32 numItems = MUSCLE_NO_LIMIT);
 
@@ -102,23 +130,30 @@ public:
     *  more efficient.  On success, the queue size grows by (numItems).
     *  @param items Pointer to an array of items to add to the Queue.
     *  @param numItems Number of items in the array
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t AddTailMulti(const ItemType * items, uint32 numItems);
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
    /** Available in C++11 only:  Appends the items specified in the initializer
     *  list to this Queue.
     *  @param list The C++11 initializer list of items (e.g. {1,2,3,4,5} to add.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    *  @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t AddTailMulti(const std::initializer_list<ItemType> & list)
    {
-      if (EnsureCanAdd(list.size()) != B_NO_ERROR) return B_ERROR;
-      for (auto i : list) (void) AddTail(i);
+      MRETURN_ON_ERROR(EnsureCanAdd((uint32) list.size()));
+      for (auto i : list) (void) AddTail(i);  // can't fail, because we allocated the necessary space on the previous line
       return B_NO_ERROR;
    }
 #endif
+
+   /** Convenience method:  Appends (item) to the end of the queue, if no object equal to (item) is already present in the Queue.
+    *  @param item The item to append. 
+    *  @note this method runs in O(N) time, so be careful about using it on large Queues (maybe use a Hashtable instead?)
+    *  @return B_NO_ERROR on success (or if an equivalent item was already present), or B_OUT_OF_MEMORY on failure.
+    */
+   QQ_UniversalSinkItemRef status_t AddTailIfNotAlreadyPresent(QQ_SinkItemParam item) {return Contains(item) ? B_NO_ERROR : AddTail(item);}
 
    /** Appends (item) to the end of the queue.  Queue size grows by one.
     *  @param item The item to append. 
@@ -126,21 +161,22 @@ public:
     */
    QQ_UniversalSinkItemRef ItemType * AddTailAndGet(QQ_SinkItemParam item);
 
-   /** As above, except that a default item is appended.
+   /** As above, except that an item is appended.
     *  @return A pointer to the appended item on success, or a NULL pointer on failure.
+    *  @note that for POD ItemTypes, the appended item will be in an unitialized state.
     */
    ItemType * AddTailAndGet();
 
    /** Prepends (item) to the head of the queue.  Queue size grows by one.
     *  @param item The item to prepend. 
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
-   QQ_UniversalSinkItemRef status_t AddHead(QQ_SinkItemParam item) {return (AddHeadAndGet(QQ_ForwardItem(item)) != NULL) ? B_NO_ERROR : B_ERROR;}
+   QQ_UniversalSinkItemRef status_t AddHead(QQ_SinkItemParam item) {return (AddHeadAndGet(QQ_ForwardItem(item)) != NULL) ? B_NO_ERROR : B_OUT_OF_MEMORY;}
 
-   /** As above, except a default item is prepended.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+   /** As above, except that a default-initialized item is prepended.
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
-   status_t AddHead() {return (AddHeadAndGet() != NULL) ? B_NO_ERROR : B_ERROR;}
+   status_t AddHead() {return AddHead(GetDefaultItem());}
 
    /** Concatenates (queue) to the head of our queue.
     *  Our queue size grows by at most (queue.GetNumItems()).
@@ -151,7 +187,7 @@ public:
     *  @param queue The queue to prepend to our queue.
     *  @param startIndex Index in (queue) to start adding at.  Default to zero.
     *  @param numItems Number of items to add.  If this number is too large, it will be capped appropriately.  Default is to add all items.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t AddHeadMulti(const Queue<ItemType> & queue, uint32 startIndex = 0, uint32 numItems = MUSCLE_NO_LIMIT);
 
@@ -159,9 +195,16 @@ public:
     *  The semantics are the same as for AddHeadMulti(const Queue<ItemType> &).
     *  @param items Pointer to an array of items to add to the Queue.
     *  @param numItems Number of items in the array
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t AddHeadMulti(const ItemType * items, uint32 numItems);
+
+   /** Convenience method:  Prepends (item) to the head of the queue, if no object equal to (item) is already present in the Queue.
+    *  @param item The item to prepend. 
+    *  @note this method runs in O(N) time, so be careful about using it on large Queues (maybe use a Hashtable instead?)
+    *  @return B_NO_ERROR on success (or if an equivalent item was already present), or B_OUT_OF_MEMORY on failure.
+    */
+   QQ_UniversalSinkItemRef status_t AddHeadIfNotAlreadyPresent(QQ_SinkItemParam item) {return Contains(item) ? B_NO_ERROR : AddHead(item);}
 
    /** Prepends (item) to the beginning of the queue.  Queue size grows by one.
     *  @param item The item to prepend. 
@@ -169,13 +212,14 @@ public:
     */
    QQ_UniversalSinkItemRef ItemType * AddHeadAndGet(QQ_SinkItemParam item);
 
-   /** As above, except that a default item is prepended.
-    *  @return A pointer to the prepend item on success, or a NULL pointer on failure.
+   /** As above, except that an item is prepended.
+    *  @return A pointer to the prepended item on success, or a NULL pointer on failure.
+    *  @note that for POD ItemTypes, the prepended item will be in an unitialized state.
     */
    ItemType * AddHeadAndGet();
 
    /** Removes the item at the head of the queue.
-    *  @return B_NO_ERROR on success, B_ERROR if the queue was empty.
+    *  @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the queue was already empty.
     */
    status_t RemoveHead();
 
@@ -192,18 +236,18 @@ public:
 
    /** Removes the item at the head of the queue and places it into (returnItem).
     *  @param returnItem On success, the removed item is copied into this object.
-    *  @return B_NO_ERROR on success, B_ERROR if the queue was empty
+    *  @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the queue was empty
     */
    status_t RemoveHead(ItemType & returnItem);
 
    /** Removes the item at the tail of the queue.
-    *  @return B_NO_ERROR on success, B_ERROR if the queue was empty.
+    *  @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the queue was empty.
     */
    status_t RemoveTail();
 
    /** Removes the item at the tail of the queue and places it into (returnItem).
     *  @param returnItem On success, the removed item is copied into this object.
-    *  @return B_NO_ERROR on success, B_ERROR if the queue was empty
+    *  @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the queue was empty
     */
    status_t RemoveTail(ItemType & returnItem);
 
@@ -221,7 +265,7 @@ public:
    /** Removes the item at the (index)'th position in the queue.
     *  @param index Which item to remove--can range from zero 
     *               (head of the queue) to GetNumItems()-1 (tail of the queue).
-    *  @return B_NO_ERROR on success, B_ERROR on failure (i.e. bad index)
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (i.e. bad index)
     *  Note that this method is somewhat inefficient for indices that
     *  aren't at the head or tail of the queue (i.e. O(n) time)
     */
@@ -231,7 +275,7 @@ public:
     *  @param index Which item to remove--can range from zero 
     *               (head of the queue) to (GetNumItems()-1) (tail of the queue).
     *  @param returnItem On success, the removed item is copied into this object.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (i.e. bad index)
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (i.e. bad index)
     */
    status_t RemoveItemAt(uint32 index, ItemType & returnItem);
 
@@ -245,7 +289,7 @@ public:
     *  @param index Which item to get--can range from zero 
     *               (head of the queue) to (GetNumItems()-1) (tail of the queue).
     *  @param returnItem On success, the retrieved item is copied into this object.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (e.g. bad index)
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (e.g. bad index)
     */
    status_t GetItemAt(uint32 index, ItemType & returnItem) const;
 
@@ -272,26 +316,29 @@ public:
      */
    const ItemType & GetWithDefault(uint32 index) const {return (index<_itemCount)?(*this)[index]:GetDefaultItem();}
 
-   /** Returns a reference to the (index)'th item in the Queue, if such an item exists,
+   /** Returns a copy of the (index)'th item in the Queue, if such an item exists,
      * or the supplied default item if it doesn't.  Unlike the [] operator,
      * it is okay to call this method with any value of (index).
      * @param index Which item to return.
      * @param defItem An item to return if (index) isn't a valid value.
+     * @note that this method returns by-value rather than by-reference, because
+     *       returning (defItem) by-reference makes it too easy to call this method
+     *       in a way that would cause it to return a dangling-reference-to-a-temporary-object.
      */
-   const ItemType & GetWithDefault(uint32 index, const ItemType & defItem) const {return (index<_itemCount)?(*this)[index]:defItem;}
+   ItemType GetWithDefault(uint32 index, const ItemType & defItem) const {return (index<_itemCount)?(*this)[index]:defItem;}
 
    /** Replaces the (index)'th item in the queue with (newItem).
     *  @param index Which item to replace--can range from zero 
     *               (head of the queue) to (GetNumItems()-1) (tail of the queue).
     *  @param newItem The item to place into the queue at the (index)'th position.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (e.g. bad index)
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (e.g. bad index)
     */
    QQ_UniversalSinkItemRef status_t ReplaceItemAt(uint32 index, QQ_SinkItemParam newItem);
  
-   /** As above, except the specified item is replaced with a default item.
+   /** As above, except the specified item is replaced with a default-initialized item.
     *  @param index Which item to replace--can range from zero 
     *               (head of the queue) to (GetNumItems()-1) (tail of the queue).
-    *  @return B_NO_ERROR on success, B_ERROR on failure (e.g. bad index)
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (e.g. bad index)
     */
    status_t ReplaceItemAt(uint32 index) {return ReplaceItemAt(index, GetDefaultItem());}
 
@@ -300,13 +347,13 @@ public:
     *  as AddTail(item).  Other positions will involve an O(n) shifting of contents.
     *  @param index The position at which to insert the new item.
     *  @param newItem The item to insert into the queue.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (i.e. bad index).
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (i.e. bad index).
     */
    QQ_UniversalSinkItemRef status_t InsertItemAt(uint32 index, QQ_SinkItemParam newItem);
    
-   /** As above, except that a default item is inserted.
+   /** As above, except that a default-initialized item is inserted.
     *  @param index The position at which to insert the new item.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (i.e. bad index).
+    *  @return B_NO_ERROR on success, or B_BAD_ARGUMENT on failure (i.e. bad index).
     */
    status_t InsertItemAt(uint32 index) {return InsertItemAt(index, GetDefaultItem());}
 
@@ -320,7 +367,7 @@ public:
     *  @param queue The queue whose items are to be inserted into this queue.
     *  @param startIndex Index in (queue) to start reading items from.  Defaults to zero.
     *  @param numNewItems Number of items to insert.  If this number is too large, it will be capped appropriately.  Default is to add all items.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t InsertItemsAt(uint32 index, const Queue<ItemType> & queue, uint32 startIndex = 0, uint32 numNewItems = MUSCLE_NO_LIMIT);
 
@@ -333,7 +380,7 @@ public:
     *  @param index The index into this Queue that items from (queue) should be inserted at.
     *  @param items Pointer to the items to insert into this queue.
     *  @param numNewItems Number of items to insert.
-    *  @return B_NO_ERROR on success, B_ERROR on failure (out of memory)
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t InsertItemsAt(uint32 index, const ItemType * items, uint32 numNewItems);
 
@@ -387,16 +434,22 @@ public:
 
    /** Returns a read-only reference the head item in the queue, or to the supplied default item if the Queue is empty.
      * @param defaultItem An item to return if the Queue is empty.
+     * @note that this method returns by-value rather than by-reference, because
+     *       returning (defItem) by-reference makes it too easy to call this method
+     *       in a way that would cause it to return a dangling-reference-to-a-temporary-object.
      */
-   const ItemType & HeadWithDefault(const ItemType & defaultItem) const {return HasItems() ? Head() : defaultItem;}
+   ItemType HeadWithDefault(const ItemType & defaultItem) const {return HasItems() ? Head() : defaultItem;}
 
    /** Returns a read-only reference the tail item in the queue, or a default item if the Queue is empty. */
    const ItemType & TailWithDefault() const {return HasItems() ? Tail() : GetDefaultItem();}
 
    /** Returns a read-only reference the tail item in the queue, or to the supplied default item if the Queue is empty.
      * @param defaultItem An item to return if the Queue is empty.
+     * @note that this method returns by-value rather than by-reference, because
+     *       returning (defItem) by-reference makes it too easy to call this method
+     *       in a way that would cause it to return a dangling-reference-to-a-temporary-object.
      */
-   const ItemType & TailWithDefault(const ItemType & defaultItem) const {return HasItems() ? Tail() : defaultItem;}
+   ItemType TailWithDefault(const ItemType & defaultItem) const {return HasItems() ? Tail() : defaultItem;}
 
    /** Returns a writable reference the head item in the queue.  You must not call this when the queue is empty! */
    ItemType & Head() {return *GetItemAtUnchecked(0);}
@@ -410,11 +463,15 @@ public:
    /** Returns a pointer to the last item in the queue, or NULL if the queue is empty */
    ItemType * TailPointer() const {return GetItemAt(_itemCount-1);}
 
-   /** Convenient read-only array-style operator (be sure to only use valid indices!) */
-   const ItemType & operator [](uint32 Index) const; 
+   /** Convenient read-only array-style operator (be sure to only use valid indices!)
+     * @param index the index of the item to get (between 0 and (GetNumItems()-1), inclusive)
+     */
+   const ItemType & operator [](uint32 index) const; 
 
-   /** Convenient read-write array-style operator (be sure to only use valid indices!) */
-   ItemType & operator [](uint32 Index);
+   /** Convenient read-write array-style operator (be sure to only use valid indices!)
+     * @param index the index of the item to get (between 0 and (GetNumItems()-1), inclusive)
+     */
+   ItemType & operator [](uint32 index);
 
    /** Makes sure there is enough space allocated for at least (numSlots) items.  
     *  You only need to call this if you wish to minimize the number of data re-allocations done,
@@ -432,7 +489,7 @@ public:
     *  @param allowShrink If set to true, the array will be reallocated even if the new array size is smaller than the 
     *                     existing size.  Defaults to false (i.e. only reallocate if the desired size is greater than
     *                     the existing size).
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory)
+    *  @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    status_t EnsureSize(uint32 numSlots, bool setNumItems = false, uint32 extraReallocItems = 0, bool allowShrink = false) {return EnsureSizeAux(numSlots, setNumItems, extraReallocItems, NULL, allowShrink);}
 
@@ -440,7 +497,7 @@ public:
      * extra space allocated to fit another (numExtraSlots) items without having to do a reallocation.
      * If it doesn't, it will do a reallocation so that it does have at least that much extra space.
      * @param numExtraSlots How many extra items we want to ensure room for.  Defaults to 1.
-     * @returns B_NO_ERROR if the extra space now exists, or B_ERROR on failure (out of memory?)
+     * @returns B_NO_ERROR if the extra space now exists, or B_OUT_OF_MEMORY on failure.
      */
    status_t EnsureCanAdd(uint32 numExtraSlots = 1) {return EnsureSize(GetNumItems()+numExtraSlots);}
 
@@ -448,7 +505,7 @@ public:
      * equal to the size of the data it contains, plus (numExtraSlots).
      * @param numExtraSlots the number of extra empty slots the Queue should contains after the shrink.
      *                      Defaults to zero.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure.
+     * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    status_t ShrinkToFit(uint32 numExtraSlots = 0) {return EnsureSize(GetNumItems()+numExtraSlots, false, 0, true);}
 
@@ -555,39 +612,54 @@ public:
    uint32 RemoveAllInstancesOf(const ItemType & val);
 
    /**
-    *  Goes through the array and removes all duplicate items.
-    *  @param assumeAlreadySorted If set to true, the algorithm will assume the array is
-    *                             already sorted by value.  Otherwise it will sort the array
-    *                             (so that duplicates are next to each other) before doing the
-    *                             duplicate-removal step.  Defaults to false.
-    *  @return The number of duplicate items that were found and removed during this operation.
+    *  Sorts the Queue, then iterates through the items and 
+    *  removes any duplicate items (i.e. any items that are == to each other)
+    *  such that there is only at most a single instance of any given value
+    *  left in the Queue.
+    *  @return The number of duplicate items that were found and 
+    *          removed during this operation.
     */
-   uint32 RemoveDuplicateItems(bool assumeAlreadySorted = false);
+   uint32 RemoveDuplicateItems();
+
+   /** Same as RemoveDuplicateItems(), except this version assumes that
+    *  the items are already in sorted order.
+    *  @return The number of duplicate items that were found and 
+    *          removed during this operation.
+    */ 
+   uint32 RemoveSortedDuplicateItems();
 
    /**
     *  Goes through the array and removes the first item that is equal to (val).
     *  @param val the item to look for and remove
-    *  @return B_NO_ERROR if a matching item was found and removed, or B_ERROR if it wasn't found.
+    *  @return B_NO_ERROR if a matching item was found and removed, or B_DATA_NOT_FOUND if it wasn't found.
     */
    status_t RemoveFirstInstanceOf(const ItemType & val);
 
    /**
     *  Goes through the array and removes the last item that is equal to (val).
     *  @param val the item to look for and remove
-    *  @return B_NO_ERROR if a matching item was found and removed, or B_ERROR if it wasn't found.
+    *  @return B_NO_ERROR if a matching item was found and removed, or B_DATA_NOT_FOUND if it wasn't found.
     */
    status_t RemoveLastInstanceOf(const ItemType & val);
 
-   /** Returns true iff the first item in our queue is equal to (prefix). */
+   /** Returns true iff the first item in our queue is equal to (prefix). 
+     * @param prefix the item to check for at the head of this Queue
+     */
    bool StartsWith(const ItemType & prefix) const {return ((HasItems())&&(Head() == prefix));}
 
-   /** Returns true iff the (prefixQueue) is a prefix of this queue. */
+   /** Returns true iff the (prefixQueue) is a prefix of this queue. 
+     * @param prefixQueue the items to check for at the head of this Queue
+     */
    bool StartsWith(const Queue<ItemType> & prefixQueue) const;
 
-   /** Returns true iff the last item in our queue is equal to (suffix). */
+   /** Returns true iff the last item in our queue is equal to (suffix).
+     * @param suffix the item to check for at the tail of this Queue
+     */
    bool EndsWith(const ItemType & suffix) const {return ((HasItems())&&(Tail() == suffix));}
 
-   /** Returns true iff the (suffixQueue) is a suffix of this queue. */
+   /** Returns true iff the (suffixQueue) is a suffix of this queue. 
+     * @param suffixQueue the list of items to check for at the tail of this Queue
+     */
    bool EndsWith(const Queue<ItemType> & suffixQueue) const;
 
    /**
@@ -602,7 +674,13 @@ public:
     */ 
    ItemType * GetArrayPointer(uint32 whichArray, uint32 & retLength) {return const_cast<ItemType *>(GetArrayPointerAux(whichArray, retLength));} 
 
-   /** Read-only version of the above */
+   /** Read-only version of the above
+    *  @param whichArray Index of the internal array to return a pointer to.  Typically zero or one.
+    *  @param retLength The number of items in the returned sub-array will be written here.
+    *  @return Pointer to the first item in the sub-array on success, or NULL on failure.
+    *          Note that this array is only guaranteed valid as long as no items are
+    *          added or removed from the Queue.
+    */
    const ItemType * GetArrayPointer(uint32 whichArray, uint32 & retLength) const {return GetArrayPointerAux(whichArray, retLength);}
 
    /** Normalizes the layout of the items held in this Queue so that they are guaranteed to be contiguous 
@@ -637,7 +715,59 @@ public:
    /** As above, but provides read-only access */
    const ItemType * GetRawArrayPointer() const {return _queue;}
 
+   /** Causes this Queue to drop any data it is currently holding and use the specified array as its data-buffer instead.
+     * @param numItemsInArray The number of items pointed to by (array).
+     * @param array Pointer to an array full of data.  This Queue will take ownership of the array, and will call
+     *              delete[] on it at some point (either as part of a resize, or as part of the Queue destructor)
+     *              unless you call ReleaseDataArray() beforehand.
+     * @param validItemCount how many of the items in (array) should be considered currently-valid.  If larger than (numItemsInArray)
+     *                      this value will be treated as if it was equal to (numItemsInArray).  (Useful if you have e.g. an
+     *                      array of 800 items but want the final 300 of them to be used as "room to grow" only).
+     *                      Defaults to MUSCLE_NO_LIMIT.
+     * @note Don't call this method unless you know what you are doing!
+     */
+   void AdoptRawDataArray(uint32 numItemsInArray, ItemType * array, uint32 validItemCount = MUSCLE_NO_LIMIT);
+
+   /** Relinquishes ownership of our internally-held data array, and returns it to the caller.
+     * Note that the caller becomes the owner of the returned data-array and should call delete[] on it
+     * when he is done using it, otherwise there will be a memory leak.  This method has the side effect
+     * of clearing this Queue.
+     * @param optRetArrayLen if non-NULL, the number of items in the returned array will be written into the
+     *                       uint32 this pointer points to.  You can also get this value by calling GetNumAllocatedItemSlots()
+     *                       before calling ReleaseRawDataArray() (but not afterwards!).  Defaults to NULL.
+     * @returns a pointer to an array of items for the caller to own, or NULL on failure.  Call delete[] on the returned value to avoid a memory leak.
+     * @note Don't call this method unless you know what you are doing!
+     */
+   ItemType * ReleaseRawDataArray(uint32 * optRetArrayLen = NULL);
+
 private:
+   /** Returns true iff we need to set our ItemType objects to their default-constructed state when we're done using them */
+   inline bool IsPerItemClearNecessary() const
+   {
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+      return !std::is_trivial<ItemType>::value;
+#else
+      return true;
+#endif
+   }
+
+   // Like strcmp() except for vectors instead of strings
+   int lexicographicalCompare(const Queue & rhs) const
+   {
+      const uint32 commonRange = muscleMin(GetNumItems(), rhs.GetNumItems());
+      for (uint32 i=0; i<commonRange; i++)
+      {
+         const ItemType & leftItem  = (*this)[i];
+         const ItemType & rightItem = rhs[i];
+         if (leftItem < rightItem) return -1;
+         if (rightItem < leftItem) return +1;
+      }
+
+      if (GetNumItems() < rhs.GetNumItems()) return -1;
+      if (GetNumItems() > rhs.GetNumItems()) return +1;
+      return 0; 
+   }
+
    status_t EnsureSizeAux(uint32 numSlots, ItemType ** optRetOldArray) {return EnsureSizeAux(numSlots, false, 0, optRetOldArray, false);}
    status_t EnsureSizeAux(uint32 numSlots, bool setNumItems, uint32 extraReallocItems, ItemType ** optRetOldArray, bool allowShrink);
    const ItemType * GetArrayPointerAux(uint32 whichArray, uint32 & retLength) const;
@@ -647,31 +777,45 @@ private:
    inline uint32 PrevIndex(uint32 idx) const {return (idx == 0) ? _queueSize-1 : idx-1;}
 
    // Translates a user-index into an index into the _queue array.
-   inline uint32 InternalizeIndex(uint32 idx) const {return (_headIndex + idx) % _queueSize;}
+   inline uint32 InternalizeIndex(uint32 idx) const 
+   {
+      assert(idx < _queueSize);  // just to reassure ClangSA
+      return (_headIndex + idx) % _queueSize;
+   }
 
    // Helper methods, used for sorting (stolen from http://www-ihm.lri.fr/~thomas/VisuTri/inplacestablesort.html)
    template<class CompareFunctorType> void   Merge(const CompareFunctorType & compareFunctor, uint32 from, uint32 pivot, uint32 to, uint32 len1, uint32 len2, void * optCookie);
    template<class CompareFunctorType> uint32 Lower(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, const ItemType & val, void * optCookie) const;
    template<class CompareFunctorType> uint32 Upper(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, const ItemType & val, void * optCookie) const;
 
-   ItemType _smallQueue[SMALL_QUEUE_SIZE];  // small queues can be stored inline in this array
-   ItemType * _queue;                       // points to _smallQueue, or to a dynamically alloc'd array
-   uint32 _queueSize;  // number of slots in the _queue array
-   uint32 _itemCount;  // number of valid items in the array
-   uint32 _headIndex;  // index of the first filled slot (meaningless if _itemCount is zero)
-   uint32 _tailIndex;  // index of the last filled slot (meaningless if _itemCount is zero)
+   ItemType * _queue; // points to _smallQueue, or to a dynamically alloc'd array
+   uint32 _queueSize; // number of slots in the _queue array
+   uint32 _itemCount; // number of valid items in the array
+   uint32 _headIndex; // index of the first filled slot (meaningless if _itemCount is zero)
+   uint32 _tailIndex; // index of the last filled slot (meaningless if _itemCount is zero)
+
+   enum {ACTUAL_SMALL_QUEUE_SIZE = ((sizeof(ItemType)*SMALL_QUEUE_SIZE) < sizeof(void*)) ? (sizeof(void*)/sizeof(ItemType)) : SMALL_QUEUE_SIZE};
+   ItemType _smallQueue[ACTUAL_SMALL_QUEUE_SIZE];  // small queues can be stored inline in this array
 };
 
 template <class ItemType>
 Queue<ItemType>::Queue()
-   : _queue(NULL), _queueSize(0), _itemCount(0)
+   : _queue(NULL)
+   , _queueSize(0)
+   , _itemCount(0)
+   , _headIndex(0)
+   , _tailIndex(0)
 {
    // empty
 }
 
 template <class ItemType>
 Queue<ItemType>::Queue(const Queue& rhs)
-   : _queue(NULL), _queueSize(0), _itemCount(0)
+   : _queue(NULL)
+   , _queueSize(0)
+   , _itemCount(0)
+   , _headIndex(0)
+   , _tailIndex(0)
 {
    *this = rhs;
 }
@@ -682,9 +826,7 @@ Queue<ItemType>::operator ==(const Queue& rhs) const
 {
    if (this == &rhs) return true;
    if (GetNumItems() != rhs.GetNumItems()) return false;
-
-   for (int i = GetNumItems()-1; i>=0; i--) if (((*this)[i] == rhs[i]) == false) return false;
-
+   for (int32 i = GetNumItems()-1; i>=0; i--) if (((*this)[i] == rhs[i]) == false) return false;
    return true;
 }
 
@@ -694,9 +836,9 @@ Queue<ItemType>::operator =(const Queue& rhs)
 {
    if (this != &rhs)
    {
-      uint32 hisNumItems = rhs.GetNumItems();
+      const uint32 hisNumItems = rhs.GetNumItems();
            if (hisNumItems == 0) Clear(true);  // FogBugz #10274
-      else if (EnsureSize(hisNumItems, true) == B_NO_ERROR) for (uint32 i=0; i<hisNumItems; i++) (*this)[i] = rhs[i];
+      else if (EnsureSize(hisNumItems, true).IsOK()) for (uint32 i=0; i<hisNumItems; i++) (*this)[i] = rhs[i];
    }
    return *this;
 }
@@ -707,13 +849,14 @@ Queue<ItemType>::CopyFrom(const Queue & rhs)
 {
    if (this == &rhs) return B_NO_ERROR;
 
-   uint32 numItems = rhs.GetNumItems();
-   if (EnsureSize(numItems, true) == B_NO_ERROR)
+   status_t ret;
+   const uint32 numItems = rhs.GetNumItems();
+   if (EnsureSize(numItems, true).IsOK(ret))
    {
       for (uint32 i=0; i<numItems; i++) (*this)[i] = rhs[i];
       return B_NO_ERROR;
    }
-   return B_ERROR;
+   else return ret;
 }
 
 template <class ItemType>
@@ -744,8 +887,14 @@ ItemType *
 Queue<ItemType>::
 AddTailAndGet(QQ_SinkItemParam item)
 {
+   if ((GetNumUnusedItemSlots() < 1)&&(IsItemLocatedInThisContainer(item)))
+   {
+      const ItemType temp = QQ_ForwardItem(item); // avoid dangling pointer issue by copying the item to a temporary location
+      return AddTailAndGet(temp);
+   }
+
    ItemType * oldArray;
-   if (EnsureSizeAux(_itemCount+1, false, _itemCount+1, &oldArray, false) != B_NO_ERROR) return NULL;
+   if (EnsureSizeAux(_itemCount+1, false, _itemCount+1, &oldArray, false).IsError()) return NULL;
 
    if (_itemCount == 0) _headIndex = _tailIndex = 0;
                    else _tailIndex = NextIndex(_tailIndex);
@@ -761,7 +910,7 @@ ItemType *
 Queue<ItemType>::
 AddTailAndGet()
 {
-   if (EnsureSize(_itemCount+1, false, _itemCount+1) != B_NO_ERROR) return NULL;
+   if (EnsureSize(_itemCount+1, false, _itemCount+1).IsError()) return NULL;
    if (_itemCount == 0) _headIndex = _tailIndex = 0;
                    else _tailIndex = NextIndex(_tailIndex);
    _itemCount++;
@@ -773,14 +922,23 @@ status_t
 Queue<ItemType>::
 AddTailMulti(const Queue<ItemType> & queue, uint32 startIndex, uint32 numNewItems)
 {
-   uint32 hisSize = queue.GetNumItems();
+   const uint32 hisSize = queue.GetNumItems();
    numNewItems = muscleMin(numNewItems, (startIndex < hisSize) ? (hisSize-startIndex) : 0);
    
-   uint32 mySize = GetNumItems();
-   uint32 newSize = mySize+numNewItems;
-   if (EnsureSize(newSize, true) != B_NO_ERROR) return B_ERROR;
-   for (uint32 i=mySize; i<newSize; i++) (*this)[i] = queue[startIndex++];
+   const uint32 mySize  = GetNumItems();
+   const uint32 newSize = mySize+numNewItems;
 
+   if ((&queue == this)&&(newSize > GetNumAllocatedItemSlots()))
+   {
+      // Avoid re-entrancy problems by making a partial copy of myself to add back into myself
+      Queue<ItemType> temp;
+      status_t ret;
+      return temp.AddTailMulti(queue, startIndex, numNewItems).IsOK(ret) ? AddTailMulti(temp) : ret;
+   }
+
+   MRETURN_ON_ERROR(EnsureSize(newSize, true));
+
+   for (uint32 i=mySize; i<newSize; i++) (*this)[i] = queue[startIndex+(i-mySize)];
    return B_NO_ERROR;
 }
 
@@ -789,12 +947,21 @@ status_t
 Queue<ItemType>::
 AddTailMulti(const ItemType * items, uint32 numItems)
 {
-   uint32 mySize = GetNumItems();
-   uint32 newSize = mySize+numItems;
+   const uint32 mySize  = GetNumItems();
+   const uint32 newSize = mySize+numItems;
    uint32 rhs = 0;
 
+   if ((newSize > GetNumAllocatedItemSlots())&&(IsItemLocatedInThisContainer(*items)))
+   {
+      // Avoid re-entrancy problems by making a temporary copy of the items before adding them back to myself
+      Queue<ItemType> temp;
+      status_t ret;
+      return temp.AddTailMulti(items, numItems).IsOK(ret) ? AddTailMulti(temp) : ret;
+   }
+
    ItemType * oldArray;
-   if (EnsureSizeAux(newSize, true, 0, &oldArray, false) != B_NO_ERROR) return B_ERROR;
+   MRETURN_ON_ERROR(EnsureSizeAux(newSize, true, 0, &oldArray, false));
+
    for (uint32 i=mySize; i<newSize; i++) (*this)[i] = items[rhs++];
    delete [] oldArray;  // must be done after all references to (items)
    return B_NO_ERROR;
@@ -806,8 +973,14 @@ ItemType *
 Queue<ItemType>::
 AddHeadAndGet(QQ_SinkItemParam item)
 {
+   if ((GetNumUnusedItemSlots() < 1)&&(IsItemLocatedInThisContainer(item)))
+   {
+      const ItemType temp = QQ_ForwardItem(item); // avoid dangling pointer issue by copying the item to a temporary location
+      return AddTailAndGet(temp);
+   }
+
    ItemType * oldArray;
-   if (EnsureSizeAux(_itemCount+1, false, _itemCount+1, &oldArray, false) != B_NO_ERROR) return NULL;
+   if (EnsureSizeAux(_itemCount+1, false, _itemCount+1, &oldArray, false).IsError()) return NULL;
    if (_itemCount == 0) _headIndex = _tailIndex = 0;
                    else _headIndex = PrevIndex(_headIndex);
    _itemCount++;
@@ -822,7 +995,7 @@ ItemType *
 Queue<ItemType>::
 AddHeadAndGet()
 {
-   if (EnsureSize(_itemCount+1, false, _itemCount+1) != B_NO_ERROR) return NULL;
+   if (EnsureSize(_itemCount+1, false, _itemCount+1).IsError()) return NULL;
    if (_itemCount == 0) _headIndex = _tailIndex = 0;
                    else _headIndex = PrevIndex(_headIndex);
    _itemCount++;
@@ -834,11 +1007,20 @@ status_t
 Queue<ItemType>::
 AddHeadMulti(const Queue<ItemType> & queue, uint32 startIndex, uint32 numNewItems)
 {
-   uint32 hisSize = queue.GetNumItems();
+   const uint32 hisSize = queue.GetNumItems();
    numNewItems = muscleMin(numNewItems, (startIndex < hisSize) ? (hisSize-startIndex) : 0);
 
-   if (EnsureSize(numNewItems+GetNumItems()) != B_NO_ERROR) return B_ERROR;
-   for (int i=((int)startIndex+numNewItems)-1; i>=(int32)startIndex; i--) (void) AddHead(queue[i]);  // guaranteed not to fail
+   if ((&queue == this)&&(numNewItems > GetNumUnusedItemSlots()))
+   {
+      // Avoid re-entrancy problems by making a partial copy of myself to prepend back into myself
+      Queue<ItemType> temp;
+      status_t ret;
+      return temp.AddTailMulti(queue, startIndex, numNewItems).IsOK(ret) ? AddHeadMulti(temp) : ret;  // yes, AddTailMulti() and then AddHeadMulti() is intentional
+   }
+
+   MRETURN_ON_ERROR(EnsureSize(numNewItems+GetNumItems()));
+
+   for (int32 i=((int)startIndex+numNewItems)-1; i>=(int32)startIndex; i--) (void) AddHead(queue[i]);  // guaranteed not to fail
    return B_NO_ERROR;
 }
 
@@ -847,9 +1029,17 @@ status_t
 Queue<ItemType>::
 AddHeadMulti(const ItemType * items, uint32 numItems)
 {
+   if ((numItems > GetNumUnusedItemSlots())&&(IsItemLocatedInThisContainer(*items)))
+   {
+      // Avoid re-entrancy problems by making a temporary copy of the items before adding them back to myself
+      Queue<ItemType> temp;
+      status_t ret;
+      return temp.AddTailMulti(items, numItems).IsOK(ret) ? AddHeadMulti(temp) : ret;  // Yes, AddTailMulti() and then AddHeadMulti() is intentional
+   }
+
    ItemType * oldArray;
-   if (EnsureSizeAux(_itemCount+numItems, &oldArray) != B_NO_ERROR) return B_ERROR;
-   for (int i=((int)numItems)-1; i>=0; i--) (void) AddHead(items[i]);  // guaranteed not to fail
+   MRETURN_ON_ERROR(EnsureSizeAux(_itemCount+numItems, &oldArray));
+   for (int32 i=((int32)numItems)-1; i>=0; i--) (void) AddHead(items[i]);  // guaranteed not to fail
    delete [] oldArray;  // must be done last!
    return B_NO_ERROR;
 }
@@ -859,7 +1049,7 @@ status_t
 Queue<ItemType>::
 RemoveHead(ItemType & returnItem)
 {
-   if (_itemCount == 0) return B_ERROR;
+   if (_itemCount == 0) return B_DATA_NOT_FOUND;
    returnItem = _queue[_headIndex];
    return RemoveHead();
 }
@@ -889,11 +1079,11 @@ status_t
 Queue<ItemType>::
 RemoveHead()
 {
-   if (_itemCount == 0) return B_ERROR;
-   int oldHeadIndex = _headIndex;
+   if (_itemCount == 0) return B_DATA_NOT_FOUND;
+   const uint32 oldHeadIndex = _headIndex;
    _headIndex = NextIndex(_headIndex);
    _itemCount--;
-   _queue[oldHeadIndex] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
+   if (IsPerItemClearNecessary()) _queue[oldHeadIndex] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
    return B_NO_ERROR;
 }
 
@@ -916,7 +1106,7 @@ status_t
 Queue<ItemType>::
 RemoveTail(ItemType & returnItem)
 {
-   if (_itemCount == 0) return B_ERROR;
+   if (_itemCount == 0) return B_DATA_NOT_FOUND;
    returnItem = _queue[_tailIndex];
    return RemoveTail();
 }
@@ -926,11 +1116,11 @@ status_t
 Queue<ItemType>::
 RemoveTail()
 {
-   if (_itemCount == 0) return B_ERROR;
-   int removedItemIndex = _tailIndex;
+   if (_itemCount == 0) return B_DATA_NOT_FOUND;
+   const uint32 removedItemIndex = _tailIndex;
    _tailIndex = PrevIndex(_tailIndex);
    _itemCount--;
-   _queue[removedItemIndex] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
+   if (IsPerItemClearNecessary()) _queue[removedItemIndex] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
    return B_NO_ERROR;
 }
 
@@ -959,7 +1149,7 @@ GetItemAt(uint32 index, ItemType & returnItem) const
       returnItem = *p;
       return B_NO_ERROR;
    }
-   else return B_ERROR;
+   else return B_BAD_ARGUMENT;
 }
 
 template <class ItemType>
@@ -967,7 +1157,7 @@ status_t
 Queue<ItemType>::
 RemoveItemAt(uint32 index, ItemType & returnItem)
 {
-   if (index >= _itemCount) return B_ERROR;
+   if (index >= _itemCount) return B_BAD_ARGUMENT;
    returnItem = _queue[InternalizeIndex(index)];
    return RemoveItemAt(index);
 }
@@ -977,7 +1167,7 @@ status_t
 Queue<ItemType>::
 RemoveItemAt(uint32 index)
 {
-   if (index >= _itemCount) return B_ERROR;
+   if (index >= _itemCount) return B_BAD_ARGUMENT;
 
    uint32 internalizedIndex = InternalizeIndex(index);
    uint32 indexToClear;
@@ -987,7 +1177,7 @@ RemoveItemAt(uint32 index)
       // item is closer to the head:  shift everything forward one, ending at the head
       while(internalizedIndex != _headIndex)
       {
-         uint32 prev = PrevIndex(internalizedIndex);
+         const uint32 prev = PrevIndex(internalizedIndex);
          _queue[internalizedIndex] = _queue[prev];
          internalizedIndex = prev;
       }
@@ -999,7 +1189,7 @@ RemoveItemAt(uint32 index)
       // item is closer to the tail:  shift everything back one, ending at the tail
       while(internalizedIndex != _tailIndex)
       {
-         uint32 next = NextIndex(internalizedIndex);
+         const uint32 next = NextIndex(internalizedIndex);
          _queue[internalizedIndex] = _queue[next];
          internalizedIndex = next;
       }
@@ -1008,7 +1198,7 @@ RemoveItemAt(uint32 index)
    }
 
    _itemCount--;
-   _queue[indexToClear] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
+   if (IsPerItemClearNecessary()) _queue[indexToClear] = GetDefaultItem();  // this must be done last, as queue state must be coherent when we do this
    return B_NO_ERROR; 
 }
 
@@ -1020,7 +1210,7 @@ RemoveItemAtWithDefault(uint32 index)
    if (index >= GetNumItems()) return GetDefaultItem();
    else
    {
-      ItemType ret = (*this)[index];
+      const ItemType ret = (*this)[index];
       (void) RemoveItemAt(index); 
       return ret;
    }
@@ -1032,7 +1222,7 @@ status_t
 Queue<ItemType>::
 ReplaceItemAt(uint32 index, QQ_SinkItemParam newItem)
 {
-   if (index >= _itemCount) return B_ERROR;
+   if (index >= _itemCount) return B_BAD_ARGUMENT;
    _queue[InternalizeIndex(index)] = QQ_ForwardItem(newItem);
    return B_NO_ERROR;
 }
@@ -1041,33 +1231,35 @@ template <class ItemType>
 QQ_UniversalSinkItemRef
 status_t 
 Queue<ItemType>::
-InsertItemAt(uint32 index, QQ_SinkItemParam newItem)
+InsertItemAt(uint32 index, QQ_SinkItemParam item)
 {
-   if ((GetNumUnusedItemSlots() < 1)&&(IsItemLocatedInThisContainer(newItem)))
+   if ((GetNumUnusedItemSlots() < 1)&&(IsItemLocatedInThisContainer(item)))
    {
-      ItemType temp = QQ_ForwardItem(newItem); // avoid dangling pointer issue by copying the item to a temporary location
+      const ItemType temp = QQ_ForwardItem(item); // avoid dangling pointer issue by copying the item to a temporary location
       return InsertItemAt(index, temp);
    }
 
    // Simple cases
-   if (index >  _itemCount) return B_ERROR;
-   if (index == _itemCount) return AddTail(QQ_ForwardItem(newItem));
-   if (index == 0)          return AddHead(QQ_ForwardItem(newItem));
+   if (index >  _itemCount) return B_BAD_ARGUMENT;
+   if (index == _itemCount) return AddTail(QQ_ForwardItem(item));
+   if (index == 0)          return AddHead(QQ_ForwardItem(item));
 
    // Harder case:  inserting into the middle of the array
    if (index < _itemCount/2)
    {
       // Add a space at the front, and shift things back
-      if (AddHead() != B_NO_ERROR) return B_ERROR;  // allocate an extra slot
-      for (uint32 i=0; i<index; i++) ReplaceItemAt(i, QQ_ForwardItem(*GetItemAtUnchecked(i+1)));
+      status_t ret = AddHead();  // allocate an extra slot
+      if (ret.IsError()) return ret;
+      for (uint32 i=0; i<index; i++) (void) ReplaceItemAt(i, QQ_ForwardItem(*GetItemAtUnchecked(i+1)));
    }
    else
    {
       // Add a space at the rear, and shift things forward
-      if (AddTail() != B_NO_ERROR) return B_ERROR;  // allocate an extra slot
-      for (int32 i=((int32)_itemCount)-1; i>((int32)index); i--) ReplaceItemAt(i, QQ_ForwardItem(*GetItemAtUnchecked(i-1)));
+      status_t ret = AddTail();  // allocate an extra slot
+      if (ret.IsError()) return ret;
+      for (int32 i=((int32)_itemCount)-1; i>((int32)index); i--) (void) ReplaceItemAt(i, QQ_ForwardItem(*GetItemAtUnchecked(i-1)));
    }
-   return ReplaceItemAt(index, QQ_ForwardItem(newItem));
+   return ReplaceItemAt(index, QQ_ForwardItem(item));
 }
 
 template <class ItemType>
@@ -1075,20 +1267,22 @@ status_t
 Queue<ItemType>::
 InsertItemsAt(uint32 index, const Queue<ItemType> & queue, uint32 startIndex, uint32 numNewItems)
 {
-   uint32 hisSize = queue.GetNumItems();
+   const uint32 hisSize = queue.GetNumItems();
    numNewItems = muscleMin(numNewItems, (startIndex < hisSize) ? (hisSize-startIndex) : 0);
    if (numNewItems == 0) return B_NO_ERROR;
-   if (index > _itemCount) return B_ERROR;
+   if (index > _itemCount) return B_BAD_ARGUMENT;
    if (numNewItems == 1)
    {
       if (index == 0)          return AddHead(queue.Head());
       if (index == _itemCount) return AddTail(queue.Head());
    }
 
-   uint32 oldSize = GetNumItems();
-   uint32 newSize = oldSize+numNewItems;
+   const uint32 oldSize = GetNumItems();
+   const uint32 newSize = oldSize+numNewItems;
 
-   if (EnsureSize(newSize, true) != B_NO_ERROR) return B_ERROR;
+   status_t ret = EnsureSize(newSize, true);
+   if (ret.IsError()) return ret;
+
    for (uint32 i=index; i<oldSize; i++)           (*this)[i+numNewItems] = (*this)[i];
    for (uint32 i=index; i<index+numNewItems; i++) (*this)[i]             = queue[startIndex++];
    return B_NO_ERROR;
@@ -1100,18 +1294,20 @@ Queue<ItemType>::
 InsertItemsAt(uint32 index, const ItemType * items, uint32 numNewItems)
 {
    if (numNewItems == 0) return B_NO_ERROR;
-   if (index > _itemCount) return B_ERROR;
+   if (index > _itemCount) return B_BAD_ARGUMENT;
    if (numNewItems == 1)
    {
       if (index == 0)          return AddHead(*items);
       if (index == _itemCount) return AddTail(*items);
    }
 
-   uint32 oldSize = GetNumItems();
-   uint32 newSize = oldSize+numNewItems;
+   const uint32 oldSize = GetNumItems();
+   const uint32 newSize = oldSize+numNewItems;
 
    ItemType * oldItems;
-   if (EnsureSizeAux(newSize, true, &oldItems, NULL, false) != B_NO_ERROR) return B_ERROR;
+   status_t ret = EnsureSizeAux(newSize, true, &oldItems, NULL, false);
+   if (ret.IsError()) return ret;
+
    int32 si = 0;
    for (uint32 i=index; i<oldSize; i++)           (*this)[i+numNewItems] = (*this)[i];
    for (uint32 i=index; i<index+numNewItems; i++) (*this)[i]             = items[si++];
@@ -1133,12 +1329,15 @@ Clear(bool releaseCachedBuffers)
    }
    else if (HasItems())
    {
-      for (uint32 i=0; i<2; i++)
+      if (IsPerItemClearNecessary())
       {
-         uint32 arrayLen = 0;  // set to zero just to shut the compiler up
          const ItemType & defaultItem = GetDefaultItem();
-         ItemType * p = GetArrayPointer(i, arrayLen);
-         if (p) {for (uint32 j=0; j<arrayLen; j++) p[j] = defaultItem;}
+         for (uint32 i=0; i<2; i++)
+         {
+            uint32 arrayLen = 0;  // set to zero just to shut the compiler up
+            ItemType * p = GetArrayPointer(i, arrayLen);
+            if (p) {for (uint32 j=0; j<arrayLen; j++) p[j] = defaultItem;}
+         }
       }
       FastClear();
    }
@@ -1154,12 +1353,12 @@ EnsureSizeAux(uint32 size, bool setNumItems, uint32 extraPreallocs, ItemType ** 
    if ((_queue == NULL)||(allowShrink ? (_queueSize != (size+extraPreallocs)) : (_queueSize < size)))
    {
       const uint32 sqLen = ARRAYITEMS(_smallQueue);
-      uint32 temp    = size + extraPreallocs;
-      uint32 newQLen = muscleMax((uint32)SMALL_QUEUE_SIZE, ((setNumItems)||(temp <= sqLen)) ? muscleMax(sqLen,temp) : temp);
+      const uint32 temp  = size + extraPreallocs;
+      uint32 newQLen = muscleMax((uint32)ARRAYITEMS(_smallQueue), ((setNumItems)||(temp <= sqLen)) ? muscleMax(sqLen,temp) : temp);
 
       ItemType * newQueue = ((_queue == _smallQueue)||(newQLen > sqLen)) ? newnothrow_array(ItemType,newQLen) : _smallQueue;
 
-      if (newQueue == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+      MRETURN_OOM_ON_NULL(newQueue);
       if (newQueue == _smallQueue) newQLen = sqLen;
       
       // The (_queueSize > 0) check below isn't strictly necessary, but it makes clang++ feel better
@@ -1169,7 +1368,14 @@ EnsureSizeAux(uint32 size, bool setNumItems, uint32 extraPreallocs, ItemType ** 
       _headIndex = 0;
       _tailIndex = _itemCount-1;
 
-           if (_queue == _smallQueue) for (uint32 i=0; i<sqLen; i++) _smallQueue[i] = GetDefaultItem();
+      if (_queue == _smallQueue) 
+      {
+         if (IsPerItemClearNecessary()) 
+         {
+            const ItemType & defaultItem = GetDefaultItem();
+            for (uint32 i=0; i<sqLen; i++) _smallQueue[i] = defaultItem;
+         }
+      }
       else if (retOldArray) *retOldArray = _queue;
       else delete [] _queue;
 
@@ -1234,8 +1440,8 @@ InsertItemAtSortedPosition(const CompareFunctor<ItemType> & compareFunctor, QQ_S
    if ((insertAfter > 0)&&(compareFunctor.Compare(item, Head(), optCookie) >= 0)) 
       while(--insertAfter >= 0) 
          if (compareFunctor.Compare(item, (*this)[insertAfter], optCookie) >= 0) 
-            return (InsertItemAt(insertAfter+1, QQ_ForwardItem(item)) == B_NO_ERROR) ? (insertAfter+1) : -1;
-   return (AddHead(QQ_ForwardItem(item)) == B_NO_ERROR) ? 0 : -1;
+            return (InsertItemAt(insertAfter+1, QQ_ForwardItem(item)).IsOK()) ? (insertAfter+1) : -1;
+   return (AddHead(QQ_ForwardItem(item)).IsOK()) ? 0 : -1;
 }
 
 template <class ItemType>
@@ -1244,7 +1450,7 @@ void
 Queue<ItemType>::
 Sort(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, void * optCookie) 
 {
-   uint32 size = GetNumItems();
+   const uint32 size = GetNumItems();
    if (to > size) to = size;
    if (to > from)
    {
@@ -1257,7 +1463,7 @@ Sort(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, void * o
             {
                for (uint32 j=i; j>from; j--) 
                {
-                  int ret = compareFunctor.Compare(*(GetItemAtUnchecked(j)), *(GetItemAtUnchecked(j-1)), optCookie);
+                  const int ret = compareFunctor.Compare(*(GetItemAtUnchecked(j)), *(GetItemAtUnchecked(j-1)), optCookie);
                   if (ret < 0) Swap(j, j-1); 
                           else break; 
                }
@@ -1267,7 +1473,7 @@ Sort(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, void * o
       else
       {
          // Okay, do the real thing
-         uint32 middle = (from + to)/2; 
+         const uint32 middle = (from + to)/2; 
          Sort(compareFunctor, from, middle, optCookie); 
          Sort(compareFunctor, middle, to, optCookie); 
          Merge(compareFunctor, from, middle, to, middle-from, to-middle, optCookie); 
@@ -1280,7 +1486,7 @@ void
 Queue<ItemType>::
 ReverseItemOrdering(uint32 from, uint32 to) 
 {
-   uint32 size = GetNumItems();
+   const uint32 size = GetNumItems();
    if (size > 0)
    {
       to--;  // make it inclusive
@@ -1294,9 +1500,9 @@ status_t
 Queue<ItemType>::
 RemoveFirstInstanceOf(const ItemType & val) 
 {
-   uint32 ni = GetNumItems();
+   const uint32 ni = GetNumItems();
    for (uint32 i=0; i<ni; i++) if ((*this)[i] == val) return RemoveItemAt(i);
-   return B_ERROR;
+   return B_DATA_NOT_FOUND;
 }
 
 template <class ItemType>
@@ -1305,7 +1511,7 @@ Queue<ItemType>::
 RemoveLastInstanceOf(const ItemType & val) 
 {
    for (int32 i=((int32)GetNumItems())-1; i>=0; i--) if ((*this)[i] == val) return RemoveItemAt(i);
-   return B_ERROR;
+   return B_DATA_NOT_FOUND;
 }
 
 template <class ItemType>
@@ -1321,9 +1527,9 @@ RemoveAllInstancesOf(const ItemType & val)
    }
 
    // Efficiently collapse all non-matching slots up to the top of the list
-   uint32 ret      = 0;
-   uint32 writeTo  = 0;
-   uint32 origSize = GetNumItems();
+   const uint32 origSize = GetNumItems();
+   uint32 ret     = 0;
+   uint32 writeTo = 0;
    for(uint32 readFrom=0; readFrom<origSize; readFrom++)
    {
       const ItemType & nextRead = (*this)[readFrom];
@@ -1344,21 +1550,27 @@ RemoveAllInstancesOf(const ItemType & val)
 template <class ItemType>
 uint32 
 Queue<ItemType>::
-RemoveDuplicateItems(bool assumeAlreadySorted)
+RemoveDuplicateItems()
 {
-   if (IsEmpty()) return 0;  // nothing to do!
-   if (assumeAlreadySorted == false) Sort();
+   Sort();
+   return RemoveSortedDuplicateItems();
+}
 
-   uint32 numWrittenItems = 1;  // we'll always keep the first item
-   uint32 totalItems = GetNumItems();
+template <class ItemType>
+uint32 
+Queue<ItemType>::
+RemoveSortedDuplicateItems()
+{
+   uint32 numWrittenItems  = 1;  // we'll always keep the first item
+   const uint32 totalItems = GetNumItems();
    for (uint32 i=0; i<totalItems; i++)
    {
       const ItemType & nextItem = (*this)[i];
       const ItemType & wItem    = (*this)[numWrittenItems-1];
-      if (nextItem != wItem) (*this)[numWrittenItems++] = nextItem;
+      if (!(nextItem == wItem)) (*this)[numWrittenItems++] = nextItem;
    } 
 
-   uint32 ret = GetNumItems()-numWrittenItems;
+   const uint32 ret = GetNumItems()-numWrittenItems;
    (void) EnsureSize(numWrittenItems, true);  // guaranteed to succeed
    return ret;
 }
@@ -1413,7 +1625,7 @@ Merge(const CompareFunctorType & compareFunctor, uint32 from, uint32 pivot, uint
             while(n--) 
             {
                ItemType val = QQ_PlunderItem(*GetItemAtUnchecked(first_cut+n)); 
-               uint32 shift = pivot - first_cut; 
+               const uint32 shift = pivot - first_cut;
                uint32 p1 = first_cut+n;
                uint32 p2 = p1+shift; 
                while (p2 != first_cut + n) 
@@ -1427,7 +1639,7 @@ Merge(const CompareFunctorType & compareFunctor, uint32 from, uint32 pivot, uint
             }
          }
 
-         uint32 new_mid = first_cut+len22; 
+         const uint32 new_mid = first_cut+len22; 
          Merge(compareFunctor, from,    first_cut,  new_mid, len11,        len22,        optCookie); 
          Merge(compareFunctor, new_mid, second_cut, to,      len1 - len11, len2 - len22, optCookie); 
       }
@@ -1444,10 +1656,10 @@ Lower(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, const I
    if (to > from)
    {
       uint32 len = to - from;
-      while (len > 0) 
+      while(len > 0) 
       {
-         uint32 half = len/2; 
-         uint32 mid  = from + half; 
+         const uint32 half = len/2; 
+         const uint32 mid  = from + half; 
          if (compareFunctor.Compare(*(GetItemAtUnchecked(mid)), val, optCookie) < 0) 
          {
             from = mid+1; 
@@ -1468,10 +1680,10 @@ Upper(const CompareFunctorType & compareFunctor, uint32 from, uint32 to, const I
    if (to > from)
    {
       uint32 len = to - from;
-      while (len > 0) 
+      while(len > 0) 
       { 
-         uint32 half = len/2; 
-         uint32 mid  = from + half; 
+         const uint32 half = len/2; 
+         const uint32 mid  = from + half; 
          if (compareFunctor.Compare(val, *(GetItemAtUnchecked(mid)), optCookie) < 0) len = half; 
          else 
          {
@@ -1516,18 +1728,18 @@ Queue<ItemType>::SwapContents(Queue<ItemType> & that)
 {
    if (&that == this) return;  // no point trying to swap with myself
 
-   bool thisSmall = (_queue == _smallQueue);
-   bool thatSmall = (that._queue == that._smallQueue);
+   const bool thisSmall = (this->_queue == this->_smallQueue);
+   const bool thatSmall = (that._queue  == that._smallQueue);
 
    if ((thisSmall)&&(thatSmall))
    {
       // First, move any extra items from the longer queue to the shorter one...
-      uint32 commonSize = muscleMin(GetNumItems(), that.GetNumItems());
-      int32 sizeDiff    = ((int32)GetNumItems())-((int32)that.GetNumItems());
+      const uint32 commonSize    = muscleMin(GetNumItems(), that.GetNumItems());
+      const int32 sizeDiff       = ((int32)GetNumItems())-((int32)that.GetNumItems());
       Queue<ItemType> & copyTo   = (sizeDiff > 0) ? that : *this;
       Queue<ItemType> & copyFrom = (sizeDiff > 0) ? *this : that;
-      (void) copyTo.AddTailMulti(copyFrom, commonSize);   // guaranteed not to fail
-      (void) copyFrom.EnsureSize(commonSize, true);  // remove the copied items from (copyFrom)
+      (void) copyTo.AddTailMulti(copyFrom, commonSize); // guaranteed not to fail
+      (void) copyFrom.EnsureSize(commonSize, true);     // remove the copied items from (copyFrom)
 
       // Then just swap the elements that are present in both arrays
       for (uint32 i=0; i<commonSize; i++) muscleSwap((*this)[i], that[i]);
@@ -1550,7 +1762,7 @@ void
 Queue<ItemType>::SwapContentsAux(Queue<ItemType> & largeThat)
 {
    // First, copy over our (small) contents to his small-buffer
-   uint32 ni = GetNumItems();
+   const uint32 ni = GetNumItems();
    for (uint32 i=0; i<ni; i++) largeThat._smallQueue[i] = QQ_PlunderItem((*this)[i]);
 
    // Now adopt his dynamic buffer
@@ -1586,7 +1798,7 @@ bool
 Queue<ItemType>::StartsWith(const Queue<ItemType> & prefixQueue) const
 {
    if (prefixQueue.GetNumItems() > GetNumItems()) return false;
-   uint32 prefixQueueLen = prefixQueue.GetNumItems();
+   const uint32 prefixQueueLen = prefixQueue.GetNumItems();
    for (uint32 i=0; i<prefixQueueLen; i++) if (!(prefixQueue[i] == (*this)[i])) return false;
    return true;
 }
@@ -1613,12 +1825,14 @@ Queue<ItemType>::Normalize()
          // array to just copy the items over, yay!  This
          // is more efficient when there are just a few
          // valid items in a large array.
-         uint32 startAt = _tailIndex+1;
+         const bool isPerItemClearNecessary = IsPerItemClearNecessary();
+         const ItemType & defaultItem       = GetDefaultItem();
+         const uint32 startAt               = _tailIndex+1;
          for (uint32 i=0; i<_itemCount; i++) 
          {
             ItemType & from = (*this)[i];
             _queue[startAt+i] = from;
-            from = GetDefaultItem();  // clear the old slot to avoid leaving extra Refs, etc
+            if (isPerItemClearNecessary) from = defaultItem;  // clear the old slot to avoid leaving extra Refs, etc
          }
          _headIndex = startAt;
          _tailIndex = startAt+_itemCount-1; 
@@ -1632,19 +1846,19 @@ Queue<ItemType>::Normalize()
          uint32 c = 0;
          for (uint32 v = 0; c<_queueSize; v++)
          {
-             uint32 t  = v;
-             uint32 tp = v + _headIndex;
-             ItemType tmp = _queue[v];
-             c++;
-             while(tp != v) 
-             {
-                 _queue[t] = _queue[tp];
-                 t = tp;
-                 tp += _headIndex;
-                 if (tp >= _queueSize) tp -= _queueSize;
-                 c++;
-             }
-             _queue[t] = tmp;
+            uint32 t  = v;
+            uint32 tp = v + _headIndex;
+            const ItemType tmp = _queue[v];
+            c++;
+            while(tp != v) 
+            {
+               _queue[t] = _queue[tp];
+               t = tp;
+               tp += _headIndex;
+               if (tp >= _queueSize) tp -= _queueSize;
+               c++;
+            }
+            _queue[t] = tmp;
          }
          _headIndex = 0;
          _tailIndex = _itemCount-1;
@@ -1652,6 +1866,52 @@ Queue<ItemType>::Normalize()
    }
 }
 
-}; // end namespace muscle
+template <class ItemType>
+ItemType * 
+Queue<ItemType>::ReleaseRawDataArray(uint32 * optRetArrayLen)
+{
+   ItemType * ret = NULL;
+
+   if (optRetArrayLen) *optRetArrayLen = _queueSize;
+
+   if (_queue == _smallQueue)
+   {
+      // Oops, we don't have a dynamically-created array to release!  So we'll create one
+      // to return, just so the user doesn't have to worry about handling a special-case.
+      ret = newnothrow ItemType[_queueSize];
+      if (ret)
+      {
+         for (uint32 i=0; i<_itemCount; i++) ret[i] = (*this)[i];
+         Clear();
+      }
+      else MWARN_OUT_OF_MEMORY;
+   }
+   else
+   {
+      // In the non-small-Queue case we can just pass out the array-pointer
+      ret        = _queue;
+      _queue     = NULL;
+      _queueSize = 0;
+      _itemCount = 0;
+   }
+   return ret;
+}
+
+template <class ItemType>
+void 
+Queue<ItemType>::AdoptRawDataArray(uint32 numItemsInArray, ItemType * array, uint32 validItemCount)
+{
+   Clear(true);
+   if (array)
+   {
+      _queue     = array;
+      _queueSize = numItemsInArray;
+      _itemCount = muscleMin(numItemsInArray, validItemCount);
+      _headIndex = 0;
+      _tailIndex = 0;
+   }
+}
+
+} // end namespace muscle
 
 #endif

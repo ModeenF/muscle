@@ -19,12 +19,14 @@
 
 namespace muscle {
 
+class Message;
+
 namespace muscle_message_imp {
 
 /** This class is a private part of the Message class's implementation.  User code should not access this class directly.
   * It is used to hold the values of a Message field that contains multiple values.
   */
-class AbstractDataArray : public FlatCountable, private CountedObject<AbstractDataArray>
+class AbstractDataArray : public FlatCountable
 {
 public:
    // Should add the given item to our internal field.
@@ -90,12 +92,21 @@ public:
      */
    virtual RefCountableRef GetItemAtAsRefCountableRef(uint32 idx) const {(void) idx; return GetDefaultObjectForType<RefCountableRef>();}
 
+   /** Used by the TemplatedFlatten() methods */
+   virtual void Flatten(uint8 * buf, uint32 maxItemsToFlatten) const = 0;
+
+   /** Used by the regular Flatten() methods */
+   virtual void Flatten(uint8 * buf) const {Flatten(buf, MUSCLE_NO_LIMIT);}
+
 protected:
    /** Must be implemented by each subclass to return true iff (rhs) is of the same type
     *  and has the same data as (*this).  The TypeCode() and GetNumItems() of (rhs) are
     *  guaranteed to equal those of this AbstractDataArray.  Called by IsEqualTo().
     */
    virtual bool AreContentsEqual(const AbstractDataArray * rhs) const = 0;
+
+private:
+   DECLARE_COUNTED_OBJECT(AbstractDataArray);
 };
 DECLARE_REFTYPES(AbstractDataArray);
 
@@ -108,13 +119,13 @@ public:
    /** Default ctor:  Creates a MessageField with no type */
    MessageField(uint32 typeCode = 0) : _typeCode(typeCode), _state(FIELD_STATE_EMPTY), _dataType(DATA_TYPE_NULL) {/* empty */}
 
-   /** Copy ctor */
-   MessageField(const MessageField & v) : _typeCode(0), _state(FIELD_STATE_EMPTY), _dataType(DATA_TYPE_NULL) {*this = v;}
+   /** @copydoc DoxyTemplate::DoxyTemplate(const DoxyTemplate &) */
+   MessageField(const MessageField & rhs) : _typeCode(0), _state(FIELD_STATE_EMPTY), _dataType(DATA_TYPE_NULL) {*this = rhs;}
    
    /** Dtor */
    ~MessageField() {Clear();}
 
-   /** Assignment operator. */
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &) */
    MessageField & operator = (const MessageField & rhs);
 
    /** Prints our state to stdout (for debugging) */
@@ -127,7 +138,7 @@ public:
    uint32 TypeCode() const {return _typeCode;}
    bool AllowsTypeCode(uint32 tc) const {return tc == TypeCode();}
    uint32 FlattenedSize() const {return HasArray() ? GetArray()->FlattenedSize() : SingleFlattenedSize();}
-   void Flatten(uint8 *buffer) const {if (HasArray()) GetArray()->Flatten(buffer); else SingleFlatten(buffer);}
+   void Flatten(uint8 *buffer, uint32 maxItemsToFlatten) const {if (HasArray()) GetArray()->Flatten(buffer, maxItemsToFlatten); else SingleFlatten(buffer);}
    status_t Unflatten(const uint8 * buf, uint32 numBytes);
 
    // Pseudo-AbstractDataArray interface
@@ -158,6 +169,11 @@ public:
    status_t ShareTo(MessageField & shareToMe) const;
    bool HasArray() const {return (_state == FIELD_STATE_ARRAY);}  // returns true iff we have an AbstractDataArray object allocated
 
+   uint64 TemplatedHashCode64() const {return ((uint64)GetNumItems())*((uint64)TypeCode());}
+   uint32 TemplatedFlattenedSize(const MessageField * optPayloadField) const;
+   void TemplatedFlatten(const MessageField * optPayloadField, uint8 * & buf) const;
+   status_t TemplatedUnflatten(Message & unflattenTo, const String & fieldName, const uint8 * & buf, uint32 & bufSize) const; 
+   
 private:
    const AbstractDataArray * GetArray() const {return static_cast<AbstractDataArray *>(GetInlineItemAsRefCountableRef()());}
    AbstractDataArray * GetArray() {return static_cast<AbstractDataArray *>(GetInlineItemAsRefCountableRef()());}
@@ -386,8 +402,8 @@ private:
    } _union;
 };
 
-}; // end namespace muscle_message_imp
+} // end namespace muscle_message_imp
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif /* MuscleMessage_impl_h */

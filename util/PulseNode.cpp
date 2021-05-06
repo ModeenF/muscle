@@ -4,7 +4,17 @@
 
 namespace muscle {
 
-PulseNode :: PulseNode() : _parent(NULL), _aggregatePulseTime(MUSCLE_TIME_NEVER), _myScheduledTime(MUSCLE_TIME_NEVER), _cycleStartedAt(0), _myScheduledTimeValid(false), _curList(-1), _prevSibling(NULL), _nextSibling(NULL), _maxTimeSlice(MUSCLE_TIME_NEVER), _timeSlicingSuggested(false)
+PulseNode :: PulseNode()
+   : _parent(NULL)
+   , _aggregatePulseTime(MUSCLE_TIME_NEVER)
+   , _myScheduledTime(MUSCLE_TIME_NEVER)
+   , _cycleStartedAt(0)
+   , _myScheduledTimeValid(false)
+   , _curList(-1)
+   , _prevSibling(NULL)
+   , _nextSibling(NULL)
+   , _maxTimeSlice(MUSCLE_TIME_NEVER)
+   , _timeSlicingSuggested(false)
 {
    for (uint32 i=0; i<NUM_LINKED_LISTS; i++) _firstChild[i] = _lastChild[i] = NULL;
 }
@@ -50,7 +60,7 @@ void PulseNode :: GetPulseTimeAux(uint64 now, uint64 & min)
    if (firstNeedy) while(firstNeedy) firstNeedy->GetPulseTimeAux(now, min);  // guaranteed to move (firstNeedy) out of the recalc list!
 
    // Recalculate our effective pulse time
-   uint64 oldAggregatePulseTime = _aggregatePulseTime;
+   const uint64 oldAggregatePulseTime = _aggregatePulseTime;
    _aggregatePulseTime = muscleMin(_myScheduledTime, GetFirstScheduledChildTime());
    if ((_parent)&&((_curList == LINKED_LIST_NEEDSRECALC)||(_aggregatePulseTime != oldAggregatePulseTime))) _parent->ReschedulePulseChild(this, (_aggregatePulseTime==MUSCLE_TIME_NEVER)?LINKED_LIST_UNSCHEDULED:LINKED_LIST_SCHEDULED);
 
@@ -89,14 +99,14 @@ status_t PulseNode :: RemovePulseChild(PulseNode * child)
 {
    if (child->_parent == this)
    {
-      bool doResched = (child == _firstChild[LINKED_LIST_SCHEDULED]);
+      const bool doResched = (child == _firstChild[LINKED_LIST_SCHEDULED]);
       ReschedulePulseChild(child, -1);
       child->_parent = NULL;
       child->_myScheduledTimeValid = false;
       if ((doResched)&&(_parent)) _parent->ReschedulePulseChild(this, LINKED_LIST_NEEDSRECALC);
       return B_NO_ERROR;
    }
-   else return B_ERROR;
+   else return B_BAD_ARGUMENT;
 }
 
 void PulseNode :: ClearPulseChildren()
@@ -106,7 +116,7 @@ void PulseNode :: ClearPulseChildren()
 
 void PulseNode :: ReschedulePulseChild(PulseNode * child, int whichList)
 {
-   int cl = child->_curList;
+   const int cl = child->_curList;
    if ((whichList != cl)||(cl == LINKED_LIST_SCHEDULED))  // since we may need to move within the scheduled list
    {
       // First, remove the child from any list he may currently be in
@@ -127,11 +137,12 @@ void PulseNode :: ReschedulePulseChild(PulseNode * child, int whichList)
             PulseNode * p = _firstChild[whichList];
             if (p)
             {
-               if (child->_aggregatePulseTime >= _lastChild[whichList]->_aggregatePulseTime)
+               PulseNode * lastChild = _lastChild[whichList];  // checking this for non-NULL solely to keep ClangSA happy --jaf
+               if ((lastChild)&&(child->_aggregatePulseTime >= lastChild->_aggregatePulseTime))
                {
                   // Shortcut:  append to the tail of the list!
-                  child->_prevSibling = _lastChild[whichList];
-                  _lastChild[whichList]->_nextSibling = child;
+                  child->_prevSibling = lastChild;
+                  lastChild->_nextSibling = child;
                   _lastChild[whichList] = child;
                }
                else
@@ -153,9 +164,10 @@ void PulseNode :: ReschedulePulseChild(PulseNode * child, int whichList)
 
          case LINKED_LIST_NEEDSRECALC:
             if (_parent) _parent->ReschedulePulseChild(this, LINKED_LIST_NEEDSRECALC);  // if our child is rescheduled that reschedules us too!
+         // fall through!
          case LINKED_LIST_UNSCHEDULED: 
          {
-            // These lists are unsorted, so we can just quickly append the child to the head of the list
+            // These lists are unsorted, so we can just quickly prepend the child to the head of the list
             if (_firstChild[whichList])
             {
                child->_nextSibling = _firstChild[whichList];
@@ -173,4 +185,4 @@ void PulseNode :: ReschedulePulseChild(PulseNode * child, int whichList)
    }
 }
 
-}; // end namespace muscle
+} // end namespace muscle

@@ -24,9 +24,22 @@ namespace muscle {
   * @param argv As passed in to main
   * @param addTo The message to add the arguments to
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
-  * @returns B_NO_ERROR on success, B_ERROR on failure (out of memory)
+  * @returns B_NO_ERROR on success, B_OUT_OF_MEMORY on failure.
   */
 status_t ParseArgs(int argc, char ** argv, Message & addTo, bool caseSensitive = false);
+
+/** Parses the given arguments into a Message full of string fields.
+  * Arguments should be of the form argname or argname=value.
+  * The latter will be added as string fields; the former will
+  * be treated the same, with the string equal to "".
+  * Any prefixed dashes will be stripped/ignored.
+  * All argument names will be forced to lower case.
+  * @param args a list of String arguments
+  * @param addTo The message to add the arguments to
+  * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
+  * @returns B_NO_ERROR on success, B_OUT_OF_MEMORY on failure.
+  */
+status_t ParseArgs(const Queue<String> & args, Message & addTo, bool caseSensitive = false);
 
 /** Parses settings from the given file.  Works similarly to
  *  ParseArgs() (above), only the values are read from a file
@@ -44,9 +57,9 @@ status_t ParseArgs(int argc, char ** argv, Message & addTo, bool caseSensitive =
  *
  *  @param file File pointer to read from.  This file must be
  *              opened for reading, and will not be fclosed() by this function.
-  * @param addTo The message to add the arguments to
-  * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @param addTo The message to add the arguments to
+ *  @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseFile(FILE * file, Message & addTo, bool caseSensitive = false);
 
@@ -55,7 +68,7 @@ status_t ParseFile(FILE * file, Message & addTo, bool caseSensitive = false);
   * @param fileData a String containing the contents of the file to parse.
   * @param addTo The Message to add the arguments to
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
-  * @return B_NO_ERROR on success, or B_ERROR on failure.
+  * @return B_NO_ERROR on success, or an error code on failure.
   */
 status_t ParseFile(const String & fileData, Message & addTo, bool caseSensitive = false);
 
@@ -66,7 +79,7 @@ status_t ParseFile(const String & fileData, Message & addTo, bool caseSensitive 
  *                  This Message should be of the same structure as returned by ParseFile().
  *  @param file File pointer to write to.  This file must be
  *              opened for writing, and will not be fclosed() by this function.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t UnparseFile(const Message & readFrom, FILE * file);
 
@@ -84,7 +97,7 @@ String UnparseFile(const Message & readFrom);
  *  @param arg string (or string=value pair) to parse.
  *  @param addTo The Message to add the parsed arguments to (as String fields).
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseArg(const String & arg, Message & addTo, bool caseSensitive = false);
 
@@ -93,7 +106,7 @@ status_t ParseArg(const String & arg, Message & addTo, bool caseSensitive = fals
  *  @param arg A line of text, e.g.  arg1=blah arg2=borf arg3="quoted borf"
  *  @param addTo Message to add the argument results to.
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseArgs(const String & arg, Message & addTo, bool caseSensitive = false);
 
@@ -116,7 +129,7 @@ String UnparseArgs(const Message & argMsg);
   * @param argv As passed in to main
   * @param addTo The Queue to add the arguments to
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
-  * @returns B_NO_ERROR on success, B_ERROR on failure (out of memory)
+  * @returns B_NO_ERROR on success, B_OUT_OF_MEMORY on failure.
   */
 status_t ParseArgs(int argc, char ** argv, Queue<String> & addTo, bool caseSensitive = false);
 
@@ -130,7 +143,7 @@ status_t ParseArgs(int argc, char ** argv, Queue<String> & addTo, bool caseSensi
  *              opened for reading, and will not be fclosed() by this function.
   * @param addTo The Queue to add the arguments to
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseFile(FILE * file, Queue<String> & addTo, bool caseSensitive = false);
 
@@ -139,7 +152,7 @@ status_t ParseFile(FILE * file, Queue<String> & addTo, bool caseSensitive = fals
   * @param fileData a String containing the contents of the file to parse.
   * @param addTo The Queue to add the arguments to
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
-  * @return B_NO_ERROR on success, or B_ERROR on failure.
+  * @return B_NO_ERROR on success, or an error code on failure.
   */
 status_t ParseFile(const String & fileData, Queue<String> & addTo, bool caseSensitive = false);
 
@@ -148,7 +161,7 @@ status_t ParseFile(const String & fileData, Queue<String> & addTo, bool caseSens
  *  @param arg string to parse.
  *  @param addTo The Queue to add the argument to.
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseArg(const String & arg, Queue<String> & addTo, bool caseSensitive = false);
 
@@ -157,7 +170,7 @@ status_t ParseArg(const String & arg, Queue<String> & addTo, bool caseSensitive 
  *  @param arg A line of text, e.g.  arg1=blah arg2=borf arg3="quoted borf"
  *  @param addTo Queue to add the argument results to.
   * @param caseSensitive Defaults to false.  If true, the case of the arguments will be retained; if false, they will be forced to lower case.
- *  @return B_NO_ERROR on success, or B_ERROR on failure.
+ *  @return B_NO_ERROR on success, or an error code on failure.
  */
 status_t ParseArgs(const String & arg, Queue<String> & addTo, bool caseSensitive = false);
 
@@ -186,7 +199,7 @@ String UnparseArgs(const Queue<String> & argQ, uint32 startIdx=0, uint32 afterEn
  *                      If true, the function will fail if a port was not specified (e.g. "localhost:5555").
  *                      Defaults to false.
  *  @param argIdx The field index to use when parsing the argument string from (args).  Defaults to zero.
- *  @returns B_NO_ERROR if an argument was parsed, or B_ERROR if it wasn't.
+ *  @returns B_NO_ERROR if an argument was parsed, or an error code if it wasn't.
  */
 status_t ParseConnectArg(const Message & args, const String & fn, String & retHost, uint16 & retPort, bool portRequired = false, uint32 argIdx = 0);
 
@@ -198,7 +211,7 @@ status_t ParseConnectArg(const Message & args, const String & fn, String & retHo
  *  @param portRequired If false, this function will succeed even if no port was specified. 
  *                      If true, the function will fail if a port was not specified (e.g. "localhost:5555").
  *                      Defaults to false.
- *  @returns B_NO_ERROR if an argument was parsed, or B_ERROR if it wasn't.
+ *  @returns B_NO_ERROR if an argument was parsed, or an error code if it wasn't.
  */
 status_t ParseConnectArg(const String & arg, String & retHost, uint16 & retPort, bool portRequired = false);
 
@@ -215,7 +228,7 @@ String GetConnectString(const String & host, uint16 port);
  *  @param fn the field name to look for in (args)
  *  @param retPort On successful return, if a port number was parsed it will be written here.
  *  @param argIdx optional index to look in for the string to parse.
- *  @returns B_NO_ERROR if an argument was parsed, or B_ERROR if it wasn't.
+ *  @returns B_NO_ERROR if an argument was parsed, or an error code if it wasn't.
  */
 status_t ParsePortArg(const Message & args, const String & fn, uint16 & retPort, uint32 argIdx = 0);
 
@@ -252,6 +265,13 @@ void HandleStandardDaemonArgs(const Message & args);
   */
 void ExitWithoutCleanup(int exitCode);
 
+/** Causes this process to terminate abnormally (i.e. with a crash).
+  * Under Windows, this is implemented by calling RaiseException(EXCEPTION_BREAKPOINT).
+  * Under all other OS's, this is implemented by calling abort().
+  * @note this function will not return!
+  */
+void Crash();
+
 /** Calls fork(), setsid(), chdir(), umask(), etc, to fork an independent daemon process.
  *  Also closes all open file descriptors.
  *  Note that this function will call ExitWithoutCleanup() on the parent process if successful,
@@ -262,7 +282,7 @@ void ExitWithoutCleanup(int exitCode);
  *                     will not be rerouted.
  *  @param createOutputFileIfNecessary if set true, and (optOutputTo) can't be opened,
  *                                     (optOutputTo) will be created.
- *  @return B_NO_ERROR on success (the child process will see this), B_ERROR on failure.
+ *  @return B_NO_ERROR on success (the child process will see this), an error code on failure.
  */
 status_t BecomeDaemonProcess(const char * optNewDir = NULL, const char * optOutputTo = "/dev/null", bool createOutputFileIfNecessary = true);
 
@@ -277,12 +297,13 @@ bool IsDaemonProcess();
  *                     will not be rerouted.
  *  @param createOutputFileIfNecessary if set true, and (optOutputTo) can't be opened,
  *                                     (optOutputTo) will be created.
- *  @return B_NO_ERROR (twice!) on success, B_ERROR on failure.
+ *  @return B_NO_ERROR (twice!) on success, an error code on failure.
  */ 
 status_t SpawnDaemonProcess(bool & returningAsParent, const char * optNewDir = NULL, const char * optOutputTo = "/dev/null", bool createOutputFileIfNecessary = true);
 
 /** Convenience function:  Removes any ANSI formatting escape-sequences from (s), so 
   * that (s) can be displayed as plain text without a bunch of garbage showing up in it.
+  * @param s a String to remove ANSI sequences from, in-place.
   */
 void RemoveANSISequences(String & s);
 
@@ -292,16 +313,22 @@ void RemoveANSISequences(String & s);
   * Note that this string cleans up just a single part of a DNS hostname path.
   * If you want to clean up a path string (e.g. "www.foo.com"), call CleanupDNSPath() instead.
   * @param s A string that is presented as a candidate for being a DNS label.
+  * @param optAdditionalAllowedChars if specified, this string represents a list of other
+  *                                  characters that we will allow into the returned String as a
+  *                                  special case (i.e. we won't filter them out)
   * @returns the DNS label that most closely resembles (s).
   */
-String CleanupDNSLabel(const String & s);
+String CleanupDNSLabel(const String & s, const String & optAdditionalAllowedChars = GetEmptyString());
 
 /** Given a DNS path string (e.g. "www.foo.com") runs each dot-separated portion of the
   * path through CleanupDNSLabel() and returns the cleaned up result.
   * @param s A string that is presented as a candidate for being a DNS path.
+  * @param optAdditionalAllowedChars if specified, this string represents a list of other
+  *                                  characters that we will allow into the returned String as a
+  *                                  special case (i.e. we won't filter them out)
   * @returns the DNS path that most closely resembles (s).
   */
-String CleanupDNSPath(const String & s);
+String CleanupDNSPath(const String & s, const String & optAdditionalAllowedChars = GetEmptyString());
 
 /** Convenience function.  Given a buffer of arbitrary data, returns a nybble-ized String
   * that represents that same data using only the ASCII characters 'A' through 'P.  The
@@ -309,7 +336,7 @@ String CleanupDNSPath(const String & s);
   * data can be recovered from the String by calling DenybbleizeData().
   * @param buf The data to nybbleize
   * @param retString On success, the nybbleized String is written here.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t NybbleizeData(const ByteBuffer & buf, String & retString);
 
@@ -320,7 +347,7 @@ status_t NybbleizeData(const ByteBuffer & buf, String & retString);
   * @param inBytes Pointer to the bytes to nybbleize.
   * @param numInBytes Number of bytes pointed to by (inBytes).
   * @param retString On success, the nybbleized String is written here.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t NybbleizeData(const uint8 * inBytes, uint32 numInBytes, String & retString);
 
@@ -328,7 +355,7 @@ status_t NybbleizeData(const uint8 * inBytes, uint32 numInBytes, String & retStr
   * returns the eqivalent ByteBuffer.
   * @param nybbleizedText The String to de-nybbleize
   * @param retBuf On success, the de-nybbleized data is written here.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t DenybbleizeData(const String & nybbleizedText, ByteBuffer & retBuf);
 
@@ -547,11 +574,13 @@ String HexBytesToString(const Queue<uint8> & bytes);
   * @param batchMsg Reference to the Message that you will want to eventually
   *                 send to the server.  This Reference will be modified.
   *                 May be a NULL ref.
-  * @param newMsg Reference to the Message to add to (batchMsg).  May not
-  *                 be a NULL ref.
-  * @returns B_NO_ERROR on success, or B_ERROR on error (out of memory?)
+  * @param newMsg Reference to the Message to add to (batchMsg).  May not be a NULL ref.
+  * @param prepend If set to true, the new Message will be added to the beginning
+  *                of the assembled batch-Message's sub-Messages list, rather than the end.
+  *                Default to false.
+  * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
   */
-status_t AssembleBatchMessage(MessageRef & batchMsg, const MessageRef & newMsg);
+status_t AssembleBatchMessage(MessageRef & batchMsg, const MessageRef & newMsg, bool prepend = false);
 
 /** Returns true iff the file with the specified path exists. 
   * @param filePath Path of the file to check for.
@@ -559,23 +588,27 @@ status_t AssembleBatchMessage(MessageRef & batchMsg, const MessageRef & newMsg);
   */
 bool FileExists(const char * filePath);
 
-/** Attempts to rename from (oldPath) to (newPath).
+/** Attempts to rename a file or directory from (oldPath) to (newPath).
   * @param oldPath the path of an existing file or directory.
   * @param newPath the new name that the file should have.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t RenameFile(const char * oldPath, const char * newPath);
 
 /** Attempts to copy from (oldPath) to (newPath).
   * @param oldPath the path of an existing file or directory.
   * @param newPath the name that the new file should have.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @param allowCopyFolderRecursive If set true, and (oldPath) points to a folder, then this
+  *                                 function will recursively copy the folder to the specified destination path.
+  *                                 If left false (the default), then this method will return an error code if 
+  *                                 (oldPath) points to a folder instead of to a file.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
-status_t CopyFile(const char * oldPath, const char * newPath);
+status_t CopyFile(const char * oldPath, const char * newPath, bool allowCopyFolderRecursive = false);
 
 /** Attempts to delete the file with the specified file path.
   * @param filePath Path of the file to delete.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.
+  * @returns B_NO_ERROR on success, or an error code on failure.
   */
 status_t DeleteFile(const char * filePath);
 
@@ -592,8 +625,12 @@ String GetHumanReadableProgramNameFromArgv0(const char * argv0);
   * standard AllocConsole() and freopen() trick to cause a
   * Console window to appear and be available for stdin/stdout/stderr
   * to operate on.
+  * @param optOutFilePath If non-NULL, then instead of opening a console
+  *                       window, the program's stdout and stderr output
+  *                       will be redirected into a file that will be created
+  *                       (or overwritten) at this path.  Defaults to NULL.
   */
-void Win32AllocateStdioConsole();
+void Win32AllocateStdioConsole(const char * optOutFilePath = NULL);
 #endif
 
 /** Returns a value between 0.0f and 1.0f, indicating what percentage of the
@@ -606,8 +643,15 @@ void Win32AllocateStdioConsole();
   */
 float GetSystemMemoryUsagePercentage();
 
+/** Returns the (approximate) current size of the process-heap for the current process, in bytes.
+  * Returns 0 on failure (i.e. unable to determine heap size)
+  * @note this function is currently implemented for MacOS/X, Windows, and Linux only.
+  *       On other OS's it will always return 0.
+  */
+uint64 GetProcessMemoryUsage();
+
 /** @} */ // end of miscutilityfunctions doxygen group
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

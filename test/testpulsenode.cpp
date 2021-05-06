@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+
 #include "dataio/NullDataIO.h"
 #include "reflector/AbstractReflectSession.h"
 #include "reflector/ReflectServer.h"
@@ -19,7 +20,9 @@ static const uint64 PULSE_INTERVAL  = 100000;   // have one child fire every 100
 class TestPulseChild : public PulseNode
 {
 public:
-   TestPulseChild(uint64 baseTime, int idx) : _fireTime(baseTime+(idx*PULSE_INTERVAL)), _idx(idx) 
+   TestPulseChild(uint64 baseTime, int idx)
+      : _fireTime(baseTime+(idx*PULSE_INTERVAL))
+      , _idx(idx)
    {
       LogTime(MUSCLE_LOG_INFO, "TestPulseChild %i (%p) Initially scheduled for " UINT64_FORMAT_SPEC " (time until = " INT64_FORMAT_SPEC ")\n", idx, this, _fireTime, _fireTime-GetRunTime64());
    } 
@@ -49,13 +52,14 @@ public:
    {
       LogTime(MUSCLE_LOG_INFO, "TestSession::AttachedToServer() called...\n");
 
-      if (AbstractReflectSession::AttachedToServer() != B_NO_ERROR) return B_ERROR;
+      MRETURN_ON_ERROR(AbstractReflectSession::AttachedToServer());
 
-      uint64 baseTime = GetRunTime64();
+      const uint64 baseTime = GetRunTime64();
       for (int i=0; i<NUM_PULSE_CHILDREN; i++)
       {
          TestPulseChild * tpc = new TestPulseChild(baseTime, i);
-         if ((_tpcs.AddTail(tpc) != B_NO_ERROR)||(PutPulseChild(tpc) != B_NO_ERROR)) LogTime(MUSCLE_LOG_CRITICALERROR, "error creating pulse child #%i!\n", i);
+         status_t ret;
+         if ((_tpcs.AddTail(tpc).IsError(ret))||(PutPulseChild(tpc).IsError(ret))) LogTime(MUSCLE_LOG_CRITICALERROR, "Error [%s] creating pulse child #%i!\n", ret(), i);
       }
       return B_NO_ERROR;
    }
@@ -70,7 +74,6 @@ public:
    }
 
    virtual void MessageReceivedFromGateway(const MessageRef &, void *) {/* empty */}
-   virtual const char * GetTypeName() const {return "TestPulseChild";}
 
 private:
    Queue<TestPulseChild *> _tpcs;
@@ -86,12 +89,15 @@ int main(int argc, char ** argv)
    ReflectServer server;
    TestSession session;
 
-   if (server.AddNewSession(AbstractReflectSessionRef(&session, false)) == B_NO_ERROR)
+   status_t ret;
+   if (server.AddNewSession(AbstractReflectSessionRef(&session, false)).IsOK(ret))
    {
       LogTime(MUSCLE_LOG_INFO, "Beginning PulseNode test...\n");
-      if (server.ServerProcessLoop() == B_NO_ERROR) LogTime(MUSCLE_LOG_INFO, "testpulsechild event loop exiting.\n");
-                                               else LogTime(MUSCLE_LOG_CRITICALERROR, "testpulsechild event loop exiting with an error condition.\n");
+      if (server.ServerProcessLoop().IsOK(ret)) LogTime(MUSCLE_LOG_INFO, "testpulsechild event loop exiting.\n");
+                                           else LogTime(MUSCLE_LOG_CRITICALERROR, "testpulsechild event loop exiting with error condition [%s].\n", ret());
    }
+   else LogTime(MUSCLE_LOG_CRITICALERROR, "AddNewSession() failed [%s]\n", ret());
+
    server.Cleanup();
 
    return 0;

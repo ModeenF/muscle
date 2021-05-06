@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "system/SharedMemory.h"
+#include "system/SetupSystem.h"
 #include "util/NetworkUtilityFunctions.h"
 #include "util/ObjectPool.h"
 #include "util/RefCount.h"
@@ -49,10 +50,10 @@ int main(int argc, char ** argv)
 
    while(1)
    {
-      uint32 max = (rand()%10)+1;
+      const uint32 max = (rand()%10)+1;
       for (uint32 i=0; i<MAX_NUM_REFS; i++) 
       {
-         uint32 idx = rand()%MAX_NUM_REFS;
+         const uint32 idx = rand()%MAX_NUM_REFS;
          if ((rand()%max)==0) refs[idx] = GetCounterRefFromPool();
                          else refs[idx].Reset();
       }
@@ -61,12 +62,14 @@ int main(int argc, char ** argv)
 
       printf("(max=" UINT32_FORMAT_SPEC ") Continue? y/n\n", max);
       char buf[64] = "";
-      if (interactive) fgets(buf, sizeof(buf), stdin);
-           if (buf[0] == 'n') break;
-      else if (buf[0] == 'c') 
+      if ((interactive)&&(fgets(buf, sizeof(buf), stdin)))
       {
-         for (uint32 i=0; i<MAX_NUM_REFS; i++) refs[i].Reset();
-         AbstractObjectManager::GlobalPrintRecyclersToStream();
+              if (buf[0] == 'n') break;
+         else if (buf[0] == 'c') 
+         {
+            for (uint32 i=0; i<MAX_NUM_REFS; i++) refs[i].Reset();
+            AbstractObjectManager::GlobalPrintRecyclersToStream();
+         }
       }
    }
 

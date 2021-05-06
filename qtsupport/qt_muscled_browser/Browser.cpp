@@ -21,7 +21,9 @@ using namespace muscle;
 class NodeTreeWidgetItem : public QTreeWidgetItem
 {
 public:
-   explicit NodeTreeWidgetItem(QTreeWidget * parent) : QTreeWidgetItem(parent, QStringList("/")) {setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);}
+   explicit NodeTreeWidgetItem(QTreeWidget * parent)
+      : QTreeWidgetItem(parent, QStringList("/")) 
+{setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);}
    NodeTreeWidgetItem(NodeTreeWidgetItem * parent, const String & name) : QTreeWidgetItem(parent, QStringList(name())), _name(name) {setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);}
 
    NodeTreeWidgetItem * GetChildByName(const String & name)
@@ -51,8 +53,11 @@ private:
    String _name;
 };
 
-BrowserWindow :: BrowserWindow() : _isConnecting(false), _isConnected(false)
+BrowserWindow :: BrowserWindow()
+   : _isConnecting(false)
+   , _isConnected(false)
 {
+   setAttribute(Qt::WA_DeleteOnClose);
    setWindowTitle("MUSCLE Database Browser");
 
    const int defaultWindowWidth  = 640;
@@ -67,6 +72,10 @@ BrowserWindow :: BrowserWindow() : _isConnecting(false), _isConnected(false)
    {
       QBoxLayout * topRowLayout = new QBoxLayout(QBoxLayout::LeftToRight, topRow);
       topRowLayout->setMargin(2);
+
+      QPushButton * cloneButton = new QPushButton("Clone Window");
+      connect(cloneButton, SIGNAL(clicked()), this, SLOT(CloneWindow()));
+      topRowLayout->addWidget(cloneButton);
 
       _stateLabel = new QLabel;
       topRowLayout->addWidget(_stateLabel);
@@ -168,15 +177,14 @@ void BrowserWindow :: SetNodeSubscribed(const String & nodePath, bool isSubscrib
          MessageRef subMsg = GetMessageFromPool(PR_COMMAND_SETPARAMETERS);
          subMsg()->AddBool(subscribePath.Prepend("SUBSCRIBE:"), true);
          _subscriptions.PutWithDefault(subscribePath);
-         printf("Subscribed to path [%s]\n", subscribePath());
+         LogTime(MUSCLE_LOG_INFO, "BrowserWindow %p subscribed to path [%s]\n", this, subscribePath());
          _mtt.SendMessageToSessions(subMsg);
-         
       }
       else
       {
          MessageRef unsubMsg = GetMessageFromPool(PR_COMMAND_REMOVEPARAMETERS);
          unsubMsg()->AddString(PR_NAME_KEYS, EscapeRegexTokens(subscribePath).Prepend("SUBSCRIBE:"));
-         printf("Unsubscribed from path [%s]\n", subscribePath());
+         LogTime(MUSCLE_LOG_INFO, "BrowserWindow %p unsubscribed from path [%s]\n", this, subscribePath());
          _subscriptions.Remove(subscribePath);
 
          // Also remove from our tree of locally-cached data any nodes that start with this path
@@ -184,7 +192,7 @@ void BrowserWindow :: SetNodeSubscribed(const String & nodePath, bool isSubscrib
          for (HashtableIterator<String, MessageRef> iter(_pathToMessage); iter.HasData(); iter++) if (iter.GetKey().StartsWith(removePath)) 
          {
             _pathToMessage.Remove(iter.GetKey());
-            printf("   Dropped node for [%s]\n", iter.GetKey()());
+            LogTime(MUSCLE_LOG_INFO, "BrowserWindow %p dropped node for [%s]\n", this, iter.GetKey()());
          }
 
          _mtt.SendMessageToSessions(unsubMsg);
@@ -260,12 +268,12 @@ void BrowserWindow :: MessageReceivedFromServer(const MessageRef & msg)
          // Look for strings that indicate that subscribed nodes were removed from the tree
          {
             const String * nodePath;
-            for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, &nodePath) == B_NO_ERROR); i++)
+            for (int i=0; (msg()->FindString(PR_NAME_REMOVED_DATAITEMS, i, &nodePath).IsOK()); i++)
             {
-               if (_pathToMessage.Remove(*nodePath) == B_NO_ERROR)
+               if (_pathToMessage.Remove(*nodePath).IsOK())
                {
                    UpdateDataNodeInTreeView(*nodePath);
-                   printf("Removed node at [%s]\n", nodePath->Cstr());
+                   LogTime(MUSCLE_LOG_INFO, "BrowserWindow %p removed node at [%s]\n", this, nodePath->Cstr());
                }
             }
          }
@@ -276,12 +284,12 @@ void BrowserWindow :: MessageReceivedFromServer(const MessageRef & msg)
             {
                const String & nodePath = iter.GetFieldName();
                MessageRef data;
-               for (uint32 i=0; msg()->FindMessage(nodePath, i, data) == B_NO_ERROR; i++)
+               for (uint32 i=0; msg()->FindMessage(nodePath, i, data).IsOK(); i++)
                {
-                  if (_pathToMessage.Put(nodePath, data) == B_NO_ERROR)
+                  if (_pathToMessage.Put(nodePath, data).IsOK())
                   {
                      UpdateDataNodeInTreeView(nodePath);
-                     printf("   Added/Updated node at [%s]\n", nodePath());
+                     LogTime(MUSCLE_LOG_INFO, "BrowserWindow %p added/updated node at [%s]\n", this, nodePath());
                   } 
                }
             }
@@ -298,6 +306,13 @@ void BrowserWindow :: DisconnectedFromServer()
    UpdateState();
 }
 
+void BrowserWindow :: CloneWindow()
+{
+   BrowserWindow * clone = new BrowserWindow();
+   clone->_serverName->setText(_serverName->text());
+   clone->show();
+}
+
 void BrowserWindow :: ConnectButtonClicked()
 {
    bool wasConnecting = ((_isConnected)||(_isConnecting));
@@ -308,7 +323,7 @@ void BrowserWindow :: ConnectButtonClicked()
    {
       String serverName;
       uint16 port = 2960;
-      if ((ParseConnectArg(FromQ(_serverName->text()), serverName, port) == B_NO_ERROR)&&(_mtt.AddNewConnectSession(serverName, port) == B_NO_ERROR)&&(_mtt.StartInternalThread() == B_NO_ERROR)) _isConnecting = true;
+      if ((ParseConnectArg(FromQ(_serverName->text()), serverName, port).IsOK())&&(_mtt.AddNewConnectSession(serverName, port).IsOK())&&(_mtt.StartInternalThread().IsOK())) _isConnecting = true;
    }      
    UpdateState();
 }
@@ -343,7 +358,7 @@ int main(int argc, char ** argv)
    CompleteSetupSystem css;
    QApplication app(argc, argv);
 
-   BrowserWindow bw;
-   bw.show();
+   BrowserWindow * bw = new BrowserWindow;  // must be on the heap since we call setAttribute(Qt::WA_DeleteOnClose) in the BrowserWindow constructor
+   bw->show();
    return app.exec();
 }

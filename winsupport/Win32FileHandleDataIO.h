@@ -3,19 +3,19 @@
 #ifndef MuscleWin32FileHandleDataIO_h
 #define MuscleWin32FileHandleDataIO_h
 
-#include "dataio/DataIO.h"
+#include "dataio/SeekableDataIO.h"
 
 namespace muscle {
 
 /**
  *  Data I/O to and from a Win32 style file descriptor 
  */
-class Win32FileHandleDataIO : public DataIO, private CountedObject<Win32FileHandleDataIO>
+class Win32FileHandleDataIO : public SeekableDataIO
 {
 public:
    /**
     *  Constructor.
-    *  @param handle The file descriptor to use.  Becomes property of this FileHandleDataIO object.
+    *  @param handle The file descriptor to use.  Becomes property of this Win32FileHandleDataIO object.
     */
    Win32FileHandleDataIO(::HANDLE handle);
 
@@ -45,14 +45,13 @@ public:
     *  Implemented as a no-op (I don't believe file descriptors need flushing?)
     */
    virtual void FlushOutput();
-   
+
    /**
-    * Enables or diables blocking I/O on this file descriptor.
-    * If this object is to be used by an AbstractMessageIOGateway,
-    * then non-blocking I/O is usually better to use.
-    * NOTE: Win32 File handles currently do not use this flag.
-    * @param blocking If true, file descriptor is set to blocking I/O mode.  Otherwise, non-blocking I/O.
-    * @return B_NO_ERROR on success, B_ERROR on error.
+    * If implemented, this would enable or disable blocking I/O on this Win32FileHandleDataIO.
+    * NOTE: Win32FileHandleDataIO currently does not use this flag; as only blocking-mode is supported.
+    * @param blocking If true, indicates a desire to set this object to blocking I/O mode.  Otherwise, to non-blocking I/O.
+    * @return B_NO_ERROR if (blocking) was passed in as true, or B_UNIMPLEMENTED if (blocking) was passed in as false.
+    * @note this method is currently a no-op.
     */
    status_t SetBlockingIOEnabled(bool blocking);
 
@@ -61,10 +60,10 @@ public:
    /** Seeks to the specified point in the file stream.
     *  @param offset Where to seek to.
     *  @param whence IO_SEEK_SET, IO_SEEK_CUR, or IO_SEEK_END. 
-    *  @return B_NO_ERROR on success, B_ERROR on failure.
+    *  @return B_NO_ERROR on success, an error code on failure.
     */ 
    virtual status_t Seek(int64 offset, int whence);
-   
+
    /** Returns our current position in the file */
    virtual int64 GetPosition() const;
 
@@ -89,9 +88,12 @@ public:
 
 private:
    ::HANDLE _handle;
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(Win32FileHandleDataIO);
+};
+DECLARE_REFTYPES(Win32FileHandleDataIO);
+
+} // end namespace muscle
 
 #endif
 

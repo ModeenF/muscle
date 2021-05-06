@@ -1,12 +1,20 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#include <typeinfo>   // For typeid().name()
+
+#if defined(__GNUC__) 
+# include <cxxabi.h>  // for abi::__cxa_demangle()
+#endif
+
 #include "reflector/ServerComponent.h"
 #include "reflector/ReflectServer.h"
 
 namespace muscle {
 
 ServerComponent ::
-ServerComponent() : _owner(NULL), _fullyAttached(false)
+ServerComponent()
+   : _owner(NULL)
+   , _fullyAttached(false)
 {
    // empty
 }
@@ -17,11 +25,35 @@ ServerComponent ::
    MASSERT(_owner == NULL, "ServerComponent deleted while still attached to its ReflectServer!  Maybe you did not call Cleanup() on the ReflectServer object, or did not forward an AboutToDetachFromServer() call to your superclass's implementation?");
 }
 
+static String DemangleTypeName(const char * mangled_name)
+{
+   String ret = mangled_name;
+
+#if defined(__GNUC__) 
+   // Stolen from Wikipedia:  https://en.wikipedia.org/wiki/Name_mangling#Standardised_name_mangling_in_C++
+   int status = -1;
+   char *demangled_name = abi::__cxa_demangle(ret(), NULL, NULL, &status);
+   ret = demangled_name;
+   free(demangled_name);
+#endif
+
+   const int32 doubleColonIdx = ret.IndexOf("::");
+   return (doubleColonIdx >= 0) ? ret.Substring(doubleColonIdx+2) : ret;   // remove namespace prefix
+}
+
 status_t 
 ServerComponent ::
 AttachedToServer()
 {
    return B_NO_ERROR;
+}
+
+const char *
+ServerComponent ::
+GetTypeName() const
+{
+   if ((_fullyAttached == false)||(_rttiTypeName.IsEmpty())) _rttiTypeName = DemangleTypeName(typeid(*this).name());
+   return _rttiTypeName();
 }
 
 void
@@ -89,7 +121,7 @@ AddNewSession(const AbstractReflectSessionRef & ref, const ConstSocketRef & sock
 
 status_t
 ServerComponent ::
-AddNewConnectSession(const AbstractReflectSessionRef & ref, const ip_address & ip, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod)
+AddNewConnectSession(const AbstractReflectSessionRef & ref, const IPAddress & ip, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod)
 {
    MASSERT(_owner, "Can not call AddNewConnectSession() while not attached to the server");
    return _owner->AddNewConnectSession(ref, ip, port, autoReconnectDelay, maxAsyncConnectPeriod);
@@ -97,7 +129,7 @@ AddNewConnectSession(const AbstractReflectSessionRef & ref, const ip_address & i
 
 status_t
 ServerComponent ::
-AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const ip_address & ip, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod)
+AddNewDormantConnectSession(const AbstractReflectSessionRef & ref, const IPAddress & ip, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod)
 {
    MASSERT(_owner, "Can not call AddNewDormantConnectSession() while not attached to the server");
    return _owner->AddNewDormantConnectSession(ref, ip, port, autoReconnectDelay, maxAsyncConnectPeriod);
@@ -153,7 +185,7 @@ GetNumUsedBytes() const
 
 status_t
 ServerComponent ::
-PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & factoryRef, const ip_address & optInterfaceIP, uint16 * optRetPort)
+PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & factoryRef, const IPAddress & optInterfaceIP, uint16 * optRetPort)
 {
    MASSERT(_owner, "Can not call PutAcceptFactory() while not attached to the server");
    return _owner->PutAcceptFactory(port, factoryRef, optInterfaceIP, optRetPort);
@@ -161,7 +193,7 @@ PutAcceptFactory(uint16 port, const ReflectSessionFactoryRef & factoryRef, const
 
 status_t
 ServerComponent ::
-RemoveAcceptFactory(uint16 port, const ip_address & optInterfaceIP)
+RemoveAcceptFactory(uint16 port, const IPAddress & optInterfaceIP)
 {
    MASSERT(_owner, "Can not call RemoveAcceptFactory() while not attached to the server");
    return _owner->RemoveAcceptFactory(port, optInterfaceIP);
@@ -181,4 +213,4 @@ MessageReceivedFromFactory(ReflectSessionFactory &, const MessageRef &, void * )
    // empty
 }
 
-}; // end namespace muscle
+} // end namespace muscle

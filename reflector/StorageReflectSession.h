@@ -7,19 +7,19 @@
 #include "reflector/DumbReflectSession.h"
 #include "reflector/StorageReflectConstants.h"
 #include "regex/PathMatcher.h"
+#include "support/BitChord.h"
 
 namespace muscle {
 
 /**
  *  This is a factory class that returns new StorageReflectSession objects.
  */
-class StorageReflectSessionFactory : public ReflectSessionFactory, private CountedObject<StorageReflectSessionFactory>
+class StorageReflectSessionFactory : public ReflectSessionFactory
 {
 public:
    /** Default constructor.  The maximum incoming message size is set to "unlimited" by default.  */
    StorageReflectSessionFactory();
 
-   /** Returns a new StorageReflectSession */
    virtual AbstractReflectSessionRef CreateSession(const String & clientAddress, const IPAddressAndPort & factoryInfo);
 
    /** Sets the maximum-bytes-per-incoming-message limit that we will set on the StorageReflectSession
@@ -33,15 +33,18 @@ public:
 
 protected:
    /** If we have a limited maximum size for incoming messages, then this method 
-     * demand-allocate the session's gateway, and set its max incoming message size if possible.
-     * @return B_NO_ERROR on success, or B_ERROR on failure (out of memory or the created gateway
-     *         wasn't a MessageIOGateway)
+     * demand-allocates the session's gateway, and set its max incoming message size if possible.
+     * @param session the session whose gateway we should call SetMaxIncomingMessageSize() on
+     * @return B_NO_ERROR on success, or B_BAD_OBJECT if the factory's gateway wasn't a MessageIOGateway.
      */
    status_t SetMaxIncomingMessageSizeFor(AbstractReflectSession * session) const;
 
 private:
    uint32 _maxIncomingMessageSize;
+
+   DECLARE_COUNTED_OBJECT(StorageReflectSessionFactory);
 };
+DECLARE_REFTYPES(StorageReflectSessionFactory);
 
 /** This class is an interface to an object that can prune the traversals used
   * by RestoreNodeTreeFromMessage(), SaveNodeTreeToMessage(), and CloneDataNodeSubtree()
@@ -68,6 +71,7 @@ public:
    virtual bool MatchPath(const String & path, MessageRef & nodeData) const = 0;
 };
 
+/** Macro for declaring a MUSCLE DataNode-tree traversal callback within a class.  Declares both the callback method, and a static callback-method that is used to convert the callback's This argument into a genuine C++-"this"-based method call. */
 #define DECLARE_MUSCLE_TRAVERSAL_CALLBACK(sessionClass, funcName) \
  int funcName(DataNode & node, void * userData); \
  static int funcName##Func(StorageReflectSession * This, DataNode & node, void * userData) {return (static_cast<sessionClass *>(This))->funcName(node, userData);}
@@ -78,7 +82,7 @@ public:
  *  See StorageReflectConstants.h and/or "The Beginner's Guide.html"
  *  for details.
  */
-class StorageReflectSession : public DumbReflectSession, private CountedObject<StorageReflectSession>
+class StorageReflectSession : public DumbReflectSession
 {
 public:
    /** Default constructor. */
@@ -88,7 +92,7 @@ public:
    virtual ~StorageReflectSession();
 
    /** Called after the constructor, when the session is ready to interact with the server.
-    *  @return B_NO_ERROR if everything is okay to go, B_ERROR if there was a problem
+    *  @return B_NO_ERROR if everything is okay to go, or an error code if there was a problem
     *          setting up, or if the IP address of our client has been banned. 
     */
    virtual status_t AttachedToServer();
@@ -96,14 +100,11 @@ public:
    /** Implemented to remove our nodes from the server-side database and do misc cleanup. */
    virtual void AboutToDetachFromServer();
 
-   /** Called when a new message is received from our IO gateway. */
+   // Called when a new message is received from our IO gateway.
    virtual void MessageReceivedFromGateway(const MessageRef & msg, void * userData);
 
-   /** Overridden to call PushSubscriptionMessages() */
+   // Overridden to call PushSubscriptionMessages()
    virtual void AfterMessageReceivedFromGateway(const MessageRef & msg, void * userData);
-
-   /** Returns a human-readable label for this session type:  "Session" */
-   virtual const char * GetTypeName() const {return "Session";}
 
    /** Prints to stdout a report of what sessions are currently present on this server, and how
      * much memory each of them is currently using for various things.  Useful for understanding
@@ -119,29 +120,48 @@ public:
    /** Returns a read-only reference to our parameters message */
    const Message & GetParametersConst() const {return _parameters;}
 
+   /** Convenience method:  Returns the effective Parameters Message for this session (i.e. as
+     * would be returned in response to a PR_COMMAND_GETPARAMETERS Message from our client)
+     */
+   MessageRef GetEffectiveParameters() const;
+
 protected:
+   /// Flags that may be passed to a NotifySubscribersThatNodeChanged() callback
+   enum {
+      NODE_CHANGE_FLAG_ISBEINGREMOVED = 0, ///< if set, the specified DataNode is being removed as part of this callback
+      NODE_CHANGE_FLAG_ENABLESUPERCEDE,    ///< if set, the user has specified that this node-update should implicitly cancel any currently-queued earlier updates regarding this node
+      NUM_NODE_CHANGE_FLAGS                ///< Guard value
+   };
+   DECLARE_BITCHORD_FLAGS_TYPE(NodeChangeFlags, NUM_NODE_CHANGE_FLAGS);
+
    /**
     * Create or Set the value of a data node.
     * @param nodePath Should be the path relative to the home dir (e.g. "MyNode/Child1/Grandchild2")
     * @param dataMsgRef The value to set the node to
-    * @param allowOverwriteData Indicates whether existing node-data may be overwritten.  If false, the method will fail if the specified node already exists.
-    * @param allowCreateNode indicates whether new nodes may be created.  (If false, the method will fail if any node in the specified node path doesn't already exist)
-    * @param quiet If set to true, subscribers won't be updated regarding this change to the database.
-    * @param addToIndex If set to true, this node will be inserted under its parent as a new indexed node, rather than doing the regular add/replace bit.
+    * @param flags a bit-chord of SETDATANODE_FLAG_* bits that can be used to modify this call's behavior.  Defaults to no-flags-set.
     * @param optInsertBefore If (addToIndex) is true, this may be the name of the node to insert this new node before in the index.
     *                        If NULL, the new node will be appended to the end of the index.  If (addToIndex) is false, this argument is ignored.
-    * @return B_NO_ERROR on success, or B_ERROR on failure.
+    * @return B_NO_ERROR on success, or an error code on failure.
     */
-   virtual status_t SetDataNode(const String & nodePath, const MessageRef & dataMsgRef, bool allowOverwriteData=true, bool allowCreateNode=true, bool quiet=false, bool addToIndex=false, const String *optInsertBefore=NULL);
+   virtual status_t SetDataNode(const String & nodePath, const MessageRef & dataMsgRef, SetDataNodeFlags flags = SetDataNodeFlags(), const String *optInsertBefore=NULL);
 
    /** Remove all nodes that match (nodePath).
     *  @param nodePath A relative path indicating node(s) to remove.  Wildcarding is okay.
     *  @param filterRef If non-NULL, we'll use the given QueryFilter object to filter out our result set.
     *                   Only nodes whose Messages match the QueryFilter will be removed.  Default is a NULL reference.
     *  @param quiet If set to true, subscribers won't be updated regarding this change to the database
-    *  @return B_NO_ERROR on success, or B_ERROR on failure.
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
     */
    virtual status_t RemoveDataNodes(const String & nodePath, const ConstQueryFilterRef & filterRef = ConstQueryFilterRef(), bool quiet = false);
+
+   /** Moves the node(s) specified in (nodePath) to a new location within their parent nodes' node-index.
+    *  @param nodePath A relative path indicating node(s) that we want to move within their parents' node-index.  Wildcarding is okay.
+    *  @param optBefore if non-NULL, the moved nodes in the index will be moved to just before the node with this name.  If NULL, they'll be moved to the end of the index.
+    *  @param filterRef If non-NULL, we'll use the given QueryFilter object to filter out our result set.
+    *                   Only nodes whose Messages match the QueryFilter will have their parent-nodes' index modified.  Default is a NULL reference.
+    *  @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
+    */
+    virtual status_t MoveIndexEntries(const String & nodePath, const String * optBefore, const ConstQueryFilterRef & filterRef = ConstQueryFilterRef());
 
    /**
     * Recursively saves a given subtree of the node database into the given Message object, for safe-keeping.
@@ -155,26 +175,25 @@ protected:
     *                 If (maxDepth) is zero, only (node) will be saved.
     * @param optPruner If set non-NULL, this object will be used as a callback to prune the traversal, and optionally
     *                  to filter the data that gets saved into (msg).
-    * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    * @returns B_NO_ERROR on success, or an error code on failure.
     */
    status_t SaveNodeTreeToMessage(Message & msg, const DataNode * node, const String & path, bool saveData, uint32 maxDepth = MUSCLE_NO_LIMIT, const ITraversalPruner * optPruner = NULL) const;
 
    /**
     * Recursively creates or updates a subtree of the node database from the given Message object.
     * (It's a bit more efficient than it looks, since all data Messages are reference counted rather than copied)
-    * @param msg the Message to restore the subtree into.  This Message is typically one that was created earlier by SaveNodeTreeToMessage().
-    * @param path The relative path of the root node, e.g. "" is your home session node.
+    * @param msg the Message to restore the subtree from.  This Message is typically one that was created earlier by SaveNodeTreeToMessage().
+    * @param path The relative path of the root node to add restored nodes into, e.g. "" is your home session node.
     * @param loadData Whether or not the payload Message of (node) should be restored.  The payload Messages of (node)'s children will always be restored no matter what.
-    * @param appendToIndex Used in the recursion to handle restoring indexed nodes.  You will usually want to Leave it as false when you call this method.
+    * @param flags Optional bit-chord of SETDATANODE_FLAG_* bits to affect our behavior.  Defaults to no-flags-set.
     * @param maxDepth How many levels of children should be restored from the Message.  If left as MUSCLE_NO_LIMIT (the default),
     *                 the entire subtree will be restored; otherwise the tree will be clipped to at most (maxDepth) levels.
     *                 If (maxDepth) is zero, only (node) will be restored.
     * @param optPruner If set non-NULL, this object will be used as a callback to prune the traversal, and optionally
     *                  to filter the data that gets loaded from (msg).
-    * @param quiet If set to true, subscribers won't be updated regarding this change to the database
-    * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    * @returns B_NO_ERROR on success, or an error code on failure.
     */
-   status_t RestoreNodeTreeFromMessage(const Message & msg, const String & path, bool loadData, bool appendToIndex = false, uint32 maxDepth = MUSCLE_NO_LIMIT, const ITraversalPruner * optPruner = NULL, bool quiet = false);
+   status_t RestoreNodeTreeFromMessage(const Message & msg, const String & path, bool loadData, SetDataNodeFlags flags = SetDataNodeFlags(), uint32 maxDepth = MUSCLE_NO_LIMIT, const ITraversalPruner * optPruner = NULL);
 
    /** 
      * Create and insert a new node into one or more ordered child indices in the node tree.
@@ -182,7 +201,7 @@ protected:
      * Message, only it gives more information back about what happened.
      * @param insertMsg a PR_COMMAND_INSERTORDEREDDATA Message specifying what insertions should be done.
      * @param optRetNewNodes If non-NULL, any newly-created DataNodes will be adde to this table for your inspection.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure.
+     * @returns B_NO_ERROR on success, or an error code on failure.
      */
    virtual status_t InsertOrderedData(const MessageRef & insertMsg, Hashtable<String, DataNodeRef> * optRetNewNodes);
 
@@ -193,7 +212,7 @@ protected:
      * @param data Reference to a message to create a new child node for.
      * @param optInsertBefore if non-NULL, the name of the child to put the new child before in our index.  If NULL, (or the specified child cannot be found) the new child will be appended to the end of the index.
      * @param optAddNewChildren If non-NULL, any newly formed nodes will be added to this hashtable, keyed on their absolute node path.
-     * @return B_NO_ERROR on success, B_ERROR if out of memory
+     * @return B_NO_ERROR on success, an error code on failure.
      */
    status_t InsertOrderedChildNode(DataNode & parentNode, const String * optInsertBefore, const MessageRef & data, Hashtable<String, DataNodeRef> * optAddNewChildren);
 
@@ -283,13 +302,15 @@ protected:
 
    /**
     * Returns true iff we have the given PR_PRIVILEGE_* privilege.
-    * @return Default implementation looks at the PR_NAME_PRIVILEGE_BITS parameter.
+    * Default implementation looks at the PR_NAME_PRIVILEGE_BITS parameter to determine whether to return true or false.
+    * @param whichPriv a PR_PRIVILEGE_* value
     */
    virtual bool HasPrivilege(int whichPriv) const;
 
    /**
-    * Returns the given Message to our client, inside an error message
-    * with the given error code.
+    * Returns the given Message to our client, inside an error message with the given error code.
+    * @param errorCode a PR_RESULT_ERROR* type-code indicating the nature of the error.
+    * @param msgRef the original command-Message (as received from the client) that the server is objecting to
     */
    void BounceMessage(uint32 errorCode, const MessageRef & msgRef);
 
@@ -305,12 +326,17 @@ protected:
     *  @param retSessions A table that will on return contain the set of matching sessions, keyed by their session ID strings.
     *  @param matchSelf If true, we will include as a candidate for pattern matching.  Otherwise we won't.
     *  @param maxResults Maximum number of matching sessions to return.  Defaults to MUSCLE_NO_LIMIT.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    *  @return B_NO_ERROR on success, or an error code on failure.  Note that failing to find any matching sessions is NOT considered an error.
     */
    status_t FindMatchingSessions(const String & nodePath, const ConstQueryFilterRef & filter, Hashtable<const String *, AbstractReflectSessionRef> & retSessions, bool matchSelf, uint32 maxResults = MUSCLE_NO_LIMIT) const;
 
    /** Convenience method:  Same as FindMatchingSessions(), but finds only the first matching session.  
-     * Returns a reference to the first matching session on success, or a NULL reference on failue.
+     *  @param nodePath the node path to match against.  May be absolute (e.g. "/0/1234/frc*") or relative (e.g. "blah")
+     *                  If the nodePath is a zero-length String, all sessions will match.
+     *  @param filter If non-NULL, only nodes whose data Messages match this filter will have their sessions added 
+     *                to the (retSessions) table.
+     *  @param matchSelf If true, we will include as a candidate for pattern matching.  Otherwise we won't.
+     *  @returns a reference to the first matching session on success, or a NULL reference on failure to find a matching session.
      */
    AbstractReflectSessionRef FindMatchingSession(const String & nodePath, const ConstQueryFilterRef & filter, bool matchSelf) const;
 
@@ -322,22 +348,25 @@ protected:
     *                  If the nodePath is a zero-length String, all sessions will match.
     *  @param filter If non-NULL, only nodes whose data Messages match this filter will receive the Message.
     *  @param matchSelf If true, we will include as a candidate for pattern matching.  Otherwise we won't.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    *  @return B_NO_ERROR on success, or an error code on failure.  Note that failing to find any matching sessions is NOT considered an error.
     */
    status_t SendMessageToMatchingSessions(const MessageRef & msgRef, const String & nodePath, const ConstQueryFilterRef & filter, bool matchSelf);
 
    /** Convenience method:  Adds nodes that match the specified path to the passed-in Queue.
     *  @param nodePath the node path to match against.  May be absolute (e.g. "/0/1234/frc*") or relative (e.g. "blah").  
-                       If it's a relative path, only nodes in the current session's subtree will be searched.
+    *                  If it's a relative path, only nodes in the current session's subtree will be searched.
     *  @param filter If non-NULL, only nodes whose data Messages match this filter will be added to the (retMatchingNodes) table.
     *  @param retMatchingNodes A Queue that will on return contain the list of matching nodes.
     *  @param maxResults Maximum number of matching nodes to return.  Defaults to MUSCLE_NO_LIMIT.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+    *  @return B_NO_ERROR on success, or an error code on failure.  Note that failing to find any matching nodes is NOT considered an error.
     */
    status_t FindMatchingNodes(const String & nodePath, const ConstQueryFilterRef & filter, Queue<DataNodeRef> & retMatchingNodes, uint32 maxResults = MUSCLE_NO_LIMIT) const;
 
    /** Convenience method:  Same as FindMatchingNodes(), but finds only the first matching node.  
-     * Returns a reference to the first matching node on success, or a NULL reference on failue.
+     *  @param nodePath the node path to match against.  May be absolute (e.g. "/0/1234/frc*") or relative (e.g. "blah").  
+     *                  If it's a relative path, only nodes in the current session's subtree will be searched.
+     *  @param filter If non-NULL, only nodes whose data Messages match this filter will be added to the (retMatchingNodes) table.
+     *  @returns a reference to the first matching node on success, or a NULL reference on failure.
      */
    DataNodeRef FindMatchingNode(const String & nodePath, const ConstQueryFilterRef & filter) const;
 
@@ -345,29 +374,23 @@ protected:
     * Make (path) a deep, recursive clone of (node).
     * @param sourceNode Reference to a DataNode to clone.
     * @param destPath Path of where the newly created node subtree will appear.  Should be relative to our home node.
-    * @param allowOverwriteData If true, we will clobber any previously existing node at the destination path.
-    *                           Otherwise, the existence of a pre-existing node there will cause us to fail.
-    * @param allowCreateNode If true, we will create a node at the destination path if necessary.
-    *                        Otherwise, the non-existence of a pre-existing node there will cause us to fail.
-    * @param quiet If false, no subscribers will be notified of the changes we make.
-    * @param addToTargetIndex If true, the newly created subtree will be added to the target node using InsertOrderedChild().
-    *                         If false, it will be added using PutChild().
+    * @param flags optional bit-chord of SETDATANODE_FLAG_* flags to modify our behavior.  Defaults to no-flags-set.
     * @param optInsertBefore If (addToTargetIndex) is true, this argument will be passed on to InsertOrderedChild().
     *                        Otherwise, this argument is ignored.
     * @param optPruner If non-NULL, this object can be used as a callback to prune the traversal or filter
     *                  the MessageRefs cloned.
-    * @return B_NO_ERROR on success, or B_ERROR on failure (may leave a partially cloned subtree on failure)
+    * @return B_NO_ERROR on success, or an error code on failure (may leave a partially cloned subtree on failure)
     */
-   status_t CloneDataNodeSubtree(const DataNode & sourceNode, const String & destPath, bool allowOverwriteData=true, bool allowCreateNode=true, bool quiet=false, bool addToTargetIndex=false, const String * optInsertBefore = NULL, const ITraversalPruner * optPruner = NULL);
+   status_t CloneDataNodeSubtree(const DataNode & sourceNode, const String & destPath, SetDataNodeFlags flags = SetDataNodeFlags(), const String * optInsertBefore = NULL, const ITraversalPruner * optPruner = NULL);
 
    /** Tells other sessions that we have modified (node) in our node subtree.
     *  @param node The node that has been modfied.
     *  @param oldData If the node is being modified, this argument contains the node's previously
     *                 held data.  If it is being created, this is a NULL reference.  If the node
     *                 is being destroyed, this will contain the node's current data.
-    *  @param isBeingRemoved If true, this node is about to go away.
+    *  @param nodeChangeFlags a bit-chord of NODE_CHANGED_* flags describing how the node is being changed
     */
-   virtual void NotifySubscribersThatNodeChanged(DataNode & node, const MessageRef & oldData, bool isBeingRemoved);
+   virtual void NotifySubscribersThatNodeChanged(DataNode & node, const MessageRef & oldData, NodeChangeFlags nodeChangeFlags);
 
    /** Tells other sessions that we have changed the index of (node) in our node subtree.
     *  @param node The node whose index was changed.
@@ -383,9 +406,9 @@ protected:
     *  @param oldData If the node is being modified, this argument contains the node's previously
     *                 held data.  If it is being created, this is a NULL reference.  If the node
     *                 is being destroyed, this will contain the node's current data.
-    *  @param isBeingRemoved True iff this node is about to be destroyed.
+    *  @param nodeChangeFlags a bit-chord of NODE_CHANGED_* flags describing how the node is being changed
     */
-   virtual void NodeChanged(DataNode & node, const MessageRef & oldData, bool isBeingRemoved);
+   virtual void NodeChanged(DataNode & node, const MessageRef & oldData, NodeChangeFlags nodeChangeFlags);
 
    /** Called by NotifySubscribersThatIndexChanged() to tell us how (node)'s index has been modified.  
     *  @param node The node whose index was changed.
@@ -395,15 +418,41 @@ protected:
     */
    virtual void NodeIndexChanged(DataNode & node, char op, uint32 index, const String & key);
 
+   /** Called when the StorageReflectSession wants to update its outgoing PR_RESULT_DATAITEMS Message with more information.
+     * This is exposed as a virtual method so that subclasses can augment this behavior if they care to do so.  In most cases,
+     * however, the default implementation does the right thing.
+     * @param subscriptionMessage The PR_RESULT_DATAITEMS Message that should be altered
+     * @param nodePath the node-path of the DataNode whose state is changing
+     * @param optMessageData A reference to the DataNode's new state, or a NULL reference if the DataNode has been deleted.
+     * @returns B_NO_ERROR on success, or some other error code if there was a failure doing the update.
+     */
+   virtual status_t UpdateSubscriptionMessage(Message & subscriptionMessage, const String & nodePath, const MessageRef & optMessageData);
+
+   /** Called when the StorageReflectSession wants to remove a nodePath from a subscription-notification-Message.
+     * Default implementation just calls through to subscriptionMessage.RemoveName(nodePath).
+     * @param subscriptionMessage The PR_RESULT_DATAITEMS Message that should be altered
+     * @param nodePath the node-path to remove.
+     */
+   virtual status_t PruneSubscriptionMessage(Message & subscriptionMessage, const String & nodePath) {return subscriptionMessage.RemoveName(nodePath);}
+
+   /** Called when the StorageReflectSession wants to update its outgoing PR_RESULT_INDEXUPDATED Message with more information.
+     * This is exposed as a virtual method so that subclasses can augment this behavior if they care to do so.  In most cases,
+     * however, the default implementation does the right thing.
+     * @param subscriptionIndexMessage The PR_RESULT_INDEXUPDATED Message that should be altered
+     * @param nodePath the node-path of the DataNode whose index-state is changing
+     * @param op The INDEX_OP_* opcode of the change.
+     * @param index The index at which the operation took place (not defined for clear operations)
+     * @param key The key of the operation (aka the name of the associated node)
+     * @returns B_NO_ERROR on success, or some other error code if there was a failure doing the update.
+     */
+   virtual status_t UpdateSubscriptionIndexMessage(Message & subscriptionIndexMessage, const String & nodePath, char op, uint32 index, const String & key);
+
    /**
     * Takes any messages that were created in the NodeChanged() callbacks and 
     * sends them to their owner's MessageReceivedFromSession() method for
     * processing and eventual forwarding to the client.
     */
    void PushSubscriptionMessages();
-
-   /** Auxilliary helper method for PushSubscriptionMessages() */
-   void PushSubscriptionMessage(MessageRef & msgRef); 
 
    /**
     * Executes a data-gathering tree traversal based on the PR_NAME_KEYS specified in the given message.
@@ -418,9 +467,6 @@ protected:
     * @param quiet If set to true, subscribers won't be updated regarding this change to the database
     */
    void DoRemoveData(NodePathMatcher & matcher, bool quiet = false);
-
-   /** Auxilliary helper function. */
-   void SendGetDataResults(MessageRef & msg);
 
    /**
     * If set false, we won't receive subscription updates.
@@ -498,11 +544,14 @@ protected:
    DECLARE_MUSCLE_TRAVERSAL_CALLBACK(StorageReflectSession, PassMessageCallback);    /** Matching nodes are sent the given message.  */
 
 private:
-   void NodeChangedAux(DataNode & modifiedNode, const MessageRef & nodeData, bool isBeingRemoved);
+   void PushSubscriptionMessage(MessageRef & msgRef); 
+   void SendGetDataResults(MessageRef & msg);
+   void NodeChangedAux(DataNode & modifiedNode, const MessageRef & nodeData, NodeChangeFlags nodeChangeFlags);
    void UpdateDefaultMessageRoute();
    status_t RemoveParameter(const String & paramName, bool & retUpdateDefaultMessageRoute);
    int PassMessageCallbackAux(DataNode & node, const MessageRef & msgRef, bool matchSelfOkay);
    void TallyNodeBytes(const DataNode & n, uint32 & retNumNodes, uint32 & retNodeBytes) const;
+   DataNodeSubscribersTableRef GetDataNodeSubscribersTableFromPool(const DataNodeSubscribersTableRef & curTableRef, const String & sessionIDString, int32 delta);
 
    DECLARE_MUSCLE_TRAVERSAL_CALLBACK(StorageReflectSession, KickClientCallback);     /** Sessions of matching nodes are EndSession()'d  */
    DECLARE_MUSCLE_TRAVERSAL_CALLBACK(StorageReflectSession, InsertOrderedDataCallback); /** Matching nodes have ordered data inserted into them as child nodes */
@@ -541,6 +590,8 @@ private:
 
       DataNodeRef _root;
       bool _subsDirty;
+
+      Hashtable<uint32, DataNodeSubscribersTableRef> _cachedSubscribersTables;  // cached by hash code
    };
 
    /** Sets up the global root and other shared data */
@@ -585,16 +636,19 @@ private:
 
    /** Our node class needs access to our internals too */
    friend class StorageReflectSession :: NodePathMatcher;
+};
+DECLARE_REFTYPES(StorageReflectSession);
 
-   enum {
-      NODE_DEPTH_ROOT = 0,     /**< Depth of the root node at the top of the node-tree (i.e. zero) */
-      NODE_DEPTH_HOSTNAME,     /**< Depth of the hostname/IP-address nodes directly underneath the root node (i.e. one) */
-      NODE_DEPTH_SESSIONNAME,  /**< Depth of the per-connection session ID strings underneath the hostname/IP-address nodes */
-      NODE_DEPTH_USER          /**< Depth of the first level of the tree where a client program can add its own nodes */
-   };
+
+/** Enumeration of some common node-depth levels in the MUSCLE node-tree database */
+enum {
+   NODE_DEPTH_ROOT = 0,     /**< Depth of the root node at the top of the node-tree (i.e. zero) */
+   NODE_DEPTH_HOSTNAME,     /**< Depth of the hostname/IP-address nodes directly underneath the root node (i.e. one) */
+   NODE_DEPTH_SESSIONNAME,  /**< Depth of the per-connection session ID strings underneath the hostname/IP-address nodes */
+   NODE_DEPTH_USER          /**< Depth of the first level of the tree where a client program can add its own nodes */
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif
 

@@ -1,5 +1,3 @@
-#include <pthread.h>
-
 #include "dataio/TCPSocketDataIO.h"
 #include "iogateway/SignalMessageIOGateway.h"
 
@@ -36,7 +34,7 @@ public:
    {
       AdvancedThreadWorkerSession * ret = newnothrow AdvancedThreadWorkerSession();
       if (ret) printf("AdvancedThreadWorkerSessionFactory created AdvancedThreadWorkerSession %p for client at loc=[%s] iap=[%s]\n", ret, loc(), iap.ToString()());
-          else WARN_OUT_OF_MEMORY;
+          else MWARN_OUT_OF_MEMORY;
       return ThreadWorkerSessionRef(ret);
    }
 };
@@ -48,7 +46,7 @@ AdvancedQMessageTransceiverThread :: AdvancedQMessageTransceiverThread()
    SetForwardAllIncomingMessagesToSupervisor(false); 
 
    // Set up a factory to accept incoming TCP connections on our port, for remote sessions to use to connect to us
-   if (PutAcceptFactory(ADVANCED_EXAMPLE_PORT, ThreadWorkerSessionFactoryRef(newnothrow AdvancedThreadWorkerSessionFactory)) != B_NO_ERROR) printf("AdvancedQMessageTransceiverThread ctor:  Error, couldn't create accept-factory on port %i!\n", ADVANCED_EXAMPLE_PORT);
+   if (PutAcceptFactory(ADVANCED_EXAMPLE_PORT, ThreadWorkerSessionFactoryRef(newnothrow AdvancedThreadWorkerSessionFactory)).IsError()) printf("AdvancedQMessageTransceiverThread ctor:  Error, couldn't create accept-factory on port %i!\n", ADVANCED_EXAMPLE_PORT);
 }
 
 status_t AdvancedQMessageTransceiverThread :: AddNewThreadedInternalSession(const MessageRef & args)

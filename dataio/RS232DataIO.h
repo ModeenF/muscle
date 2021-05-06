@@ -15,7 +15,7 @@ namespace muscle {
  *  only minimal control of the serial parameters (baud rate only at the moment).
  *  On the plus side, it provides a serial-port-socket for use with select(), even under Windows.
  */
-class RS232DataIO : public DataIO, private CountedObject<RS232DataIO>
+class RS232DataIO : public DataIO
 {
 public:
    /** Constructor.
@@ -31,12 +31,6 @@ public:
    virtual int32 Read(void * buffer, uint32 size);
 
    virtual int32 Write(const void * buffer, uint32 size);
-
-   /** Always returns B_ERROR, since you can't seek on a serial port! */
-   virtual status_t Seek(int64, int) {return B_ERROR;}
-
-   /** Always returns -1, since a serial port has no position to speak of */
-   virtual int64 GetPosition() const {return -1;}
 
    /** Doesn't return until all outgoing serial bytes have been sent */
    virtual void FlushOutput();
@@ -64,7 +58,7 @@ public:
    /** Returns a list of serial port names that are present on this machine.
     *  These names may be passed in to the constructor of this class verbatim.
     *  @param retList On success, this list will contain serial port names.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure.
+    *  @return B_NO_ERROR on success, or an error code on failure.
     */
    static status_t GetAvailableSerialPortNames(Queue<String> & retList);
 
@@ -88,8 +82,11 @@ private:
 #else
    ConstSocketRef _handle;
 #endif
-};
 
-}; // end namespace muscle
+   DECLARE_COUNTED_OBJECT(RS232DataIO);
+};
+DECLARE_REFTYPES(RS232DataIO);
+
+} // end namespace muscle
 
 #endif

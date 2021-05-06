@@ -3,6 +3,7 @@
 #ifndef MuscleSharedMemory_h
 #define MuscleSharedMemory_h
 
+#include "support/NotCopyable.h"
 #include "util/String.h"
 #include "util/CountedObject.h"
 
@@ -18,7 +19,7 @@ namespace muscle {
   * The current implementation only works under Windows and POSIX, but other implementations may be
   * added in the future.
   */
-class SharedMemory MUSCLE_FINAL_CLASS : private CountedObject<SharedMemory>
+class SharedMemory MUSCLE_FINAL_CLASS : public NotCopyable
 {
 public:
    /** Default constructor.  You'll need to call SetArea() before this object will be useful. */
@@ -39,20 +40,18 @@ public:
     *  @param returnLocked If set true, then the area will be read/write locked when this function
     *                      returns successfully, and it is the caller's responsibility to call
     *                      UnlockArea() when appropriate.
-    *  @return B_NO_ERROR on success, or B_ERROR on failure.
+    *  @return B_NO_ERROR on success, or an error code on failure.
     */
    status_t SetArea(const char * areaName, uint32 createSize = 0, bool returnLocked = false);
 
-   /** Unlocks any current locks, and terminates our relationship with the current shared memory area.
-    *  @returns B_NO_ERROR on success, or B_ERROR if we had no current area. 
-    */
+   /** Unlocks any current locks, and terminates our relationship with the current shared memory area. */
    void UnsetArea();
 
    /** Locks the current area, using a shared locking mode.
     *  Reading the contents of the shared memory area is safe while in this mode,
     *  but modifying them is not.  If you need to modify the shared memory area,
     *  use LockAreaReadWrite() instead.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (no area, or already locked)
+    *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if we're already locked.
     *  @note under Windows this call is currently equivalent to the LockAreaReadWrite()
     *        call, because as far as I can tell there is no good way to implement
     *        shared-reader/single-writer interprocess locks under Windows.  If you
@@ -66,7 +65,7 @@ public:
     *  It is safe to read or modify the shared memory area while this lock is active,
     *  but if you will not need to modify anything, then it is more efficient to
     *  lock using LockAreaReadOnly() instead.
-    *  @returns B_NO_ERROR on success, or B_ERROR on failure (no area, or already locked)
+    *  @returns B_NO_ERROR on success, or B_LOCK_FAILED if we're already locked.
     */
    status_t LockAreaReadWrite() {return LockArea(false);}
 
@@ -107,7 +106,7 @@ public:
     *  before deleting everything, so other processes who currently have the area
     *  locked will at least be able to finish their current transaction before everything
     *  goes away.
-    *  @returns B_NO_ERROR on success, or B_ERROR if there is no current area or
+    *  @returns B_NO_ERROR on success, or an error code if there is no current area or
     *           some other problem prevented the current area from being deleted.
     */
    status_t DeleteArea();
@@ -133,8 +132,10 @@ private:
    bool _isLocked;
    bool _isLockedReadOnly;
    bool _isCreatedLocally;
+
+   DECLARE_COUNTED_OBJECT(SharedMemory);
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

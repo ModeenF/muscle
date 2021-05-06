@@ -2,7 +2,6 @@
 
 #include <stdio.h>
 
-#include "dataio/StdinDataIO.h"
 #include "dataio/TCPSocketDataIO.h"
 #include "dataio/RS232DataIO.h"
 #include "system/SetupSystem.h"
@@ -12,23 +11,23 @@
 
 using namespace muscle;
 
-static const int DEFAULT_PORT = 5274;  // What CueStation 2.5 connects to by deafult
+static const int DEFAULT_PORT = 5274;  // What CueStation 2.5 connects to by default
 
 static status_t ReadIncomingData(const char * desc, DataIO & readIO, const SocketMultiplexer & multiplexer, Queue<ByteBufferRef> & outQ)
 {
    if (multiplexer.IsSocketReadyForRead(readIO.GetReadSelectSocket().GetFileDescriptor()))
    {
       uint8 buf[4096];
-      int32 ret = readIO.Read(buf, sizeof(buf));
+      const int32 ret = readIO.Read(buf, sizeof(buf));
       if (ret > 0) 
       {
-         LogTime(MUSCLE_LOG_TRACE, "Read " INT32_FORMAT_SPEC" bytes from %s:\n", ret, desc);
+         LogTime(MUSCLE_LOG_TRACE, "Read " INT32_FORMAT_SPEC " bytes from %s:\n", ret, desc);
          LogHexBytes(MUSCLE_LOG_TRACE, buf, ret);
      
          ByteBufferRef toNetworkBuf = GetByteBufferFromPool(ret, buf);
          if (toNetworkBuf()) (void) outQ.AddTail(toNetworkBuf); 
       }
-      else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, readIO.Read() returned %i\n", ret); return B_ERROR;}
+      else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, readIO.Read() returned %i\n", ret); return B_IO_ERROR;}
    }
    return B_NO_ERROR;
 }
@@ -40,7 +39,7 @@ static status_t WriteOutgoingData(const char * desc, DataIO & writeIO, const Soc
       while(outQ.HasItems())
       {
          ByteBufferRef & firstBuf = outQ.Head();
-         uint32 bufSize = firstBuf()->GetNumBytes();
+         const uint32 bufSize = firstBuf()->GetNumBytes();
          if (writeIdx >= bufSize) 
          {
             outQ.RemoveHead();
@@ -48,15 +47,15 @@ static status_t WriteOutgoingData(const char * desc, DataIO & writeIO, const Soc
          }
          else
          {
-            int32 ret = writeIO.Write(firstBuf()->GetBuffer()+writeIdx, firstBuf()->GetNumBytes()-writeIdx);
+            const int32 ret = writeIO.Write(firstBuf()->GetBuffer()+writeIdx, firstBuf()->GetNumBytes()-writeIdx);
             if (ret > 0)
             {
                writeIO.FlushOutput();
-               LogTime(MUSCLE_LOG_TRACE, "Wrote " INT32_FORMAT_SPEC" bytes to %s:\n", ret, desc);
+               LogTime(MUSCLE_LOG_TRACE, "Wrote " INT32_FORMAT_SPEC " bytes to %s:\n", ret, desc);
                LogHexBytes(MUSCLE_LOG_TRACE, firstBuf()->GetBuffer()+writeIdx, ret);
                writeIdx += ret;
             }
-            else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, writeIO.Write() returned %i\n", ret); return B_ERROR;}
+            else if (ret < 0) {LogTime(MUSCLE_LOG_ERROR, "Error, writeIO.Write() returned %i\n", ret); return B_IO_ERROR;}
          }
       }
    }
@@ -71,10 +70,10 @@ static status_t DoSession(DataIO & networkIO, DataIO & serialIO)
    SocketMultiplexer multiplexer;
    while(true)
    {
-      int networkReadFD  = networkIO.GetReadSelectSocket().GetFileDescriptor();
-      int serialReadFD   = serialIO.GetReadSelectSocket().GetFileDescriptor();
-      int networkWriteFD = networkIO.GetWriteSelectSocket().GetFileDescriptor();
-      int serialWriteFD  = serialIO.GetWriteSelectSocket().GetFileDescriptor();
+      const int networkReadFD  = networkIO.GetReadSelectSocket().GetFileDescriptor();
+      const int serialReadFD   = serialIO.GetReadSelectSocket().GetFileDescriptor();
+      const int networkWriteFD = networkIO.GetWriteSelectSocket().GetFileDescriptor();
+      const int serialWriteFD  = serialIO.GetWriteSelectSocket().GetFileDescriptor();
 
       multiplexer.RegisterSocketForReadReady(networkReadFD);
       multiplexer.RegisterSocketForReadReady(serialReadFD);
@@ -84,15 +83,16 @@ static status_t DoSession(DataIO & networkIO, DataIO & serialIO)
 
       if (multiplexer.WaitForEvents() >= 0)
       {
-         if (ReadIncomingData("network",  networkIO, multiplexer, outgoingSerialData)                != B_NO_ERROR) return B_NO_ERROR;  // tells main() to wait for the next TCP connection
-         if (ReadIncomingData("serial",   serialIO,  multiplexer, outgoingNetworkData)               != B_NO_ERROR) return B_ERROR;     // tells main() to exit
-         if (WriteOutgoingData("network", networkIO, multiplexer, outgoingNetworkData, networkIndex) != B_NO_ERROR) return B_NO_ERROR;  // tells main() to wait for the next TCP connection
-         if (WriteOutgoingData("serial",  serialIO,  multiplexer, outgoingSerialData,  serialIndex)  != B_NO_ERROR) return B_ERROR;     // tells main() to exit
+         status_t ret;
+         if (ReadIncomingData("network",  networkIO, multiplexer, outgoingSerialData)               .IsError())    return B_NO_ERROR;  // tells main() to wait for the next TCP connection
+         if (ReadIncomingData("serial",   serialIO,  multiplexer, outgoingNetworkData)              .IsError(ret)) return ret;         // tells main() to exit
+         if (WriteOutgoingData("network", networkIO, multiplexer, outgoingNetworkData, networkIndex).IsError())    return B_NO_ERROR;  // tells main() to wait for the next TCP connection
+         if (WriteOutgoingData("serial",  serialIO,  multiplexer, outgoingSerialData,  serialIndex) .IsError(ret)) return ret;         // tells main() to exit
       }
       else 
       {
-         LogTime(MUSCLE_LOG_CRITICALERROR, "Error, WaitForEvents() failed!\n");
-         return B_ERROR;
+         LogTime(MUSCLE_LOG_CRITICALERROR, "Error, WaitForEvents() failed! [%s]\n", B_ERRNO());
+         return B_ERROR("WaitForEvents() failed");
       }
    }
 }
@@ -124,13 +124,13 @@ int main(int argc, char ** argv)
    if (port == 0) port = DEFAULT_PORT;
    
    String arg;
-   if (args.FindString("serial", arg) == B_NO_ERROR)
+   if (args.FindString("serial", arg).IsOK())
    {
       const char * colon = strchr(arg(), ':');
       uint32 baudRate = colon ? atoi(colon+1) : 0; if (baudRate == 0) baudRate = 38400;
       String devName = arg.Substring(0, ":");
       Queue<String> devs;
-      if (RS232DataIO::GetAvailableSerialPortNames(devs) == B_NO_ERROR)
+      if (RS232DataIO::GetAvailableSerialPortNames(devs).IsOK())
       {
          String serName;
          for (int32 i=devs.GetNumItems()-1; i>=0; i--)
@@ -146,7 +146,7 @@ int main(int argc, char ** argv)
             RS232DataIO serialIO(devName(), baudRate, false);
             if (serialIO.IsPortAvailable())
             {
-               LogTime(MUSCLE_LOG_INFO, "Using serial port %s (baud rate " UINT32_FORMAT_SPEC")\n", serName(), baudRate);
+               LogTime(MUSCLE_LOG_INFO, "Using serial port %s (baud rate " UINT32_FORMAT_SPEC ")\n", serName(), baudRate);
 
                ConstSocketRef serverSock = CreateAcceptingSocket(port, 1);
                if (serverSock())
@@ -161,14 +161,14 @@ int main(int argc, char ** argv)
                      {
                         LogTime(MUSCLE_LOG_INFO, "Beginning serial proxy session!\n");
                         TCPSocketDataIO networkIO(tcpSock, false);
-                        keepGoing = (DoSession(networkIO, serialIO) == B_NO_ERROR);
+                        keepGoing = (DoSession(networkIO, serialIO).IsOK());
                         LogTime(MUSCLE_LOG_INFO, "Serial proxy session ended%s!\n", keepGoing?", awaiting new connection":", aborting!");
                      }
                   }
                }
                else LogTime(MUSCLE_LOG_CRITICALERROR, "Unable to listen on TCP port %u\n", port);
             }
-            else LogTime(MUSCLE_LOG_CRITICALERROR, "Unable to open serial device %s (baud rate " UINT32_FORMAT_SPEC").\n", serName(), baudRate);
+            else LogTime(MUSCLE_LOG_CRITICALERROR, "Unable to open serial device %s (baud rate " UINT32_FORMAT_SPEC ").\n", serName(), baudRate);
          }
          else 
          {

@@ -10,9 +10,18 @@ MUSCLE_DIR      = ../..
 win32:DEFINES  += _WIN32_WINNT=0x0501
 INCLUDEPATH    += $$MUSCLE_DIR
 
+# Uncomment the line below to test/demonstrate Qt Event loop integration.
+# With integration enabled, InternalThreadSession will use Qt's
+# event loop and a QTimer object to send back its once-per-second
+# status reports, rather than its traditional WaitForNextMessage()
+# based event loop.
+#DEFINES        += MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION MUSCLE_PREFER_QT_OVER_WIN32
+
 win32:INCLUDEPATH += $$MUSCLE_DIR/regex/regex 
 
-MUSCLE_SOURCES = $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
+MUSCLE_SOURCES = $$MUSCLE_DIR/dataio/FileDataIO.cpp                   \
+                 $$MUSCLE_DIR/dataio/TCPSocketDataIO.cpp              \
+                 $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
                  $$MUSCLE_DIR/iogateway/MessageIOGateway.cpp          \
                  $$MUSCLE_DIR/iogateway/RawDataMessageIOGateway.cpp   \
                  $$MUSCLE_DIR/message/Message.cpp                     \
@@ -41,6 +50,7 @@ MUSCLE_SOURCES = $$MUSCLE_DIR/iogateway/AbstractMessageIOGateway.cpp  \
                  $$MUSCLE_DIR/util/NetworkUtilityFunctions.cpp        \
                  $$MUSCLE_DIR/util/SocketMultiplexer.cpp              \
                  $$MUSCLE_DIR/util/String.cpp                         \
+                 $$MUSCLE_DIR/util/StringTokenizer.cpp                \
                  $$MUSCLE_DIR/util/PulseNode.cpp
 
 win32:MUSCLE_SOURCES += $$MUSCLE_DIR/regex/regex/regcomp.c            \

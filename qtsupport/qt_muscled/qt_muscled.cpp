@@ -12,7 +12,9 @@ using namespace muscle;
 
 extern int muscledmain(int, char **);  // from muscled.cpp
 
-MuscledWindow :: MuscledWindow(const char * argv0) : _cpdio(false), _notifier(NULL)
+MuscledWindow :: MuscledWindow(const char * argv0)
+   : _cpdio(false)
+   , _notifier(NULL)
 {
    resize(800, 400);
    setWindowTitle("MUSCLEd Server Process");
@@ -30,7 +32,7 @@ MuscledWindow :: MuscledWindow(const char * argv0) : _cpdio(false), _notifier(NU
    argv.AddTail("muscled");   
    argv.AddTail("displaylevel=trace");
    argv.AddTail("catchsignals");
-   if (_cpdio.LaunchChildProcess(argv) == B_NO_ERROR) 
+   if (_cpdio.LaunchChildProcess(argv).IsOK()) 
    {
       _gateway.SetDataIO(DataIORef(&_cpdio, false));
       _notifier = new QSocketNotifier(_cpdio.GetReadSelectSocket().GetFileDescriptor(), QSocketNotifier::Read, this);
@@ -58,7 +60,7 @@ void MuscledWindow :: TextAvailableFromChildProcess()
 void MuscledWindow :: MessageReceivedFromGateway(const MessageRef & msg, void *)
 {
    const String * s;
-   for (int32 i=0; msg()->FindString(PR_NAME_TEXT_LINE, i, &s) == B_NO_ERROR; i++) _muscledStdoutText->appendPlainText(s->Cstr());
+   for (int32 i=0; msg()->FindString(PR_NAME_TEXT_LINE, i, &s).IsOK(); i++) _muscledStdoutText->appendPlainText(s->Cstr());
 }
 
 int main(int argc, char ** argv)

@@ -1,12 +1,14 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#include <stdio.h>
+
 #include "besupport/ConvertMessages.h"
 #include "system/SetupSystem.h"
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Operation failed, line " INT32_FORMAT_SPEC"\n", __LINE__);
-#define NEGATIVETEST(x) if ((x) == B_NO_ERROR) printf("Operation succeeded when it should not have, line " INT32_FORMAT_SPEC"\n", __LINE__);
+#define TEST(x) if ((x).IsError()) printf("Operation failed, line " INT32_FORMAT_SPEC "\n", __LINE__);
+#define NEGATIVETEST(x) if ((x).IsOK()) printf("Operation succeeded when it should not have, line " INT32_FORMAT_SPEC "\n", __LINE__);
 
 // This program tests the Message <-> BMessage conversion functions in the besupport directory.
 int main(void) 
@@ -33,13 +35,13 @@ int main(void)
    subMsg.AddMessage("Russian Dolls", deeper);
    TEST(msg.AddMessage("TestMessage", subMsg));
 
-   for (int i=0; i<10; i++) TEST(msg.AddInt8("TestInt8", i));
-   for (int i=0; i<12; i++) TEST(msg.AddInt16("TestInt16", i));
-   for (int i=0; i<13; i++) TEST(msg.AddInt32("TestInt32", i));
-   for (int i=0; i<11; i++) TEST(msg.AddInt64("TestInt64", i));
-   for (int i=0; i<5; i++) TEST(msg.AddDouble("TestDouble", i));
-   for (int i=0; i<6; i++) TEST(msg.AddFloat("TestFloat", i));
-   for (int i=0; i<25; i++) TEST(msg.AddBool("TestBool", i));
+   for (int i=0; i<10; i++) TEST(msg.AddInt8("TestInt8",     i));
+   for (int i=0; i<12; i++) TEST(msg.AddInt16("TestInt16",   i));
+   for (int i=0; i<13; i++) TEST(msg.AddInt32("TestInt32",   i));
+   for (int i=0; i<11; i++) TEST(msg.AddInt64("TestInt64",   i));
+   for (int i=0; i<5;  i++) TEST(msg.AddDouble("TestDouble", i));
+   for (int i=0; i<6;  i++) TEST(msg.AddFloat("TestFloat",   i));
+   for (int i=0; i<25; i++) TEST(msg.AddBool("TestBool",     i));
 
    printf("ORIGINAL MESSAGE:\n");
    msg.PrintToStream();
@@ -55,8 +57,8 @@ int main(void)
    mmsg.PrintToStream();
 
    Message rSub, rDeep;
-   if ((mmsg.FindMessage("TestMessage", rSub) == B_NO_ERROR)&&
-       (rSub.FindMessage("Russian Dolls", rDeep) == B_NO_ERROR)) 
+   if ((mmsg.FindMessage("TestMessage", rSub).IsOK())&&
+       (rSub.FindMessage("Russian Dolls", rDeep).IsOK())) 
    { 
       printf("Nested messages are:\n");
       rSub.PrintToStream();
@@ -66,13 +68,13 @@ int main(void)
 
    printf("TORTURE TEST!\n");
    int i=1000;
-   uint32 origSize = mmsg.FlattenedSize();
+   const uint32 origSize = mmsg.FlattenedSize();
    while(i--)
    {
       TEST(ConvertFromBMessage(bMsg, mmsg));
       TEST(ConvertToBMessage(mmsg, bMsg));
-      uint32 flatSize = mmsg.FlattenedSize();
-      if (flatSize != origSize) printf("ERROR, FLATTENED SIZE CHANGED " UINT32_FORMAT_SPEC" -> " UINT32_FORMAT_SPEC"\n", origSize, flatSize);
+      const uint32 flatSize = mmsg.FlattenedSize();
+      if (flatSize != origSize) printf("ERROR, FLATTENED SIZE CHANGED " UINT32_FORMAT_SPEC " -> " UINT32_FORMAT_SPEC "\n", origSize, flatSize);
       uint8 * buf = new uint8[flatSize]; 
       mmsg.Flatten(buf);
       TEST(mmsg.Unflatten(buf, flatSize));

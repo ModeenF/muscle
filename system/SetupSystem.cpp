@@ -2,13 +2,16 @@
 
 #include "system/SetupSystem.h"
 #include "support/Flattenable.h"
-#include "dataio/DataIO.h"
+#include "dataio/SeekableDataIO.h"
+#include "reflector/SignalHandlerSession.h"  // for SetMainReflectServerCatchSignals()
+#include "system/SystemInfo.h"             // for GetBuildFlags()
 #include "util/ObjectPool.h"
-#include "util/MiscUtilityFunctions.h"  // for ExitWithoutCleanup()
+#include "util/ByteBuffer.h"
 #include "util/DebugTimer.h"
 #include "util/CountedObject.h"
+#include "util/MiscUtilityFunctions.h"     // for PrintHexBytes()
+#include "util/NetworkUtilityFunctions.h"  // for IPAddressAndPort
 #include "util/String.h"
-#include "system/GlobalMemoryAllocator.h"
 
 #ifdef MUSCLE_ENABLE_SSL
 # include <openssl/err.h>
@@ -46,7 +49,7 @@
 #  include <signal.h>
 #  include <sys/times.h>
 # else
-#  include <sys/signal.h>  // changed signal.h to sys/signal.h to work with OS/X
+#  include <signal.h>
 #  include <sys/times.h>
 # endif
 #endif
@@ -57,7 +60,11 @@
 #endif
 
 #if defined(__APPLE__)
+# include <mach/mach.h>
 # include <mach/mach_time.h>
+# include <mach/message.h>      // for mach_msg_type_number_t
+# include <mach/kern_return.h>  // for kern_return_t
+# include <mach/task_info.h>
 #endif
 
 #ifdef MUSCLE_ENABLE_DEADLOCK_FINDER
@@ -65,7 +72,28 @@
 # include "system/ThreadLocalStorage.h"
 #endif
 
+#ifdef WIN32
+# include <psapi.h>     // for PROCESS_MEMORY_COUNTERS (yes, this include has to be down here)
+#endif
+
 namespace muscle {
+
+// Commonly used error codes for status_t
+const status_t B_OUT_OF_MEMORY(  "Out of Memory");
+const status_t B_UNIMPLEMENTED(  "Unimplemented");
+const status_t B_ACCESS_DENIED(  "Access Denied");
+const status_t B_DATA_NOT_FOUND( "Data not Found");
+const status_t B_FILE_NOT_FOUND( "File not Found");
+const status_t B_BAD_ARGUMENT(   "Bad Argument");
+const status_t B_BAD_DATA(       "Bad Data");
+const status_t B_BAD_OBJECT(     "Bad Object");
+const status_t B_TIMED_OUT(      "Timed Out");
+const status_t B_IO_ERROR(       "I/O Error");
+const status_t B_LOCK_FAILED(    "Lock Failed");
+const status_t B_TYPE_MISMATCH(  "Type Mismatch");
+const status_t B_ZLIB_ERROR(     "ZLib Error");
+const status_t B_SSL_ERROR(      "SSL Error");
+const status_t B_LOGIC_ERROR(    "Logic Error");
 
 #ifdef MUSCLE_COUNT_STRING_COPY_OPERATIONS
 uint32 _stringOpCounts[NUM_STRING_OPS] = {0};
@@ -104,19 +132,15 @@ bool _enableDeadlockFinderPrints = true;
 #endif
 
 static uint32 _failedMemoryRequestSize = MUSCLE_NO_LIMIT;  // start with an obviously-invalid guard value
+uint32 GetAndClearFailedMemoryRequestSize();  // just to avoid a compiler warning
 uint32 GetAndClearFailedMemoryRequestSize()
 {
-   uint32 ret = _failedMemoryRequestSize;       // yes, it's racy.  But I'll live with that for now.
+   const uint32 ret = _failedMemoryRequestSize; // yes, it's racy.  But I'll live with that for now.
    _failedMemoryRequestSize = MUSCLE_NO_LIMIT;
    return ret; 
 }
+void SetFailedMemoryRequestSize(uint32 numBytes);  // just to avoid a compiler warning
 void SetFailedMemoryRequestSize(uint32 numBytes) {_failedMemoryRequestSize = numBytes;}
-
-// This was moved here so that it will be present even when
-// GlobalMemoryAllocator.cpp isn't linked in.
-static MemoryAllocatorRef _globalAllocatorRef;
-void SetCPlusPlusGlobalMemoryAllocator(const MemoryAllocatorRef & maRef) {_globalAllocatorRef = maRef;}
-const MemoryAllocatorRef & GetCPlusPlusGlobalMemoryAllocator() {return _globalAllocatorRef;}
 
 static int swap_memcmp(const void * vp1, const void * vp2, uint32 numBytes)
 {
@@ -124,10 +148,26 @@ static int swap_memcmp(const void * vp1, const void * vp2, uint32 numBytes)
    const uint8 * p2 = (const uint8 *) vp2;
    for (uint32 i=0; i<numBytes; i++)
    {
-      int diff = p2[numBytes-(i+1)]-p1[i];
+      const int diff = p2[numBytes-(i+1)]-p1[i];
       if (diff) return diff;
    }
    return 0;
+}
+
+// Implemented here so that every program doesn't have to link
+// in MiscUtilityFunctions.cpp just for this function.
+void ExitWithoutCleanup(int exitCode)
+{
+   _exit(exitCode);
+}
+
+void Crash()
+{
+#ifdef WIN32
+   RaiseException(EXCEPTION_BREAKPOINT, 0, 0, NULL);
+#else
+   abort();
+#endif
 }
 
 static void GoInsane(const char * why, const char * why2 = NULL)
@@ -147,6 +187,28 @@ static void CheckOp(uint32 numBytes, const void * orig, const void * swapOne, co
    if ((origTwo)&&(memcmp(orig, origTwo, numBytes)))      GoInsane(why, "(origTwo)");
 }
 
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+template<typename T> void VerifyTypeIsTrivial()
+{
+   if (std::is_trivial<T>::value == false)
+   {
+      char buf[512];
+      muscleSprintf(buf, "ERROR:  Type %s was expected to be trivial, but std::is_trivial() returned false!\n", typeid(T).name());
+      GoInsane(buf);
+   }
+}
+
+template<typename T> void VerifyTypeIsNonTrivial()
+{
+   if (std::is_trivial<T>::value == true)
+   {
+      char buf[512];
+      muscleSprintf(buf, "ERROR:  Type %s was expected to be non-trivial, but std::is_trivial() returned true!\n", typeid(T).name());
+      GoInsane(buf);
+   }
+}
+#endif
+
 SanitySetupSystem :: SanitySetupSystem()
 {
    // Make sure our data type lengths are as expected
@@ -165,7 +227,7 @@ SanitySetupSystem :: SanitySetupSystem()
 
    // Make sure our endian-ness info is correct
    static const uint32 one = 1;
-   bool testsLittleEndian =  (*((const uint8 *) &one) == 1);
+   const bool testsLittleEndian = (*((const uint8 *) &one) == 1);
 
    // Make sure our endian-swap macros do what we expect them to
 #if B_HOST_IS_BENDIAN
@@ -173,48 +235,48 @@ SanitySetupSystem :: SanitySetupSystem()
    else
    {
       {
-         uint16 orig = 0x1234;
-         uint16 HtoL = B_HOST_TO_LENDIAN_INT16(orig);
-         uint16 LtoH = B_LENDIAN_TO_HOST_INT16(orig);
-         uint16 HtoB = B_HOST_TO_BENDIAN_INT16(orig);  // should be a no-op
-         uint16 BtoH = B_BENDIAN_TO_HOST_INT16(orig);  // should be a no-op
+         const uint16 orig = 0x1234;
+         const uint16 HtoL = B_HOST_TO_LENDIAN_INT16(orig);
+         const uint16 LtoH = B_LENDIAN_TO_HOST_INT16(orig);
+         const uint16 HtoB = B_HOST_TO_BENDIAN_INT16(orig);  // should be a no-op
+         const uint16 BtoH = B_BENDIAN_TO_HOST_INT16(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoL, &LtoH, &HtoB, &BtoH, "16-bit swap macro does not work!");
       }
 
       {
-         uint32 orig = 0x12345678;
-         uint32 HtoL = B_HOST_TO_LENDIAN_INT32(orig);
-         uint32 LtoH = B_LENDIAN_TO_HOST_INT32(orig);
-         uint32 HtoB = B_HOST_TO_BENDIAN_INT32(orig);  // should be a no-op
-         uint32 BtoH = B_BENDIAN_TO_HOST_INT32(orig);  // should be a no-op
+         const uint32 orig = 0x12345678;
+         const uint32 HtoL = B_HOST_TO_LENDIAN_INT32(orig);
+         const uint32 LtoH = B_LENDIAN_TO_HOST_INT32(orig);
+         const uint32 HtoB = B_HOST_TO_BENDIAN_INT32(orig);  // should be a no-op
+         const uint32 BtoH = B_BENDIAN_TO_HOST_INT32(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoL, &LtoH, &HtoB, &BtoH, "32-bit swap macro does not work!");
       }
 
       {
-         uint64 orig = (((uint64)0x12345678)<<32)|(((uint64)0x12312312));
-         uint64 HtoL = B_HOST_TO_LENDIAN_INT64(orig);
-         uint64 LtoH = B_LENDIAN_TO_HOST_INT64(orig);
-         uint64 HtoB = B_HOST_TO_BENDIAN_INT64(orig);  // should be a no-op
-         uint64 BtoH = B_BENDIAN_TO_HOST_INT64(orig);  // should be a no-op
+         const uint64 orig = (((uint64)0x12345678)<<32)|(((uint64)0x12312312));
+         const uint64 HtoL = B_HOST_TO_LENDIAN_INT64(orig);
+         const uint64 LtoH = B_LENDIAN_TO_HOST_INT64(orig);
+         const uint64 HtoB = B_HOST_TO_BENDIAN_INT64(orig);  // should be a no-op
+         const uint64 BtoH = B_BENDIAN_TO_HOST_INT64(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoL, &LtoH, &HtoB, &BtoH, "64-bit swap macro does not work!");
       }
 
       {
-         float orig  = -1234567.89012345f;
-         uint32 HtoL = B_HOST_TO_LENDIAN_IFLOAT(orig);
-         float  LtoH = B_LENDIAN_TO_HOST_IFLOAT(HtoL);
-         uint32 HtoB = B_HOST_TO_BENDIAN_IFLOAT(orig);  // should be a no-op
-         float  BtoH = B_BENDIAN_TO_HOST_IFLOAT(HtoB);  // should be a no-op
+         const float orig  = -1234567.89012345f;
+         const uint32 HtoL = B_HOST_TO_LENDIAN_IFLOAT(orig);
+         const float  LtoH = B_LENDIAN_TO_HOST_IFLOAT(HtoL);
+         const uint32 HtoB = B_HOST_TO_BENDIAN_IFLOAT(orig);  // should be a no-op
+         const float  BtoH = B_BENDIAN_TO_HOST_IFLOAT(HtoB);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoL, NULL, &HtoB, &BtoH, "float swap macro does not work!");
          CheckOp(sizeof(orig), &orig, NULL,  NULL, &LtoH,  NULL, "float swap macro does not work!");
       }
 
       {
-         double orig = ((double)-1234567.89012345) * ((double)987654321.0987654321);
-         uint64 HtoL = B_HOST_TO_LENDIAN_IDOUBLE(orig);
-         double LtoH = B_LENDIAN_TO_HOST_IDOUBLE(HtoL);
-         uint64 HtoB = B_HOST_TO_BENDIAN_IDOUBLE(orig);  // should be a no-op
-         double BtoH = B_BENDIAN_TO_HOST_IDOUBLE(HtoB);  // should be a no-op
+         const double orig = ((double)-1234567.89012345) * ((double)987654321.0987654321);
+         const uint64 HtoL = B_HOST_TO_LENDIAN_IDOUBLE(orig);
+         const double LtoH = B_LENDIAN_TO_HOST_IDOUBLE(HtoL);
+         const uint64 HtoB = B_HOST_TO_BENDIAN_IDOUBLE(orig);  // should be a no-op
+         const double BtoH = B_BENDIAN_TO_HOST_IDOUBLE(HtoB);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoL, NULL, &HtoB, &BtoH, "double swap macro does not work!");
          CheckOp(sizeof(orig), &orig,  NULL, NULL, &LtoH,  NULL, "double swap macro does not work!");
       }
@@ -223,53 +285,84 @@ SanitySetupSystem :: SanitySetupSystem()
    if (testsLittleEndian)
    {
       {
-         uint16 orig = 0x1234;
-         uint16 HtoB = B_HOST_TO_BENDIAN_INT16(orig);
-         uint16 BtoH = B_BENDIAN_TO_HOST_INT16(orig);
-         uint16 HtoL = B_HOST_TO_LENDIAN_INT16(orig);  // should be a no-op
-         uint16 LtoH = B_LENDIAN_TO_HOST_INT16(orig);  // should be a no-op
+         const uint16 orig = 0x1234;
+         const uint16 HtoB = B_HOST_TO_BENDIAN_INT16(orig);
+         const uint16 BtoH = B_BENDIAN_TO_HOST_INT16(orig);
+         const uint16 HtoL = B_HOST_TO_LENDIAN_INT16(orig);  // should be a no-op
+         const uint16 LtoH = B_LENDIAN_TO_HOST_INT16(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoB, &BtoH, &HtoL, &LtoH, "16-bit swap macro does not work!");
       }
 
       {
-         uint32 orig = 0x12345678;
-         uint32 HtoB = B_HOST_TO_BENDIAN_INT32(orig);
-         uint32 BtoH = B_BENDIAN_TO_HOST_INT32(orig);
-         uint32 HtoL = B_HOST_TO_LENDIAN_INT32(orig);  // should be a no-op
-         uint32 LtoH = B_LENDIAN_TO_HOST_INT32(orig);  // should be a no-op
+         const uint32 orig = 0x12345678;
+         const uint32 HtoB = B_HOST_TO_BENDIAN_INT32(orig);
+         const uint32 BtoH = B_BENDIAN_TO_HOST_INT32(orig);
+         const uint32 HtoL = B_HOST_TO_LENDIAN_INT32(orig);  // should be a no-op
+         const uint32 LtoH = B_LENDIAN_TO_HOST_INT32(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoB, &BtoH, &HtoL, &LtoH, "32-bit swap macro does not work!");
       }
 
       {
-         uint64 orig = (((uint64)0x12345678)<<32)|(((uint64)0x12312312));
-         uint64 HtoB = B_HOST_TO_BENDIAN_INT64(orig);
-         uint64 BtoH = B_BENDIAN_TO_HOST_INT64(orig);
-         uint64 HtoL = B_HOST_TO_LENDIAN_INT64(orig);  // should be a no-op
-         uint64 LtoH = B_LENDIAN_TO_HOST_INT64(orig);  // should be a no-op
+         const uint64 orig = (((uint64)0x12345678)<<32)|(((uint64)0x12312312));
+         const uint64 HtoB = B_HOST_TO_BENDIAN_INT64(orig);
+         const uint64 BtoH = B_BENDIAN_TO_HOST_INT64(orig);
+         const uint64 HtoL = B_HOST_TO_LENDIAN_INT64(orig);  // should be a no-op
+         const uint64 LtoH = B_LENDIAN_TO_HOST_INT64(orig);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoB, &BtoH, &HtoL, &LtoH, "64-bit swap macro does not work!");
       }
 
       {
-         float orig  = -1234567.89012345f;
-         uint32 HtoB = B_HOST_TO_BENDIAN_IFLOAT(orig);
-         float  BtoH = B_BENDIAN_TO_HOST_IFLOAT(HtoB);
-         uint32 HtoL = B_HOST_TO_LENDIAN_IFLOAT(orig);  // should be a no-op
-         float  LtoH = B_LENDIAN_TO_HOST_IFLOAT(HtoL);  // should be a no-op
+         const float orig  = -1234567.89012345f;
+         const uint32 HtoB = B_HOST_TO_BENDIAN_IFLOAT(orig);
+         const float  BtoH = B_BENDIAN_TO_HOST_IFLOAT(HtoB);
+         const uint32 HtoL = B_HOST_TO_LENDIAN_IFLOAT(orig);  // should be a no-op
+         const float  LtoH = B_LENDIAN_TO_HOST_IFLOAT(HtoL);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoB, NULL, &HtoL, &LtoH, "float swap macro does not work!");
          CheckOp(sizeof(orig), &orig,  NULL, NULL, &BtoH,  NULL, "float swap macro does not work!");
       }
 
       {
-         double orig = ((double)-1234567.89012345) * ((double)987654321.0987654321);
-         uint64 HtoB = B_HOST_TO_BENDIAN_IDOUBLE(orig);
-         double BtoH = B_BENDIAN_TO_HOST_IDOUBLE(HtoB);
-         uint64 HtoL = B_HOST_TO_LENDIAN_IDOUBLE(orig);  // should be a no-op
-         double LtoH = B_LENDIAN_TO_HOST_IDOUBLE(HtoL);  // should be a no-op
+         const double orig = ((double)-1234567.89012345) * ((double)987654321.0987654321);
+         const uint64 HtoB = B_HOST_TO_BENDIAN_IDOUBLE(orig);
+         const double BtoH = B_BENDIAN_TO_HOST_IDOUBLE(HtoB);
+         const uint64 HtoL = B_HOST_TO_LENDIAN_IDOUBLE(orig);  // should be a no-op
+         const double LtoH = B_LENDIAN_TO_HOST_IDOUBLE(HtoL);  // should be a no-op
          CheckOp(sizeof(orig), &orig, &HtoB, NULL, &HtoL, &LtoH, "double swap macro does not work!");
          CheckOp(sizeof(orig), &orig,  NULL, NULL, &BtoH,  NULL, "double swap macro does not work!");
       }
    }
    else GoInsane("MUSCLE is compiled for a little-endian CPU, but host CPU is big-endian!?");
+#endif
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   // Just because I'm paranoid and want to make sure that std::is_trivial() works the way I think it does --jaf
+   VerifyTypeIsTrivial<int>();
+   VerifyTypeIsTrivial<float>();
+   VerifyTypeIsTrivial<double>();
+   VerifyTypeIsTrivial<int8>();
+   VerifyTypeIsTrivial<int16>();
+   VerifyTypeIsTrivial<int32>();
+   VerifyTypeIsTrivial<int64>();
+   VerifyTypeIsTrivial<const char *>();
+   VerifyTypeIsTrivial<const String *>();
+   VerifyTypeIsTrivial<String *>(); 
+
+   VerifyTypeIsNonTrivial<Point>();
+   VerifyTypeIsNonTrivial<Rect>();
+   VerifyTypeIsNonTrivial<String>();
+   VerifyTypeIsNonTrivial<ByteBuffer>();
+   VerifyTypeIsNonTrivial<ByteBufferRef>();
+   VerifyTypeIsNonTrivial<DataIO>();
+   VerifyTypeIsNonTrivial<DataIORef>();
+   VerifyTypeIsNonTrivial<Socket>();
+   VerifyTypeIsNonTrivial<ConstSocketRef>();
+#endif
+
+   // Make sure our pointer-size matches the defined/not-defined state of our MUSCLE_64_BIT_PLATFORM define
+#ifdef MUSCLE_64_BIT_PLATFORM 
+   if (sizeof(void *) != 8) GoInsane("MUSCLE_64_BIT_PLATFORM is defined, but sizeof(void*) is not 8!");
+#else
+   if (sizeof(void *) != 4) GoInsane("MUSCLE_64_BIT_PLATFORM is not defined, and sizeof(void*) is not 4!");
 #endif
 }
 
@@ -284,8 +377,8 @@ SanitySetupSystem :: ~SanitySetupSystem()
 void PrintAndClearStringCopyCounts(const char * optDesc)
 {
    const uint32 * s = _stringOpCounts;  // just to save chars
-   uint32 totalCopies = s[STRING_OP_COPY_CTOR] + s[STRING_OP_PARTIAL_COPY_CTOR] + s[STRING_OP_SET_FROM_STRING];
-   uint32 totalMoves  = s[STRING_OP_MOVE_CTOR] + s[STRING_OP_MOVE_FROM_STRING];
+   const uint32 totalCopies = s[STRING_OP_COPY_CTOR] + s[STRING_OP_PARTIAL_COPY_CTOR] + s[STRING_OP_SET_FROM_STRING];
+   const uint32 totalMoves  = s[STRING_OP_MOVE_CTOR] + s[STRING_OP_MOVE_FROM_STRING];
 
    printf("String Op Counts [%s]\n", optDesc?optDesc:"Untitled");
    printf("# Default Ctors = " UINT32_FORMAT_SPEC "\n", s[STRING_OP_DEFAULT_CTOR]);
@@ -319,6 +412,56 @@ MathSetupSystem :: ~MathSetupSystem()
    // empty
 }
 
+#if defined(__BEOS__) || defined(__HAIKU__)
+   // empty
+#elif defined(TARGET_PLATFORM_XENOMAI) && !defined(MUSCLE_AVOID_XENOMAI)
+   // empty
+#elif defined(WIN32)
+static Mutex _rtMutex;  // used for serializing access inside GetRunTime64Aux(), if necessary
+# if defined(MUSCLE_USE_QUERYPERFORMANCECOUNTER)
+static uint64 _qpcTicksPerSecond = 0;
+# endif
+#elif defined(__APPLE__)
+static mach_timebase_info_data_t _machTimebase = {0,0};
+#elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)
+   // empty
+#else
+static Mutex _rtMutex;  // used for serializing access inside GetRunTime64Aux(), if necessary
+static clock_t _posixTicksPerSecond = 0;
+#endif
+
+static void InitClockFrequency()
+{
+#if defined(__BEOS__) || defined(__HAIKU__)
+   // empty
+#elif defined(TARGET_PLATFORM_XENOMAI) && !defined(MUSCLE_AVOID_XENOMAI)
+   // empty
+#elif defined(WIN32)
+# if defined(MUSCLE_USE_QUERYPERFORMANCECOUNTER)
+   LARGE_INTEGER tps;
+   if (QueryPerformanceFrequency(&tps)) _qpcTicksPerSecond = tps.QuadPart;
+                                   else MCRASH("QueryPerformanceFrequency() failed!");
+# endif
+#elif defined(__APPLE__)
+   if ((mach_timebase_info(&_machTimebase) != KERN_SUCCESS)||(_machTimebase.denom <= 0)) MCRASH("mach_timebase_info() failed!");
+#elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)
+   // empty
+#else
+   _posixTicksPerSecond = sysconf(_SC_CLK_TCK);
+   if (_posixTicksPerSecond < 0) MCRASH("sysconf(_SC_CLK_TCK) failed!");
+#endif
+}
+
+TimeSetupSystem :: TimeSetupSystem()
+{
+   InitClockFrequency();
+}
+
+TimeSetupSystem :: ~TimeSetupSystem()
+{
+   // empty
+}
+
 #ifdef MUSCLE_ENABLE_DEADLOCK_FINDER
 /** Gotta do a custom data structure because we can't use the standard new/delete/muscleAlloc()/muscleFree() memory operators,
   * because to do so would cause an infinite regress if they call Mutex::Lock() or Mutex::Unlock() (which they do)
@@ -345,7 +488,7 @@ public:
          }
          else 
          {
-            printf("MutexEventLog::AddEvent():  malloc() failed!\n");   // what else to do?  Even WARN_OUT_OF_MEMORY isn't safe here
+            printf("MutexEventLog::AddEvent():  malloc() failed!\n");   // what else to do?  Even MWARN_OUT_OF_MEMORY isn't safe here
             return;
          }
       }
@@ -412,35 +555,35 @@ private:
    MutexEventBlock * _tailBlock;
 };
 
-static ThreadLocalStorage<MutexEventLog> _mutexEventLogs(false);  // false argument is necessary otherwise we can't read the threads' logs after they've gone away!
-static Mutex _logsTableMutex;
-static Queue<MutexEventLog *> _logsTable;  // read at process-shutdown time (I use a Queue rather than a Hashtable because muscle_thread_id isn't usable as a Hashtable key)
+static ThreadLocalStorage<MutexEventLog> _mutexEventsLog(false);  // false argument is necessary otherwise we can't read the threads' logs after they've gone away!
+static Mutex _mutexLogTableMutex;
+static Queue<MutexEventLog *> _mutexLogTable;  // read at process-shutdown time (I use a Queue rather than a Hashtable because muscle_thread_id isn't usable as a Hashtable key)
 
 void DeadlockFinder_LogEvent(bool isLock, const void * mutexPtr, const char * fileName, int fileLine)
 {
-   MutexEventLog * mel = _mutexEventLogs.GetThreadLocalObject();
+   MutexEventLog * mel = _mutexEventsLog.GetThreadLocalObject();
    if (mel == NULL)
    {
       mel = static_cast<MutexEventLog *>(malloc(sizeof(MutexEventLog)));  // MUST CALL malloc() here to avoid inappropriate re-entrancy!
       if (mel)
       {
          mel->Initialize(muscle_thread_id::GetCurrentThreadID());
-         _mutexEventLogs.SetThreadLocalObject(mel);
-         if (_logsTableMutex.Lock() == B_NO_ERROR)
+         _mutexEventsLog.SetThreadLocalObject(mel);
+         if (_mutexLogTableMutex.Lock().IsOK())
          {
-            _logsTable.AddTail(mel);
-            _logsTableMutex.Unlock();
+            _mutexLogTable.AddTail(mel);
+            _mutexLogTableMutex.Unlock();
          }
       }
    }
    if (mel) mel->AddEvent(isLock, mutexPtr, fileName, fileLine);
-       else printf("DeadlockFinder_LogEvent:  malloc failed!?\n");  // we can't even call WARN_OUT_OF_MEMORY here
+       else printf("DeadlockFinder_LogEvent:  malloc failed!?\n");  // we can't even call MWARN_OUT_OF_MEMORY here
 }
 
 static void DeadlockFinder_ProcessEnding()
 {
-   for (uint32 i=0; i<_logsTable.GetNumItems(); i++) _logsTable[i]->PrintToStream();
-   _logsTableMutex.Unlock();
+   MutexGuard mg(_mutexLogTableMutex);
+   for (uint32 i=0; i<_mutexLogTable.GetNumItems(); i++) _mutexLogTable[i]->PrintToStream();
 }
 
 #endif
@@ -545,11 +688,12 @@ NetworkSetupSystem :: NetworkSetupSystem()
 #ifdef WIN32
       WORD versionWanted = MAKEWORD(1, 1);
       WSADATA wsaData;
-      int ret = WSAStartup(versionWanted, &wsaData);
-      MASSERT((ret == 0), "NetworkSetupSystem:  Could not initialize Winsock!");
-      (void) ret;  // avoid compiler warning
+      if (WSAStartup(versionWanted, &wsaData) != 0) MCRASH("NetworkSetupSystem:  Could not initialize Winsock!");
 #else
-      signal(SIGPIPE, SIG_IGN);  // avoid evil SIGPIPE signals from sending on a closed socket
+      struct sigaction sa;
+      memset(&sa, 0, sizeof(sa));
+      sa.sa_handler = SIG_IGN;
+      if (sigaction(SIGPIPE, &sa, NULL) != 0) MCRASH("NetworkSetupSystem:  Could not ignore SIGPIPE signal!");
 #endif
 
 #ifdef MUSCLE_ENABLE_SSL
@@ -582,39 +726,29 @@ static inline uint32 get_tbl() {uint32 tbl; asm volatile("mftb %0"  : "=r" (tbl)
 static inline uint32 get_tbu() {uint32 tbu; asm volatile("mftbu %0" : "=r" (tbu) :); return tbu;}
 #endif
 
-// For BeOS, this is an in-line function, defined in util/TimeUtilityFunctions.h
-#if !(defined(__BEOS__) || defined(__HAIKU__) || (defined(TARGET_PLATFORM_XENOMAI) && !defined(MUSCLE_AVOID_XENOMAI)))
 /** Defined here since every MUSCLE program will have to include this file anyway... */
-uint64 GetRunTime64()
+static uint64 GetRunTime64Aux()
 {
-# ifdef WIN32
-   TCHECKPOINT;
-
+#if defined(__BEOS__) || defined(__HAIKU__)
+   return system_time();
+#elif defined(TARGET_PLATFORM_XENOMAI) && !defined(MUSCLE_AVOID_XENOMAI)
+   return rt_timer_tsc2ns(rt_timer_tsc())/1000;
+#elif defined(WIN32)
    uint64 ret = 0;
-   static Mutex _rtMutex;
-   if (_rtMutex.Lock() == B_NO_ERROR)
+   if (_rtMutex.Lock().IsOK())
    {
-#  ifdef MUSCLE_USE_QUERYPERFORMANCECOUNTER
-      TCHECKPOINT;
+# ifdef MUSCLE_USE_QUERYPERFORMANCECOUNTER
+      if (_qpcTicksPerSecond == 0) InitClockFrequency();  // in case we got called before main()
 
       static int64 _brokenQPCOffset = 0;
       if (_brokenQPCOffset != 0) ret = (((uint64)timeGetTime())*1000) + _brokenQPCOffset;
       else
       {
-         static bool _gotFrequency = false;
-         static uint64 _ticksPerSecond;
-         if (_gotFrequency == false)
-         {
-            LARGE_INTEGER tps;
-            _ticksPerSecond = (QueryPerformanceFrequency(&tps)) ? tps.QuadPart : 0;
-            _gotFrequency = true;
-         }
-
          LARGE_INTEGER curTicks;
-         if ((_ticksPerSecond > 0)&&(QueryPerformanceCounter(&curTicks)))
+         if ((_qpcTicksPerSecond > 0)&&(QueryPerformanceCounter(&curTicks)))
          {
-            uint64 checkGetTime = ((uint64)timeGetTime())*1000;
-            ret = (curTicks.QuadPart*MICROS_PER_SECOND)/_ticksPerSecond;
+            const uint64 checkGetTime = ((uint64)timeGetTime())*1000;
+            ret = (curTicks.QuadPart*MICROS_PER_SECOND)/_qpcTicksPerSecond;
 
             // Hack-around for evil Windows/hardware bug in QueryPerformanceCounter().
             // see http://support.microsoft.com/default.aspx?scid=kb;en-us;274323
@@ -622,8 +756,8 @@ uint64 GetRunTime64()
             static uint64 _lastCheckQPCTime = 0;
             if (_lastCheckGetTime > 0)
             {
-               uint64 getTimeElapsed = checkGetTime - _lastCheckGetTime;
-               uint64 qpcTimeElapsed = ret          - _lastCheckQPCTime;
+               const uint64 getTimeElapsed = checkGetTime - _lastCheckGetTime;
+               const uint64 qpcTimeElapsed = ret          - _lastCheckQPCTime;
                if ((muscleMax(getTimeElapsed, qpcTimeElapsed) - muscleMin(getTimeElapsed, qpcTimeElapsed)) > 500000)
                {
                   //LogTime(MUSCLE_LOG_DEBUG, "QueryPerformanceCounter() is buggy, reverting to timeGetTime() method instead!\n");
@@ -635,13 +769,13 @@ uint64 GetRunTime64()
             _lastCheckQPCTime = ret;
          }
       }
-#  endif
+# endif
       if (ret == 0)
       {
          static uint32 _prevVal    = 0;
          static uint64 _wrapOffset = 0;
          
-         uint32 newVal = (uint32) timeGetTime();
+         const uint32 newVal = (uint32) timeGetTime();
          if (newVal < _prevVal) _wrapOffset += (((uint64)1)<<32); 
          ret = (_wrapOffset+newVal)*1000;  // convert to microseconds
          _prevVal = newVal;
@@ -649,92 +783,85 @@ uint64 GetRunTime64()
       _rtMutex.Unlock();
    }
    return ret;
-# elif defined(__APPLE__)
-   static bool _init = true;
-   static mach_timebase_info_data_t _timebase;
-   if (_init) {_init = false; (void) mach_timebase_info(&_timebase);}
-   return (uint64)((mach_absolute_time() * _timebase.numer) / (1000 * _timebase.denom));
-# else
-#  if defined(MUSCLE_USE_POWERPC_INLINE_ASSEMBLY) && defined(MUSCLE_POWERPC_TIMEBASE_HZ)
-   TCHECKPOINT;
+#elif defined(__APPLE__)
+   if (_machTimebase.denom == 0) InitClockFrequency();  // in case we got called before main()
+   return (uint64)((mach_absolute_time() * _machTimebase.numer) / (1000 * _machTimebase.denom));
+#elif defined(MUSCLE_USE_POWERPC_INLINE_ASSEMBLY) && defined(MUSCLE_POWERPC_TIMEBASE_HZ)
    while(1)
    {
-      uint32 hi1 = get_tbu();
-      uint32 low = get_tbl();
-      uint32 hi2 = get_tbu();
+      const uint32 hi1 = get_tbu();
+      const uint32 low = get_tbl();
+      const uint32 hi2 = get_tbu();
       if (hi1 == hi2) 
       {
          // FogBugz #3199
-         uint64 cycles = ((((uint64)hi1)<<32)|((uint64)low));
+         const uint64 cycles = ((((uint64)hi1)<<32)|((uint64)low));
          return ((cycles/MUSCLE_POWERPC_TIMEBASE_HZ)*MICROS_PER_SECOND)+(((cycles%MUSCLE_POWERPC_TIMEBASE_HZ)*(MICROS_PER_SECOND))/MUSCLE_POWERPC_TIMEBASE_HZ);
       }
    }
-#  elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)
+#elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)
    struct timespec ts;
    return (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) ? (SecondsToMicros(ts.tv_sec)+NanosToMicros(ts.tv_nsec)) : 0; 
-#  else
+#else
    // default implementation:  use POSIX API
-   static clock_t _ticksPerSecond = 0;
-   if (_ticksPerSecond <= 0) _ticksPerSecond = sysconf(_SC_CLK_TCK);
-   if (_ticksPerSecond > 0)
+   if (_posixTicksPerSecond <= 0) InitClockFrequency();  // in case we got called before main()
+   if (sizeof(clock_t) > sizeof(uint32)) 
    {
-      if (sizeof(clock_t) > 4) 
-      {
-         // Easy case:  with a wide clock_t, we don't need to worry about it wrapping
-         struct tms junk; clock_t newTicks = (clock_t) times(&junk);
-         return ((((uint64)newTicks)*MICROS_PER_SECOND)/_ticksPerSecond);
-      }
-      else
-      {
-         // Oops, clock_t is skinny enough that it might wrap.  So we need to watch for that.
-         static Mutex _rtMutex;
-         if (_rtMutex.Lock() == B_NO_ERROR)
-         {
-            static uint32 _prevVal;
-            static uint64 _wrapOffset = 0;
-            
-            struct tms junk; clock_t newTicks = (clock_t) times(&junk);
-            uint32 newVal = (uint32) newTicks;
-            if (newVal < _prevVal) _wrapOffset += (((uint64)1)<<32);
-            uint64 ret = ((_wrapOffset+newVal)*MICROS_PER_SECOND)/_ticksPerSecond;  // convert to microseconds
-            _prevVal = newTicks;
-
-            _rtMutex.Unlock();
-            return ret;
-         }
-      }
+      // Easy case:  with a wide clock_t, we don't need to worry about it wrapping
+      struct tms junk; clock_t newTicks = (clock_t) times(&junk);
+      return ((((uint64)newTicks)*MICROS_PER_SECOND)/_posixTicksPerSecond);
    }
-   return 0;  // Oops?
-#  endif
-# endif
-}
+   else
+   {
+      // Oops, clock_t is skinny enough that it might wrap.  So we need to watch for that.
+      if (_rtMutex.Lock().IsOK())
+      {
+         static uint32 _prevVal;
+         static uint64 _wrapOffset = 0;
+         
+         struct tms junk = {0}; clock_t newTicks = (clock_t) times(&junk);
+         const uint32 newVal = (uint32) newTicks;
+         if (newVal < _prevVal) _wrapOffset += (((uint64)1)<<32);
+         const uint64 ret = ((_wrapOffset+newVal)*MICROS_PER_SECOND)/_posixTicksPerSecond;  // convert to microseconds
+         _prevVal = newTicks;
+
+         _rtMutex.Unlock();
+         return ret;
+      }
+      else return 0;  // Oops?
+   }
 #endif
+}
+
+static int64 _perProcessRunTimeOffset = 0;
+uint64 GetRunTime64() {return GetRunTime64Aux()+_perProcessRunTimeOffset;}
+void SetPerProcessRunTime64Offset(int64 offset) {_perProcessRunTimeOffset = offset;}
+int64 GetPerProcessRunTime64Offset() {return _perProcessRunTimeOffset;}
 
 #if !(defined(__BEOS__) || defined(__HAIKU__))
 status_t Snooze64(uint64 micros)
 {
    if (micros == MUSCLE_TIME_NEVER) 
    {
-      while(Snooze64(DaysToMicros(1)) == B_NO_ERROR) {/* empty */}
+      while(Snooze64(DaysToMicros(1)).IsOK()) {/* empty */}
       return B_ERROR;  // we should never exit the while loop above; so if we got here, it's an error
    }
 
 #if __ATHEOS__
-   return (snooze(micros) >= 0) ? B_NO_ERROR : B_ERROR;
+   return (snooze(micros) >= 0) ? B_NO_ERROR : B_ERRNO;
 #elif WIN32
    Sleep((DWORD)((micros/1000)+(((micros%1000)!=0)?1:0)));
    return B_NO_ERROR;
-#elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)
-   const struct timespec ts = {MicrosToSeconds(micros), MicrosToNanos(micros%MICROS_PER_SECOND)};
-   return (clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL) == 0) ? B_NO_ERROR : B_ERROR;
+#elif defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK) && !defined(__EMSCRIPTEN__)
+   const struct timespec ts = {(time_t) MicrosToSeconds(micros), (time_t) MicrosToNanos(micros%MICROS_PER_SECOND)};
+   return (clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL) == 0) ? B_NO_ERROR : B_ERRNO;
 #else
    /** We can use select(), if nothing else */
    struct timeval waitTime;
    Convert64ToTimeVal(micros, waitTime);
-   return (select(0, NULL, NULL, NULL, &waitTime) >= 0) ? B_NO_ERROR : B_ERROR;
+   return (select(0, NULL, NULL, NULL, &waitTime) >= 0) ? B_NO_ERROR : B_ERRNO;
 #endif
 }
-
 
 #ifdef WIN32
 // Broken out so ParseHumanReadableTimeValues() can use it also
@@ -809,7 +936,7 @@ static AbstractObjectRecycler * _firstRecycler = NULL;
 AbstractObjectRecycler :: AbstractObjectRecycler()
 {
    Mutex * m = GetGlobalMuscleLock();
-   if ((m)&&(m->Lock() != B_NO_ERROR)) m = NULL;
+   if ((m)&&(m->Lock().IsError())) m = NULL;
 
    // Append us to the front of the linked list
    if (_firstRecycler) _firstRecycler->_prev = this;
@@ -823,7 +950,7 @@ AbstractObjectRecycler :: AbstractObjectRecycler()
 AbstractObjectRecycler :: ~AbstractObjectRecycler()
 {
    Mutex * m = GetGlobalMuscleLock();
-   if ((m)&&(m->Lock() != B_NO_ERROR)) m = NULL;
+   if ((m)&&(m->Lock().IsError())) m = NULL;
 
    // Remove us from the linked list
    if (_prev) _prev->_next = _next;
@@ -836,21 +963,20 @@ AbstractObjectRecycler :: ~AbstractObjectRecycler()
 void AbstractObjectRecycler :: GlobalFlushAllCachedObjects()
 {
    Mutex * m = GetGlobalMuscleLock();
-   if ((m)&&(m->Lock() != B_NO_ERROR)) m = NULL;
+   if ((m)&&(m->Lock().IsError())) m = NULL;
 
    // We restart at the head of the list anytime anything is flushed,
    // for safety.  When we get to the end of the list, everything has
    // been flushed.
    AbstractObjectRecycler * r = _firstRecycler;
    while(r) r = (r->FlushCachedObjects() > 0) ? _firstRecycler : r->_next;
-
    if (m) m->Unlock();
 }
 
 void AbstractObjectRecycler :: GlobalPrintRecyclersToStream()
 {
    Mutex * m = GetGlobalMuscleLock();
-   if ((m)&&(m->Lock() != B_NO_ERROR)) m = NULL;
+   if ((m)&&(m->Lock().IsError())) m = NULL;
 
    const AbstractObjectRecycler * r = _firstRecycler;
    while(r) 
@@ -865,7 +991,10 @@ void AbstractObjectRecycler :: GlobalPrintRecyclersToStream()
 static CompleteSetupSystem * _activeCSS = NULL;
 CompleteSetupSystem * CompleteSetupSystem :: GetCurrentCompleteSetupSystem() {return _activeCSS;}
 
-CompleteSetupSystem :: CompleteSetupSystem(bool muscleSingleThreadOnly) : _threads(muscleSingleThreadOnly), _prevInstance(_activeCSS)
+CompleteSetupSystem :: CompleteSetupSystem(bool muscleSingleThreadOnly)
+   : _threads(muscleSingleThreadOnly)
+   , _prevInstance(_activeCSS)
+   , _initialMemoryUsage((size_t) GetProcessMemoryUsage())
 {
    _activeCSS = this;  // push us onto the stack
 }
@@ -878,18 +1007,11 @@ CompleteSetupSystem :: ~CompleteSetupSystem()
 #endif
 
    GenericCallbackRef r;
-   while(_cleanupCallbacks.RemoveTail(r) == B_NO_ERROR) (void) r()->Callback(NULL);
+   while(_cleanupCallbacks.RemoveTail(r).IsOK()) (void) r()->Callback(NULL);
 
    AbstractObjectRecycler::GlobalFlushAllCachedObjects();
 
    _activeCSS = _prevInstance;  // pop us off the stack
-}
-
-// Implemented here so that every program doesn't have to link
-// in MiscUtilityFunctions.cpp just for this function.
-void ExitWithoutCleanup(int exitCode)
-{
-   _exit(exitCode);
 }
 
 uint32 DataIO :: WriteFully(const void * buffer, uint32 size)
@@ -898,7 +1020,7 @@ uint32 DataIO :: WriteFully(const void * buffer, uint32 size)
    const uint8 * firstInvalidByte = b+size;
    while(b < firstInvalidByte)
    {
-      int32 bytesWritten = Write(b, (uint32)(firstInvalidByte-b));
+      const int32 bytesWritten = Write(b, (uint32)(firstInvalidByte-b));
       if (bytesWritten <= 0) break;
       b += bytesWritten;
    }
@@ -911,20 +1033,20 @@ uint32 DataIO :: ReadFully(void * buffer, uint32 size)
    uint8 * firstInvalidByte = b+size;
    while(b < firstInvalidByte)
    {
-      int32 bytesRead = Read(b, (uint32) (firstInvalidByte-b));
+      const int32 bytesRead = Read(b, (uint32) (firstInvalidByte-b));
       if (bytesRead <= 0) break;
       b += bytesRead;
    }
    return (uint32) (b-((const uint8 *)buffer));
 }
 
-int64 DataIO :: GetLength()
+int64 SeekableDataIO :: GetLength()
 {
-   int64 origPos = GetPosition();
-   if ((origPos >= 0)&&(Seek(0, IO_SEEK_END) == B_NO_ERROR))
+   const int64 origPos = GetPosition();
+   if ((origPos >= 0)&&(Seek(0, IO_SEEK_END).IsOK()))
    {
-      int64 ret = GetPosition();
-      if (Seek(origPos, IO_SEEK_SET) == B_NO_ERROR) return ret;
+      const int64 ret = GetPosition();
+      if (Seek(origPos, IO_SEEK_SET).IsOK()) return ret;
    }
    return -1;  // error!
 }
@@ -933,15 +1055,16 @@ status_t Flattenable :: FlattenToDataIO(DataIO & outputStream, bool addSizeHeade
 {
    uint8 smallBuf[256];
    uint8 * bigBuf = NULL;
-   uint32 fs = FlattenedSize();
-   uint32 bufSize = fs+(addSizeHeader?sizeof(uint32):0);
+
+   const uint32 fs = FlattenedSize();
+   const uint32 bufSize = fs+(addSizeHeader?sizeof(uint32):0);
 
    uint8 * b;
    if (bufSize<=ARRAYITEMS(smallBuf)) b = smallBuf;
    else
    {
       b = bigBuf = newnothrow_array(uint8, bufSize);
-      if (bigBuf == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+      MRETURN_OOM_ON_NULL(bigBuf);
    }
 
    // Populate the buffer
@@ -953,7 +1076,7 @@ status_t Flattenable :: FlattenToDataIO(DataIO & outputStream, bool addSizeHeade
    else Flatten(b);
 
    // And finally, write out the buffer
-   status_t ret = (outputStream.WriteFully(b, bufSize) == bufSize) ? B_NO_ERROR : B_ERROR;
+   const status_t ret = (outputStream.WriteFully(b, bufSize) == bufSize) ? B_NO_ERROR : B_IO_ERROR;
    delete [] bigBuf;
    return ret;
 }
@@ -964,9 +1087,9 @@ status_t Flattenable :: UnflattenFromDataIO(DataIO & inputStream, int32 optReadS
    if (optReadSize < 0)
    {
       uint32 leSize;
-      if (inputStream.ReadFully(&leSize, sizeof(leSize)) != sizeof(leSize)) return B_ERROR;
+      if (inputStream.ReadFully(&leSize, sizeof(leSize)) != sizeof(leSize)) return B_IO_ERROR;
       readSize = (uint32) B_LENDIAN_TO_HOST_INT32(leSize);
-      if (readSize > optMaxReadSize) return B_ERROR;
+      if (readSize > optMaxReadSize) return B_BAD_DATA;
    }
 
    uint8 smallBuf[256];
@@ -976,10 +1099,10 @@ status_t Flattenable :: UnflattenFromDataIO(DataIO & inputStream, int32 optReadS
    else
    {
       b = bigBuf = newnothrow_array(uint8, readSize);
-      if (bigBuf == NULL) {WARN_OUT_OF_MEMORY; return B_ERROR;}
+      MRETURN_OOM_ON_NULL(bigBuf);
    }
 
-   status_t ret = (inputStream.ReadFully(b, readSize) == readSize) ? Unflatten(b, readSize) : B_ERROR;
+   const status_t ret = (inputStream.ReadFully(b, readSize) == readSize) ? Unflatten(b, readSize) : B_IO_ERROR;
    delete [] bigBuf;
    return ret;
 }
@@ -988,18 +1111,14 @@ status_t Flattenable :: CopyFromImplementation(const Flattenable & copyFrom)
 {
    uint8 smallBuf[256];
    uint8 * bigBuf = NULL;
-   uint32 flatSize = copyFrom.FlattenedSize();
+   const uint32 flatSize = copyFrom.FlattenedSize();
    if (flatSize > ARRAYITEMS(smallBuf))
    {
       bigBuf = newnothrow_array(uint8, flatSize);
-      if (bigBuf == NULL)
-      {
-         WARN_OUT_OF_MEMORY;
-         return B_ERROR;
-      }
+      MRETURN_OOM_ON_NULL(bigBuf);
    }
    copyFrom.Flatten(bigBuf ? bigBuf : smallBuf);
-   status_t ret = Unflatten(bigBuf ? bigBuf : smallBuf, flatSize);
+   const status_t ret = Unflatten(bigBuf ? bigBuf : smallBuf, flatSize);
    delete [] bigBuf;
    return ret;
 }
@@ -1130,8 +1249,8 @@ void PrintHexBytes(const void * vbuf, uint32 numBytes, const char * optDesc, uin
       fprintf(optFile, "%s", headBuf);
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) fputc('-', optFile);
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) fputc('-', optFile);
       fputc('\n', optFile);
       if (buf)
       {
@@ -1144,17 +1263,17 @@ void PrintHexBytes(const void * vbuf, uint32 numBytes, const char * optDesc, uin
             uint32 idx = 0;
             while(idx<numBytes)
             {
-               uint8 c = buf[idx];
+               const uint8 c = buf[idx];
                ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-               size_t hexBufLen = strlen(hexBuf);
+               const size_t hexBufLen = strlen(hexBuf);
                muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
                idx++;
                if ((idx%numColumns) == 0) FlushAsciiChars(optFile, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
             }
-            uint32 leftovers = (numBytes%numColumns);
+            const uint32 leftovers = (numBytes%numColumns);
             if (leftovers > 0) FlushAsciiChars(optFile, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
          }
-         else WARN_OUT_OF_MEMORY;
+         else MWARN_OUT_OF_MEMORY;
 
          delete [] ascBuf;
          delete [] hexBuf;
@@ -1177,7 +1296,7 @@ void PrintHexBytes(const Queue<uint8> & buf, const char * optDesc, uint32 numCol
 {
    if (optFile == NULL) optFile = stdout;
 
-   uint32 numBytes = buf.GetNumItems();
+   const uint32 numBytes = buf.GetNumItems();
    if (numColumns == 0)
    {
       // A simple, single-line format
@@ -1194,8 +1313,8 @@ void PrintHexBytes(const Queue<uint8> & buf, const char * optDesc, uint32 numCol
       fprintf(optFile, "%s", headBuf);
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) fputc('-', optFile);
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) fputc('-', optFile);
       fputc('\n', optFile);
       char * ascBuf = newnothrow_array(char, numColumns+1);
       char * hexBuf = newnothrow_array(char, hexBufSize);
@@ -1206,17 +1325,17 @@ void PrintHexBytes(const Queue<uint8> & buf, const char * optDesc, uint32 numCol
          uint32 idx = 0;
          while(idx<numBytes)
          {
-            uint8 c = buf[idx];
+            const uint8 c = buf[idx];
             ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-            size_t hexBufLen = strlen(hexBuf);
+            const size_t hexBufLen = strlen(hexBuf);
             muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
             idx++;
             if ((idx%numColumns) == 0) FlushAsciiChars(optFile, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
          }
-         uint32 leftovers = (numBytes%numColumns);
+         const uint32 leftovers = (numBytes%numColumns);
          if (leftovers > 0) FlushAsciiChars(optFile, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
       }
-      else WARN_OUT_OF_MEMORY;
+      else MWARN_OUT_OF_MEMORY;
 
       delete [] ascBuf;
       delete [] hexBuf;
@@ -1244,8 +1363,8 @@ void LogHexBytes(int logLevel, const void * vbuf, uint32 numBytes, const char * 
       LogTime(logLevel, "%s", headBuf);
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) Log(logLevel, "-");
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) Log(logLevel, "-");
       Log(logLevel, "\n");
       if (buf)
       {
@@ -1258,17 +1377,17 @@ void LogHexBytes(int logLevel, const void * vbuf, uint32 numBytes, const char * 
             uint32 idx = 0;
             while(idx<numBytes)
             {
-               uint8 c = buf[idx];
+               const uint8 c = buf[idx];
                ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-               size_t hexBufLen = strlen(hexBuf);
+               const size_t hexBufLen = strlen(hexBuf);
                muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
                idx++;
                if ((idx%numColumns) == 0) FlushLogAsciiChars(logLevel, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
             }
-            uint32 leftovers = (numBytes%numColumns);
+            const uint32 leftovers = (numBytes%numColumns);
             if (leftovers > 0) FlushLogAsciiChars(logLevel, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
          }
-         else WARN_OUT_OF_MEMORY;
+         else MWARN_OUT_OF_MEMORY;
 
          delete [] ascBuf;
          delete [] hexBuf;
@@ -1279,7 +1398,7 @@ void LogHexBytes(int logLevel, const void * vbuf, uint32 numBytes, const char * 
 
 void LogHexBytes(int logLevel, const Queue<uint8> & buf, const char * optDesc, uint32 numColumns)
 {
-   uint32 numBytes = buf.GetNumItems();
+   const uint32 numBytes = buf.GetNumItems();
    if (numColumns == 0)
    {
       // A simple, single-line format
@@ -1296,8 +1415,8 @@ void LogHexBytes(int logLevel, const Queue<uint8> & buf, const char * optDesc, u
       Log(logLevel, "%s", headBuf);
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) Log(logLevel, "-");
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) Log(logLevel, "-");
       Log(logLevel, "\n");
       char * ascBuf = newnothrow_array(char, numColumns+1);
       char * hexBuf = newnothrow_array(char, hexBufSize);
@@ -1308,17 +1427,17 @@ void LogHexBytes(int logLevel, const Queue<uint8> & buf, const char * optDesc, u
          uint32 idx = 0;
          while(idx<numBytes)
          {
-            uint8 c = buf[idx];
+            const uint8 c = buf[idx];
             ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-            size_t hexBufLen = strlen(hexBuf);
+            const size_t hexBufLen = strlen(hexBuf);
             muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
             idx++;
             if ((idx%numColumns) == 0) FlushLogAsciiChars(logLevel, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
          }
-         uint32 leftovers = (numBytes%numColumns);
+         const uint32 leftovers = (numBytes%numColumns);
          if (leftovers > 0) FlushLogAsciiChars(logLevel, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
       }
-      else WARN_OUT_OF_MEMORY;
+      else MWARN_OUT_OF_MEMORY;
 
       delete [] ascBuf;
       delete [] hexBuf;
@@ -1345,7 +1464,7 @@ String HexBytesToAnnotatedString(const void * vbuf, uint32 numBytes, const char 
       // A simple, single-line format
       if (optDesc) {ret += optDesc; ret += ": ";}
       ret += '[';
-      if (buf) for (uint32 i=0; i<numBytes; i++) {char buf[32]; muscleSprintf(buf, "%s%02x", (i==0)?"":" ", buf[i]); ret += buf;}
+      if (buf) for (uint32 i=0; i<numBytes; i++) {char zbuf[32]; muscleSprintf(zbuf, "%s%02x", (i==0)?"":" ", buf[i]); ret += zbuf;}
           else ret += "NULL buffer";
       ret += ']';
    }
@@ -1357,8 +1476,8 @@ String HexBytesToAnnotatedString(const void * vbuf, uint32 numBytes, const char 
       ret += headBuf;
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) ret += '-';
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) ret += '-';
       ret += '\n';
       if (buf)
       {
@@ -1371,17 +1490,17 @@ String HexBytesToAnnotatedString(const void * vbuf, uint32 numBytes, const char 
             uint32 idx = 0;
             while(idx<numBytes)
             {
-               uint8 c = buf[idx];
+               const uint8 c = buf[idx];
                ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-               size_t hexBufLen = strlen(hexBuf);
+               const size_t hexBufLen = strlen(hexBuf);
                muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
                idx++;
                if ((idx%numColumns) == 0) FlushStringAsciiChars(ret, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
             }
-            uint32 leftovers = (numBytes%numColumns);
+            const uint32 leftovers = (numBytes%numColumns);
             if (leftovers > 0) FlushStringAsciiChars(ret, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
          }
-         else WARN_OUT_OF_MEMORY;
+         else MWARN_OUT_OF_MEMORY;
 
          delete [] ascBuf;
          delete [] hexBuf;
@@ -1395,7 +1514,7 @@ String HexBytesToAnnotatedString(const Queue<uint8> & buf, const char * optDesc,
 {
    String ret;
 
-   uint32 numBytes = buf.GetNumItems();
+   const uint32 numBytes = buf.GetNumItems();
    if (numColumns == 0)
    {
       // A simple, single-line format
@@ -1412,8 +1531,8 @@ String HexBytesToAnnotatedString(const Queue<uint8> & buf, const char * optDesc,
       ret += headBuf;
 
       const int hexBufSize = (numColumns*8)+1;
-      size_t numDashes = 8+(4*numColumns)-strlen(headBuf);
-      for (size_t i=0; i<numDashes; i++) ret += '-';
+      const int numDashes = 8+(4*numColumns)-(int)strlen(headBuf);
+      for (int i=0; i<numDashes; i++) ret += '-';
       ret += '\n';
       char * ascBuf = newnothrow_array(char, numColumns+1);
       char * hexBuf = newnothrow_array(char, hexBufSize);
@@ -1424,17 +1543,17 @@ String HexBytesToAnnotatedString(const Queue<uint8> & buf, const char * optDesc,
          uint32 idx = 0;
          while(idx<numBytes)
          {
-            uint8 c = buf[idx];
+            const uint8 c = buf[idx];
             ascBuf[idx%numColumns] = muscleInRange(c,(uint8)' ',(uint8)'~')?c:'.';
-            size_t hexBufLen = strlen(hexBuf);
+            const size_t hexBufLen = strlen(hexBuf);
             muscleSnprintf(hexBuf+hexBufLen, hexBufSize-hexBufLen, "%s%02x", ((idx%numColumns)==0)?"":" ", (unsigned int)(((uint32)buf[idx])&0xFF));
             idx++;
             if ((idx%numColumns) == 0) FlushStringAsciiChars(ret, idx-numColumns, ascBuf, hexBuf, numColumns, numColumns);
          }
-         uint32 leftovers = (numBytes%numColumns);
+         const uint32 leftovers = (numBytes%numColumns);
          if (leftovers > 0) FlushStringAsciiChars(ret, numBytes-leftovers, ascBuf, hexBuf, leftovers, numColumns);
       }
-      else WARN_OUT_OF_MEMORY;
+      else MWARN_OUT_OF_MEMORY;
 
       delete [] ascBuf;
       delete [] hexBuf;
@@ -1452,7 +1571,12 @@ String HexBytesToAnnotatedString(const ConstByteBufferRef & bbRef, const char * 
    return HexBytesToAnnotatedString(bbRef()?bbRef()->GetBuffer():NULL, bbRef()?bbRef()->GetNumBytes():0, optDesc, numColumns);
 }
 
-DebugTimer :: DebugTimer(const String & title, uint64 mlt, uint32 startMode, int debugLevel) : _currentMode(startMode+1), _title(title), _minLogTime(mlt), _debugLevel(debugLevel), _enableLog(true)
+DebugTimer :: DebugTimer(const String & title, uint64 mlt, uint32 startMode, int debugLevel)
+   : _currentMode(startMode+1)
+   , _title(title)
+   , _minLogTime(mlt)
+   , _debugLevel(debugLevel)
+   , _enableLog(true)
 {
    SetMode(startMode);
    _startTime = MUSCLE_DEBUG_TIMER_CLOCK;  // re-set it here so that we don't count the Hashtable initialization!
@@ -1469,7 +1593,7 @@ DebugTimer :: ~DebugTimer()
       // And print out our stats
       for (HashtableIterator<uint32, uint64> iter(_modeToElapsedTime); iter.HasData(); iter++)
       {
-         uint64 nextTime = iter.GetValue();
+         const uint64 nextTime = iter.GetValue();
          if (nextTime >= _minLogTime)
          {
             if (_debugLevel >= 0)
@@ -1513,6 +1637,37 @@ uint64 Atoull(const char * str)
    return ret;
 }
 
+// Returns the integer value of the specified hex char, or -1 if c is not a valid hex char (i.e. not 0-9, a-f, or A-F)
+static int ParseHexDigit(char c)
+{
+        if (muscleInRange(c, '0', '9')) return (c-'0');
+   else if (muscleInRange(c, 'a', 'f')) return 10+(c-'a');
+   else if (muscleInRange(c, 'A', 'F')) return 10+(c-'A');
+   else                                 return -1;
+}
+
+uint64 Atoxll(const char * str)
+{
+   if ((str[0] == '0')&&((str[1] == 'x')||(str[1] == 'X'))) str += 2;  // skip any optional "0x" prefix in "0xDEADBEEF"
+
+   const char * s = str;
+   if (ParseHexDigit(*s) < 0) return 0;
+
+   uint64 base = 1;
+   uint64 ret  = 0;
+
+   // Move to the last digit in the number
+   while(ParseHexDigit(*s) >= 0) s++;
+
+   // Then iterate back to the beginning, tabulating as we go
+   while((--s >= str)&&(ParseHexDigit(*s) >= 0))
+   {
+      ret  += base * ((uint64)ParseHexDigit(*s));
+      base *= (uint64)16;
+   }
+   return ret;
+}
+
 int64 Atoll(const char * str)
 {
    TCHECKPOINT;
@@ -1524,7 +1679,7 @@ int64 Atoll(const char * str)
       negative = (negative == false);
       s++;
    }
-   int64 ret = (int64) Atoull(s);
+   const int64 ret = (int64) Atoull(s);
    return negative ? -ret : ret;
 }
 
@@ -1564,16 +1719,16 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
 
    const unsigned char * data = (const unsigned char *)key;
    uint32 h = seed ^ numBytes;
-   uint32 align = ((uint32)((uintptr)data)) & 3;
+   const uint32 align = ((uint32)((uintptr)data)) & 3;
    if ((align!=0)&&(numBytes >= 4))
    {
       // Pre-load the temp registers
       uint32 t = 0, d = 0;
       switch(align)
       {
-         case 1: t |= data[2] << 16;
-         case 2: t |= data[1] << 8;
-         case 3: t |= data[0];
+         case 1: t |= data[2] << 16;  // fall through!
+         case 2: t |= data[1] << 8;   // fall through!
+         case 3: t |= data[0];        // fall through!
       }
 
       t <<= (8 * align);
@@ -1603,9 +1758,9 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
       {
          switch(align)
          {
-            case 3: d |= data[2] << 16;
-            case 2: d |= data[1] << 8;
-            case 1: d |= data[0];
+            case 3: d |= data[2] << 16;  // fall through
+            case 2: d |= data[1] << 8;   // fall through
+            case 1: d |= data[0];        // fall through
          }
 
          uint32 k = (t >> sr) | (d << sl);
@@ -1618,9 +1773,9 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
          // Handle tail bytes
          switch(numBytes)
          {
-            case 3: h ^= data[2] << 16;
-            case 2: h ^= data[1] << 8;
-            case 1: h ^= data[0];
+            case 3: h ^= data[2] << 16; // fall through!
+            case 2: h ^= data[1] << 8;  // fall through!
+            case 1: h ^= data[0];       // fall through!
                     h *= m;
          };
       }
@@ -1628,9 +1783,9 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
       {
          switch(numBytes)
          {
-            case 3: d |= data[2] << 16;
-            case 2: d |= data[1] << 8;
-            case 1: d |= data[0];
+            case 3: d |= data[2] << 16;  // fall through!
+            case 2: d |= data[1] << 8;   // fall through!
+            case 1: d |= data[0];        // fall through!
             case 0: h ^= (t >> sr) | (d << sl);
                     h *= m;
          }
@@ -1657,9 +1812,9 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
 
       switch(numBytes)
       {
-         case 3: h ^= data[2] << 16;
-         case 2: h ^= data[1] << 8;
-         case 1: h ^= data[0];
+         case 3: h ^= data[2] << 16; // fall through!
+         case 2: h ^= data[1] << 8;  // fall through!
+         case 1: h ^= data[0];       // fall through!
                  h *= m;
       };
 
@@ -1672,8 +1827,7 @@ uint32 CalculateHashCode(const void * key, uint32 numBytes, uint32 seed)
 }
 
 uint64 CalculateHashCode64(const void * key, unsigned int numBytes, unsigned int seed)
-{        
-#ifdef MUSCLE_64_BIT_PLATFORM 
+{
    const uint64 m = 0xc6a4a7935bd1e995;
    const int r = 47;
 
@@ -1695,13 +1849,13 @@ uint64 CalculateHashCode64(const void * key, unsigned int numBytes, unsigned int
    const unsigned char * data2 = (const unsigned char*)data;
    switch(numBytes & 7)
    {     
-      case 7: h ^= uint64(data2[6]) << 48;
-      case 6: h ^= uint64(data2[5]) << 40;
-      case 5: h ^= uint64(data2[4]) << 32;
-      case 4: h ^= uint64(data2[3]) << 24;
-      case 3: h ^= uint64(data2[2]) << 16;
-      case 2: h ^= uint64(data2[1]) << 8;
-      case 1: h ^= uint64(data2[0]);
+      case 7: h ^= uint64(data2[6]) << 48; // fall through!
+      case 6: h ^= uint64(data2[5]) << 40; // fall through!
+      case 5: h ^= uint64(data2[4]) << 32; // fall through!
+      case 4: h ^= uint64(data2[3]) << 24; // fall through!
+      case 3: h ^= uint64(data2[2]) << 16; // fall through!
+      case 2: h ^= uint64(data2[1]) << 8;  // fall through!
+      case 1: h ^= uint64(data2[0]);       // fall through!
               h *= m;
    }     
             
@@ -1709,57 +1863,9 @@ uint64 CalculateHashCode64(const void * key, unsigned int numBytes, unsigned int
    h *= m;  
    h ^= h >> r;
    return h;
-#else    
-   const unsigned int m = 0x5bd1e995;
-   const int r = 24;
-         
-   unsigned int h1 = seed ^ numBytes;
-   unsigned int h2 = 0;
-         
-   const unsigned int * data = (const unsigned int *)key;
-         
-   while(numBytes >= sizeof(uint64))
-   {        
-      unsigned int k1 = *data++; 
-      k1 *= m; k1 ^= k1 >> r; k1 *= m;
-      h1 *= m; h1 ^= k1; 
-      numBytes -= sizeof(uint32);
-      
-      unsigned int k2 = *data++;
-      k2 *= m; k2 ^= k2 >> r; k2 *= m;
-      h2 *= m; h2 ^= k2;
-      numBytes -= sizeof(uint32);
-   }        
-            
-   if (numBytes >= sizeof(uint32))
-   {        
-      unsigned int k1 = *data++;
-      k1 *= m; k1 ^= k1 >> r; k1 *= m;
-      h1 *= m; h1 ^= k1;
-      numBytes -= sizeof(uint32);
-   }  
-      
-   switch(numBytes)
-   {
-      case 3: h2 ^= ((unsigned char*)data)[2] << 16;
-      case 2: h2 ^= ((unsigned char*)data)[1] << 8;
-      case 1: h2 ^= ((unsigned char*)data)[0];
-              h2 *= m;
-   };
-
-   h1 ^= h2 >> 18; h1 *= m;
-   h2 ^= h1 >> 22; h2 *= m;
-   h1 ^= h2 >> 17; h1 *= m;
-   h2 ^= h1 >> 19; h2 *= m;
-
-   uint64 h = h1;
-   h = (h << 32) | h2;
-
-   return h;
-#endif
 }
 
-#ifndef MUSCLE_AVOID_OBJECT_COUNTING
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
 
 static ObjectCounterBase * _firstObjectCounter = NULL;
 
@@ -1777,7 +1883,9 @@ void ObjectCounterBase :: RemoveObjectCounterBaseFromGlobalCountersList()
    if (_nextCounter) _nextCounter->_prevCounter = _prevCounter;
 }
 
-ObjectCounterBase :: ObjectCounterBase() : _prevCounter(NULL), _nextCounter(NULL)
+ObjectCounterBase :: ObjectCounterBase()
+   : _prevCounter(NULL)
+   , _nextCounter(NULL)
 {
    if (_muscleLock)
    {
@@ -1801,42 +1909,42 @@ ObjectCounterBase :: ~ObjectCounterBase()
 
 status_t GetCountedObjectInfo(Hashtable<const char *, uint32> & results)
 {
-#ifdef MUSCLE_AVOID_OBJECT_COUNTING
-   (void) results;
-   return B_ERROR;
-#else
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
    Mutex * m = _muscleLock;
-   if ((m==NULL)||(m->Lock() == B_NO_ERROR))
+   if ((m==NULL)||(m->Lock().IsOK()))
    {
-      status_t ret = B_NO_ERROR;
+      status_t ret;
 
       const ObjectCounterBase * oc = _firstObjectCounter;
       while(oc)
       {
-         if (results.Put(oc->GetCounterTypeName(), oc->GetCount()) != B_NO_ERROR) ret = B_ERROR;
+         (void) results.Put(oc->GetCounterTypeName(), oc->GetCount()).IsError(ret);
          oc = oc->GetNextCounter();
       }
 
       if (m) m->Unlock();
       return ret;
    }
-   else return B_ERROR;
+   else return B_LOCK_FAILED;
+#else
+   (void) results;
+   return B_UNIMPLEMENTED;
 #endif
 }
 
 void PrintCountedObjectInfo()
 {
-#ifdef MUSCLE_AVOID_OBJECT_COUNTING
-   printf("Counted Object Info report not available, because MUSCLE was compiled with -DMUSCLE_AVOID_OBJECT_COUNTING\n");
-#else
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
    Hashtable<const char *, uint32> table;
-   if (GetCountedObjectInfo(table) == B_NO_ERROR)
+   if (GetCountedObjectInfo(table).IsOK())
    {
       table.SortByKey();  // so they'll be printed in alphabetical order
       printf("Counted Object Info report follows: (" UINT32_FORMAT_SPEC " types counted)\n", table.GetNumItems());
       for (HashtableIterator<const char *, uint32> iter(table); iter.HasData(); iter++) printf("   %6" UINT32_FORMAT_SPEC_NOPERCENT " %s\n", iter.GetValue(), iter.GetKey());
    }
    else printf("PrintCountedObjectInfo:  GetCountedObjectInfo() failed!\n");
+#else
+   printf("Counted Object Info report not available, because MUSCLE was compiled without -DMUSCLE_ENABLE_OBJECT_COUNTING\n");
 #endif
 }
 
@@ -1850,4 +1958,310 @@ bool GetMainReflectServerCatchSignals()
    return _mainReflectServerCatchSignals;
 }
 
-}; // end namespace muscle
+Queue<String> GetBuildFlags()
+{
+   Queue<String> q;
+
+#ifdef MUSCLE_ENABLE_SSL
+   q.AddTail("MUSCLE_ENABLE_SSL");
+#endif
+
+#ifdef MUSCLE_AVOID_CPLUSPLUS11
+   q.AddTail("MUSCLE_AVOID_CPLUSPLUS11");
+#endif
+
+#ifdef MUSCLE_USE_CPLUSPLUS17
+   q.AddTail("MUSCLE_USE_CPLUSPLUS17");
+#endif
+
+#ifdef MUSCLE_AVOID_CPLUSPLUS11_THREADS
+   q.AddTail("MUSCLE_AVOID_CPLUSPLUS11_THREADS");
+#endif
+
+#ifdef MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD
+   q.AddTail("MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD");
+#endif
+
+#ifdef MUSCLE_AVOID_IPV6
+   q.AddTail("MUSCLE_AVOID_IPV6");
+#endif
+
+#ifdef MUSCLE_AVOID_STDINT
+   q.AddTail("MUSCLE_AVOID_STDINT");
+#endif
+
+#ifdef MUSCLE_SINGLE_THREAD_ONLY 
+   q.AddTail("MUSCLE_SINGLE_THREAD_ONLY");
+#endif
+
+#ifdef MUSCLE_USE_EPOLL
+   q.AddTail("MUSCLE_USE_EPOLL");
+#endif
+
+#ifdef MUSCLE_USE_POLL
+   q.AddTail("MUSCLE_USE_POLL");
+#endif
+
+#ifdef MUSCLE_USE_KQUEUE
+   q.AddTail("MUSCLE_USE_KQUEUE");
+#endif
+
+#ifdef MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS
+   q.AddTail(String("MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS=%1").Arg(MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS));
+#endif
+
+#ifdef MUSCLE_CATCH_SIGNALS_BY_DEFAULT
+   q.AddTail("MUSCLE_CATCH_SIGNALS_BY_DEFAULT");
+#endif
+
+#ifdef MUSCLE_USE_LIBRT
+   q.AddTail("MUSCLE_USE_LIBRT");
+#endif
+
+#ifdef MUSCLE_AVOID_MULTICAST_API
+   q.AddTail("MUSCLE_AVOID_MULTICAST_API");
+#endif
+
+#ifdef MUSCLE_DISABLE_KEEPALIVE_API
+   q.AddTail("MUSCLE_DISABLE_KEEPALIVE_API");
+#endif
+
+#ifdef MUSCLE_64_BIT_PLATFORM
+   q.AddTail("MUSCLE_64_BIT_PLATFORM");
+#endif
+
+#ifdef MUSCLE_USE_LLSEEK
+   q.AddTail("MUSCLE_USE_LLSEEK");
+#endif
+
+#ifdef MUSCLE_PREFER_QT_OVER_WIN32
+   q.AddTail("MUSCLE_PREFER_QT_OVER_WIN32");
+#endif
+
+#ifdef MUSCLE_ENABLE_MEMORY_PARANOIA
+   q.AddTail(String("MUSCLE_ENABLE_MEMORY_PARANOIA=%1").Arg(MUSCLE_ENABLE_MEMORY_PARANOIA));
+#endif
+
+#ifdef MUSCLE_NO_EXCEPTIONS 
+   q.AddTail("MUSCLE_NO_EXCEPTIONS");
+#endif
+
+#ifdef MUSCLE_ENABLE_MEMORY_TRACKING 
+   q.AddTail("MUSCLE_ENABLE_MEMORY_TRACKING");
+#endif
+
+#ifdef MUSCLE_AVOID_ASSERTIONS 
+   q.AddTail("MUSCLE_AVOID_ASSERTIONS");
+#endif
+
+#ifdef MUSCLE_AVOID_SIGNAL_HANDLING
+   q.AddTail("MUSCLE_AVOID_SIGNAL_HANDLING");
+#endif
+
+#ifdef MUSCLE_AVOID_INLINE_ASSEMBLY
+   q.AddTail("MUSCLE_AVOID_INLINE_ASSEMBLY");
+#endif
+
+#ifdef MUSCLE_ENABLE_ZLIB_ENCODING 
+   q.AddTail("MUSCLE_ENABLE_ZLIB_ENCODING");
+#endif
+
+#ifdef MUSCLE_TRACE_CHECKPOINTS
+   q.AddTail(String("MUSCLE_TRACE_CHECKPOINTS=%1").Arg(MUSCLE_TRACE_CHECKPOINTS));
+#endif
+
+#ifdef MUSCLE_DISABLE_MESSAGE_FIELD_POOLS 
+   q.AddTail("MUSCLE_DISABLE_MESSAGE_FIELD_POOLS");
+#endif
+
+#ifdef MUSCLE_INLINE_LOGGING 
+   q.AddTail("MUSCLE_INLINE_LOGGING");
+#endif
+
+#ifdef MUSCLE_DISABLE_LOGGING 
+   q.AddTail("MUSCLE_DISABLE_LOGGING");
+#endif
+
+#ifdef MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS 
+   q.AddTail("MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS");
+#endif
+
+#ifdef MUSCLE_MUTEX_POOL_SIZE
+   q.AddTail(String("MUSCLE_MUTEX_POOL_SIZE").Arg(MUSCLE_MUTEX_POOL_SIZE));
+#endif
+
+#ifdef MUSCLE_POWERPC_TIMEBASE_HZ
+   q.AddTail(String("MUSCLE_POWERPC_TIMEBASE_HZ=%1").Arg(MUSCLE_POWERPC_TIMEBASE_HZ));
+#endif
+
+#ifdef MUSCLE_USE_PTHREADS 
+   q.AddTail("MUSCLE_USE_PTHREADS");
+#endif
+
+#ifdef MUSCLE_USE_PTHREADS 
+   q.AddTail("MUSCLE_USE_CPLUSPLUS11_THREADS");
+#endif
+
+#ifdef MUSCLE_DEFAULT_TCP_STALL_TIMEOUT
+   q.AddTail("MUSCLE_DEFAULT_TCP_STALL_TIMEOUT=%1").Arg(MUSCLE_DEFAULT_TCP_STALL_TIMEOUT);
+#endif
+
+#ifdef MUSCLE_FD_SETSIZE
+   q.AddTail(String("MUSCLE_FD_SETSIZE=%1").Arg(MUSCLE_FD_SETSIZE));
+#endif
+
+#ifdef MUSCLE_AVOID_NEWNOTHROW 
+   q.AddTail("MUSCLE_AVOID_NEWNOTHROW");
+#endif
+
+#ifdef MUSCLE_AVOID_FORKPTY 
+   q.AddTail("MUSCLE_AVOID_FORKPTY");
+#endif
+
+#ifdef MUSCLE_HASHTABLE_DEFAULT_CAPACITY
+   q.AddTail(String("MUSCLE_HASHTABLE_DEFAULT_CAPACITY=%1").Arg(MUSCLE_HASHTABLE_DEFAULT_CAPACITY));
+#endif
+
+#ifdef SMALL_QUEUE_SIZE
+   q.AddTail(String("SMALL_QUEUE_SIZE=%1").Arg(SMALL_QUEUE_SIZE));
+#endif
+
+#ifdef SMALL_MUSCLE_STRING_LENGTH
+   q.AddTail(String("SMALL_MUSCLE_STRING_LENGTH=%1").Arg(SMALL_MUSCLE_STRING_LENGTH));
+#endif
+
+#ifdef MUSCLE_USE_QUERYPERFORMANCECOUNTER
+   q.AddTail("MUSCLE_USE_QUERYPERFORMANCECOUNTER");
+#endif
+
+#ifdef MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME
+   q.AddTail("MUSCLE_INCLUDE_SOURCE_LOCATION_IN_LOGTIME");
+#endif
+
+#ifdef MUSCLE_LOG_VERBOSE_SOURCE_LOCATIONS
+   q.AddTail("MUSCLE_LOG_VERBOSE_SOURCE_LOCATIONS");
+#endif
+
+#ifdef MUSCLE_WARN_ABOUT_LOUSY_HASH_FUNCTIONS
+   q.AddTail(String("MUSCLE_WARN_ABOUT_LOUSY_HASH_FUNCTIONS=%1").Arg(MUSCLE_WARN_ABOUT_LOUSY_HASH_FUNCTIONS));
+#endif
+
+#ifdef MUSCLE_ENABLE_DEADLOCK_FINDER
+   q.AddTail("MUSCLE_ENABLE_DEADLOCK_FINDER");
+#endif
+
+#ifdef MUSCLE_DEFAULT_RUNTIME_DISABLE_DEADLOCK_FINDER
+   q.AddTail("MUSCLE_DEFAULT_RUNTIME_DISABLE_DEADLOCK_FINDER");
+#endif
+
+#ifdef MUSCLE_POOL_SLAB_SIZE
+   q.AddTail(String("MUSCLE_POOL_SLAB_SIZE=%1").Arg(MUSCLE_POOL_SLAB_SIZE));
+#endif
+
+#ifdef MUSCLE_AVOID_BITSTUFFING
+   q.AddTail("MUSCLE_AVOID_BITSTUFFING");
+#endif
+
+#ifdef MUSCLE_AVOID_CHECK_THREAD_STACK_USAGE
+   q.AddTail("MUSCLE_AVOID_CHECK_THREAD_STACK_USAGE");
+#endif
+
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
+   q.AddTail("MUSCLE_ENABLE_OBJECT_COUNTING");
+#endif
+
+#ifdef MUSCLE_AVOID_THREAD_LOCAL_STORAGE
+   q.AddTail("MUSCLE_AVOID_THREAD_LOCAL_STORAGE");
+#endif
+
+#ifdef MUSCLE_AVOID_MINIMIZED_HASHTABLES
+   q.AddTail("MUSCLE_AVOID_MINIMIZED_HASHTABLES");
+#endif
+
+#ifdef MUSCLE_AVOID_THREAD_SAFE_HASHTABLE_ITERATORS
+   q.AddTail("MUSCLE_AVOID_THREAD_SAFE_HASHTABLE_ITERATORS");
+#endif
+
+#ifdef MUSCLE_FAKE_SHARED_MEMORY
+   q.AddTail("MUSCLE_FAKE_SHARED_MEMORY");
+#endif
+
+#ifdef MUSCLE_COUNT_STRING_COPY_OPERATIONS
+   q.AddTail("MUSCLE_COUNT_STRING_COPY_OPERATIONS");
+#endif
+
+#ifdef MUSCLE_AVOID_XENOMAI
+   q.AddTail("MUSCLE_AVOID_XENOMAI");
+#endif
+
+#ifdef DEBUG_LARGE_MEMORY_ALLOCATIONS_THRESHOLD
+   q.AddTail(String("DEBUG_LARGE_MEMORY_ALLOCATIONS_THRESHOLD=%1").Arg(DEBUG_LARGE_MEMORY_ALLOCATIONS_THRESHOLD));
+#endif
+
+#ifdef MUSCLE_AVOID_AUTOCHOOSE_SWAP
+   q.AddTail("MUSCLE_AVOID_AUTOCHOOSE_SWAP");
+#endif
+
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+   q.AddTail("MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS");
+#endif
+
+#ifdef MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION
+   q.AddTail("MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION");
+#endif
+
+#ifdef MUSCLE_USE_DUMMY_DETECT_NETWORK_CONFIG_CHANGES_SESSION
+   q.AddTail("MUSCLE_USE_DUMMY_DETECT_NETWORK_CONFIG_CHANGES_SESSION");
+#endif
+
+#ifdef MUSCLE_ENABLE_AUTHORIZATION_EXECUTE_WITH_PRIVILEGES
+   q.AddTail("MUSCLE_ENABLE_AUTHORIZATION_EXECUTE_WITH_PRIVILEGES");
+#endif
+
+#ifdef MUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
+   q.AddTail("MUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT");
+#endif
+   return q;
+}
+
+void LogBuildFlags(int logLevel)
+{
+   if (GetMaxLogLevel() >= logLevel)
+   {
+      Queue<String> flagStrs = GetBuildFlags();
+      for (uint32 i=0; i<flagStrs.GetNumItems(); i++) LogTime(logLevel, "MUSCLE code was compiled with preprocessor flag -D%s\n", flagStrs[i]());
+   }
+}
+
+void PrintBuildFlags()
+{
+   Queue<String> flagStrs = GetBuildFlags();
+   for (uint32 i=0; i<flagStrs.GetNumItems(); i++) printf("MUSCLE code was compiled with preprocessor flag -D%s\n", flagStrs[i]());
+}
+
+uint64 GetProcessMemoryUsage()
+{
+#if defined(__linux__)
+   FILE* fp = fopen("/proc/self/statm", "r");
+   if (fp)
+   {
+      char buf[256];
+      if (fgets(buf, sizeof(buf), fp) == NULL) buf[0] = '\0';
+      fclose(fp);
+
+      // skip past the first number (total program size) and return Rss
+      const char * firstSpace = strchr(buf, ' ');
+      if (firstSpace) return Atoull(firstSpace+1)*sysconf(_SC_PAGESIZE);
+   }
+#elif defined(__APPLE__)
+   mach_task_basic_info_data_t taskinfo; memset(&taskinfo, 0, sizeof(taskinfo));
+   mach_msg_type_number_t outCount = MACH_TASK_BASIC_INFO_COUNT;
+   if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&taskinfo, &outCount) == KERN_SUCCESS) return taskinfo.resident_size;
+#elif defined(WIN32) && !defined(__MINGW32__)
+   PROCESS_MEMORY_COUNTERS pmc;
+   if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) return pmc.WorkingSetSize;
+#endif
+   return 0;
+}
+
+} // end namespace muscle

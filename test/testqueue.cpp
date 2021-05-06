@@ -1,6 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
 #include <stdio.h>
+
 #include "system/SetupSystem.h"
 #include "util/Queue.h"
 #include "util/String.h"
@@ -9,7 +10,7 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Test failed, line %i\n",__LINE__)
+#define TEST(x) if ((x).IsError()) printf("Test failed, line %i\n",__LINE__)
 
 void PrintToStream(const Queue<int> & q);
 void PrintToStream(const Queue<int> & q)
@@ -20,9 +21,9 @@ void PrintToStream(const Queue<int> & q)
 /*
       int val;
       TEST(q.GetItemAt(i, val));    
-      printf(UINT32_FORMAT_SPEC" -> %i\n",i,val);
+      printf(UINT32_FORMAT_SPEC " -> %i\n",i,val);
 */
-      printf(UINT32_FORMAT_SPEC" -> %i\n",i,q[i]);
+      printf(UINT32_FORMAT_SPEC " -> %i\n",i,q[i]);
    }
 }
 
@@ -31,6 +32,7 @@ int main(void)
 {
    CompleteSetupSystem css;  // needed for string-count stats
 
+//#define TEST_SWAP_METHOD
 #ifdef TEST_SWAP_METHOD
    while(1)
    {
@@ -44,13 +46,22 @@ int main(void)
       while((s = t2()) != NULL) q2.AddTail(atoi(s));
       printf("T1Before="); PrintToStream(q1);
       printf("T2Before="); PrintToStream(q2);
+      printf("\n");
+      printf("q1 <  q2 = %i\n",  q1<q2);
+      printf("q1 <= q2 = %i\n", q1<=q2);
+      printf("q1 >  q2 = %i\n", q1>q2);
+      printf("q1 >= q2 = %i\n", q1>=q2);
+      printf("q1 == q2 = %i\n", q1==q2);
+      printf("q1 != q2 = %i\n", q1!=q2);
+      printf("\n");
+
       q1.SwapContents(q2);
       printf("T1After="); PrintToStream(q1);
       printf("T2After="); PrintToStream(q2);
    }
 #endif
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
    {
       Queue<int> q {1,2,3,4,5};
       if (q.GetNumItems() != 5) {printf("Oh no, initialize list constructor didn't work!\n"); exit(10);}
@@ -67,15 +78,15 @@ int main(void)
       for (int i=0; i<50000; i++)
       {
          q.AddTail(i);
-         uint32 newNumAlloced = q.GetNumAllocatedItemSlots();
+         const uint32 newNumAlloced = q.GetNumAllocatedItemSlots();
          if (newNumAlloced != numAllocedSlots)
          {
             printf("i=%i q.GetNumItems()=" UINT32_FORMAT_SPEC " q.GetNumAllocatedItemSlots()=" UINT32_FORMAT_SPEC "\n", i, q.GetNumItems(), newNumAlloced);
             numAllocedSlots = newNumAlloced;
          }
       }
-      if (q.ShrinkToFit() == B_NO_ERROR) printf("After ShrinkToFit():  q.GetNumItems()=" UINT32_FORMAT_SPEC " q.GetNumAllocatedItemSlots()=" UINT32_FORMAT_SPEC "\n", q.GetNumItems(), q.GetNumAllocatedItemSlots());
-                                    else printf("ShrinkToFit() failed!\n");
+      if (q.ShrinkToFit().IsOK()) printf("After ShrinkToFit():  q.GetNumItems()=" UINT32_FORMAT_SPEC " q.GetNumAllocatedItemSlots()=" UINT32_FORMAT_SPEC "\n", q.GetNumItems(), q.GetNumAllocatedItemSlots());
+                             else printf("ShrinkToFit() failed!\n");
 
       printf("Before setting equal to empty, q's allocated-slots size is: " UINT32_FORMAT_SPEC "\n", q.GetNumAllocatedItemSlots());
       q = GetDefaultObjectForType< Queue<int> >();
@@ -100,14 +111,14 @@ int main(void)
    const int testSize = 15;
    Queue<int> q;
 
-   int vars[] = {5,6,7,8,9,10,11,12,13,14,15};
+   const int vars[] = {5,6,7,8,9,10,11,12,13,14,15};
 
    printf("ADDTAIL TEST\n");
    {
       for (int i=0; i<testSize; i++) 
       {
          TEST(q.AddTail(i));
-         printf("len=" UINT32_FORMAT_SPEC"/" UINT32_FORMAT_SPEC"\n", q.GetNumItems(), q.GetNumAllocatedItemSlots());
+         printf("len=" UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC "\n", q.GetNumItems(), q.GetNumAllocatedItemSlots());
       }
    } 
 
@@ -148,9 +159,9 @@ int main(void)
 
    // Check that C++11's move semantics aren't stealing values they shouldn't
    {
-      Queue<String> q;
+      Queue<String> qq;
       String myStr = "Magic";
-      q.AddTail(myStr);
+      qq.AddTail(myStr);
       if (myStr != "Magic") 
       {
          printf("Error, AddTail() stole my string!\n");
@@ -163,7 +174,7 @@ int main(void)
       q.Clear();
       for (int i=0; i<testSize; i++)
       {
-         int next = rand()%255;
+         const int next = rand()%255;
          TEST(q.AddTail(next));
          printf("Added item %i = %i\n", i, q[i]);
       }
@@ -177,7 +188,7 @@ int main(void)
       Queue<String> q2;
       for (int i=0; i<testSize; i++)
       {
-         int next = rand()%255;
+         const int next = rand()%255;
          char buf[64];
          muscleSprintf(buf, "%i", next);
          TEST(q2.AddTail(buf));
@@ -190,32 +201,33 @@ int main(void)
 
    printf("REMOVE DUPLICATES test\n");
    {
-      Queue<int> q;
-      const int vars[] = {9,2,3,5,8,3,5,6,6,7,2,3,4,6,8,9,3,5,6,4,3,2,1};
-      if (q.AddTailMulti(vars, ARRAYITEMS(vars)) == B_NO_ERROR)
+      Queue<int> qq;
+      const int iVars[] = {9,2,3,5,8,3,5,6,6,7,2,3,4,6,8,9,3,5,6,4,3,2,1};
+      if (qq.AddTailMulti(iVars, ARRAYITEMS(iVars)).IsOK())
       {
-         q.RemoveDuplicateItems(); 
-         for (uint32 i=0; i<q.GetNumItems(); i++) printf("%u ", q[i]); printf("\n");
+         qq.RemoveDuplicateItems(); 
+         for (uint32 i=0; i<qq.GetNumItems(); i++) printf("%u ", qq[i]);
+         printf("\n");
       }
    }
 
    {
       const uint32 NUM_ITEMS = 1000000;
       const uint32 NUM_RUNS  = 3;
-      Queue<int> q; (void) q.EnsureSize(NUM_ITEMS, true);
+      Queue<int> iq; (void) iq.EnsureSize(NUM_ITEMS, true);
       double tally = 0.0;
       for (uint32 t=0; t<NUM_RUNS; t++)
       {
-         printf("SORT SPEED TEST ROUND " UINT32_FORMAT_SPEC"/" UINT32_FORMAT_SPEC":\n", t+1, NUM_RUNS);
+         printf("SORT SPEED TEST ROUND " UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC ":\n", t+1, NUM_RUNS);
 
-         srand(0); for (uint32 i=0; i<NUM_ITEMS; i++) q[i] = rand();  // we want this to be repeatable, hence srand(0)
+         srand(0); for (uint32 i=0; i<NUM_ITEMS; i++) iq[i] = rand();  // we want this to be repeatable, hence srand(0)
          
-         uint64 startTime = GetRunTime64();
-         q.Sort();
-         uint64 elapsed = (GetRunTime64()-startTime);
+         const uint64 startTime = GetRunTime64();
+         iq.Sort();
+         const uint64 elapsed = (GetRunTime64()-startTime);
 
-         double itemsPerSecond = ((double)NUM_ITEMS*((double)MICROS_PER_SECOND))/(elapsed);
-         printf("   It took " UINT64_FORMAT_SPEC" microseconds to sort " UINT32_FORMAT_SPEC" items, so we sorted %f items per second\n", elapsed, NUM_ITEMS, itemsPerSecond);
+         const double itemsPerSecond = ((double)NUM_ITEMS*((double)MICROS_PER_SECOND))/(elapsed);
+         printf("   It took " UINT64_FORMAT_SPEC " microseconds to sort " UINT32_FORMAT_SPEC " items, so we sorted %f items per second\n", elapsed, NUM_ITEMS, itemsPerSecond);
          tally += itemsPerSecond;
       }
       printf("GRAND AVERAGE ITEMS PER SECOND WAS %f items per second\n", tally/NUM_RUNS);
@@ -225,20 +237,20 @@ int main(void)
    {
       const uint32 NUM_ITEMS = 1000000;
       const uint32 NUM_RUNS  = 3;
-      Queue<String> q; (void) q.EnsureSize(NUM_ITEMS, true);
+      Queue<String> qq; (void) qq.EnsureSize(NUM_ITEMS, true);
       double tally = 0.0;
       for (uint32 t=0; t<NUM_RUNS; t++)
       {
-         printf("STRING SORT SPEED TEST ROUND " UINT32_FORMAT_SPEC"/" UINT32_FORMAT_SPEC":\n", t+1, NUM_RUNS);
+         printf("STRING SORT SPEED TEST ROUND " UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC ":\n", t+1, NUM_RUNS);
 
-         srand(0); for (uint32 i=0; i<NUM_ITEMS; i++) q[i] = String("FooBarBaz-%1").Arg(rand()).Pad(500);  // we want this to be repeatable, hence srand(0)
+         srand(0); for (uint32 i=0; i<NUM_ITEMS; i++) qq[i] = String("FooBarBaz-%1").Arg(rand()).Pad(500);  // we want this to be repeatable, hence srand(0)
          
-         uint64 startTime = GetRunTime64();
-         q.Sort();
-         uint64 elapsed = (GetRunTime64()-startTime);
+         const uint64 startTime = GetRunTime64();
+         qq.Sort();
+         const uint64 elapsed = (GetRunTime64()-startTime);
 
-         double itemsPerSecond = ((double)NUM_ITEMS*((double)MICROS_PER_SECOND))/(elapsed);
-         printf("   It took " UINT64_FORMAT_SPEC" microseconds to sort " UINT32_FORMAT_SPEC" items, so we sorted %f items per second\n", elapsed, NUM_ITEMS, itemsPerSecond);
+         const double itemsPerSecond = ((double)NUM_ITEMS*((double)MICROS_PER_SECOND))/(elapsed);
+         printf("   It took " UINT64_FORMAT_SPEC " microseconds to sort " UINT32_FORMAT_SPEC " items, so we sorted %f items per second\n", elapsed, NUM_ITEMS, itemsPerSecond);
          tally += itemsPerSecond;
       }
       printf("STRING GRAND AVERAGE ITEMS PER SECOND WAS %f items per second\n", tally/NUM_RUNS);
@@ -263,7 +275,7 @@ int main(void)
          TEST(q2.AddTail(i+100));
       }
       q.AddTailMulti(q2);
-      for (uint32 j=0; j<q.GetNumItems(); j++) printf("After concat, " UINT32_FORMAT_SPEC"->%i\n", j, q[j]);
+      for (uint32 j=0; j<q.GetNumItems(); j++) printf("After concat, " UINT32_FORMAT_SPEC "->%i\n", j, q[j]);
    }
 
    printf("CONCAT TEST 2\n");
@@ -276,7 +288,7 @@ int main(void)
          TEST(q2.AddTail(i+100));
       }
       q.AddHeadMulti(q2);
-      for (uint32 j=0; j<q.GetNumItems(); j++) printf("After concat, " UINT32_FORMAT_SPEC"->%i\n", j, q[j]);
+      for (uint32 j=0; j<q.GetNumItems(); j++) printf("After concat, " UINT32_FORMAT_SPEC "->%i\n", j, q[j]);
    }
    {
       printf("GetArrayPointer() test\n");
@@ -284,7 +296,7 @@ int main(void)
       int * a;
       for (uint32 i=0; (a = q.GetArrayPointer(i, len)) != NULL; i++)
       {
-         printf("SubArray " UINT32_FORMAT_SPEC": " UINT32_FORMAT_SPEC" items: ", i, len);
+         printf("SubArray " UINT32_FORMAT_SPEC ": " UINT32_FORMAT_SPEC " items: ", i, len);
          for (uint32 j=0; j<len; j++) printf("%i, ", a[j]);
          printf("\n");
       }
@@ -293,28 +305,28 @@ int main(void)
    printf("\nStress-testing Queue::Normalize()... this may take a minute\n");
    for (uint32 i=0; i<20000; i++)
    {
-      Queue<int> q;
+      Queue<int> qq;
       int counter = 0;
       for (uint32 j=0; j<i; j++)
       {
          switch(rand()%6)
          {
-            case 0:  case 1: q.AddTail(counter++); break;
-            case 2:  case 3: q.AddHead(counter++); break;
-            case 4:          q.RemoveHead();       break;
-            case 5:          q.RemoveTail();       break;
+            case 0:  case 1: qq.AddTail(counter++); break;
+            case 2:  case 3: qq.AddHead(counter++); break;
+            case 4:          qq.RemoveHead();       break;
+            case 5:          qq.RemoveTail();       break;
          }
       }
 
-      int * compareArray = new int[q.GetNumItems()];
-      for (uint32 j=0; j<q.GetNumItems(); j++) compareArray[j] = q[j];
-      q.Normalize();
+      int * compareArray = new int[qq.GetNumItems()];
+      for (uint32 j=0; j<qq.GetNumItems(); j++) compareArray[j] = qq[j];
+      qq.Normalize();
 
-      const int * a = q.HeadPointer();
-      if (memcmp(compareArray, a, q.GetNumItems()*sizeof(int)))
+      const int * a = qq.HeadPointer();
+      if (memcmp(compareArray, a, qq.GetNumItems()*sizeof(int)))
       {
          printf("ERROR IN NORMALIZE!\n");
-         for (uint32 i=0; i<q.GetNumItems(); i++) printf("   Expected %i, got %i (qi=%i at " UINT32_FORMAT_SPEC"/" UINT32_FORMAT_SPEC")\n", compareArray[i], a[i], q[i], i, q.GetNumItems());
+         for (uint32 j=0; j<qq.GetNumItems(); j++) printf("   Expected %i, got %i (qi=%i at " UINT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC ")\n", compareArray[j], a[j], qq[j], j, qq.GetNumItems());
          MCRASH("ERROR IN NORMALIZE!");
       }
 

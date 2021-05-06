@@ -12,7 +12,7 @@
 #define MusclePoint_h
 
 #include <math.h>  // for sqrt()
-#include "support/Flattenable.h"
+#include "support/PseudoFlattenable.h"
 #include "support/Tuple.h"
 
 namespace muscle {
@@ -33,7 +33,7 @@ public:
     */
    Point(float ax, float ay) {Set(ax, ay);}
 
-   /** Copy Constructor. */
+   /** @copydoc DoxyTemplate::DoxyTemplate(const DoxyTemplate &) */
    Point(const Point & rhs) : Tuple<2,float>(rhs) {/* empty */}
 
    /** Destructor */
@@ -70,6 +70,9 @@ public:
       if (y() > bottomRight.y()) y() = bottomRight.y();
    }
 
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &) */
+   inline Point & operator = (const Point & rhs) {Set(rhs.x(), rhs.y()); return *this;}
+
    /** Print debug information about the point to stdout or to a file you specify.
      * @param optFile If non-NULL, the text will be printed to this file.  If left as NULL, stdout will be used as a default.
      */
@@ -79,46 +82,40 @@ public:
       fprintf(optFile, "Point: %f %f\n", x(), y());
    }
       
-   /** Part of the Flattenable pseudo-interface:  Returns true */
+   /** Part of the PseudoFlattenable pseudo-interface:  Returns true */
    bool IsFixedSize() const {return true;} 
 
-   /** Part of the Flattenable pseudo-interface:  Returns B_POINT_TYPE */
+   /** Part of the PseudoFlattenable pseudo-interface:  Returns B_POINT_TYPE */
    uint32 TypeCode() const {return B_POINT_TYPE;}
 
-   /** Returns true iff (tc) equals B_POINT_TYPE. */
+   /** Returns true iff (tc) equals B_POINT_TYPE.
+     * @param tc the type-code to check
+     */
    bool AllowsTypeCode(uint32 tc) const {return (TypeCode()==tc);}
 
-   /** Part of the Flattenable pseudo-interface:  2*sizeof(float) */
+   /** Part of the PseudoFlattenable pseudo-interface:  Returns 2*sizeof(float) */
    uint32 FlattenedSize() const {return 2*sizeof(float);}
 
-   /** Returns a 32-bit checksum for this object. */
+   /** @copydoc DoxyTemplate::CalculateChecksum() const */
    uint32 CalculateChecksum() const {return CalculateChecksumForFloat(x()) + (3*CalculateChecksumForFloat(y()));}
 
-   /** Copies this point into an endian-neutral flattened buffer.
-    *  @param buffer Points to an array of at least FlattenedSize() bytes.
-    */
+   /** @copydoc DoxyTemplate::Flatten(uint8 *) const */
    void Flatten(uint8 * buffer) const 
    {
-      float * buf = (float *) buffer;
-      uint32 ox = B_HOST_TO_LENDIAN_IFLOAT(x()); muscleCopyOut(&buf[0], ox);
-      uint32 oy = B_HOST_TO_LENDIAN_IFLOAT(y()); muscleCopyOut(&buf[1], oy);
+      muscleCopyOut(&buffer[0*sizeof(int32)], B_HOST_TO_LENDIAN_IFLOAT(x()));
+      muscleCopyOut(&buffer[1*sizeof(int32)], B_HOST_TO_LENDIAN_IFLOAT(y()));
    }
 
-   /** Restores this point from an endian-neutral flattened buffer.
-    *  @param buffer Points to an array of (size) bytes
-    *  @param size The number of bytes (buffer) points to (should be at least FlattenedSize())
-    *  @return B_NO_ERROR on success, B_ERROR on failure (size was too small)
-    */
+   /** @copydoc DoxyTemplate::Unflatten(const uint8 *, uint32) */
    status_t Unflatten(const uint8 * buffer, uint32 size) 
    {
       if (size >= FlattenedSize())
       {
-         float * buf = (float *) buffer;
-         uint32 i0; muscleCopyIn(i0, &buf[0]); x() = B_LENDIAN_TO_HOST_IFLOAT(i0);
-         uint32 i1; muscleCopyIn(i1, &buf[1]); y() = B_LENDIAN_TO_HOST_IFLOAT(i1);
+         x() = B_LENDIAN_TO_HOST_IFLOAT(muscleCopyIn<int32>(&buffer[0*sizeof(int32)]));
+         y() = B_LENDIAN_TO_HOST_IFLOAT(muscleCopyIn<int32>(&buffer[1*sizeof(int32)]));
          return B_NO_ERROR;
       }
-      else return B_ERROR;
+      else return B_BAD_DATA;
    }
 
    /** This is implemented so that if Rect is used as the key in a Hashtable, the Tuple HashCode() method will be 
@@ -140,14 +137,13 @@ public:
      */
    float GetDistanceToSquared(const Point & pt) const
    {
-      float dx = pt.x()-x();
-      float dy = pt.y()-y();
+      const float dx = pt.x()-x();
+      const float dy = pt.y()-y();
       return ((dx*dx)+(dy*dy));
    }
 };
-
 DECLARE_ALL_TUPLE_OPERATORS(Point,float);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif 

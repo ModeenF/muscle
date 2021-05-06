@@ -21,7 +21,7 @@
 
 static void Inet_NtoA(uint32 addr, char * ipbuf)
 {
-   muscleSprintf(ipbuf, INT32_FORMAT_SPEC"."INT32_FORMAT_SPEC"."INT32_FORMAT_SPEC"."INT32_FORMAT_SPEC"", (addr>>24)&0xFF, (addr>>16)&0xFF, (addr>>8)&0xFF, (addr>>0)&0xFF);
+   muscleSprintf(ipbuf, INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC "." INT32_FORMAT_SPEC "", (addr>>24)&0xFF, (addr>>16)&0xFF, (addr>>8)&0xFF, (addr>>0)&0xFF);
 }
 
 static int ConnectToIP(uint32 hostIP, uint16 port)
@@ -60,19 +60,20 @@ static uint32 GetHostByName(const char * name)
 
 static int Connect(const char * hostName, uint16 port)
 {
-   uint32 hostIP = GetHostByName(hostName);
+   const uint32 hostIP = GetHostByName(hostName);
    return (hostIP > 0) ? ConnectToIP(hostIP, port) : -1;
 }
 
 static int32 SocketSendFunc(const uint8 * buf, uint32 numBytes, void * arg)
 {
-   int ret = send(*((int *)arg), (const char *)buf, numBytes, 0L);
+   const int ret = send(*((int *)arg), (const char *)buf, numBytes, 0L);
    return (ret == -1) ? ((errno == EWOULDBLOCK)?0:-1) : ret;
 }
 
 static int32 SocketRecvFunc(uint8 * buf, uint32 numBytes, void * arg)
 {
-   int ret = recv(*((int *)arg), (char *)buf, numBytes, 0L);
+   const int ret = recv(*((int *)arg), (char *)buf, numBytes, 0L);
+   if (ret == 0) return -1;  // 0 means TCP connection has closed, we'll treat that as an error
    return (ret == -1) ? ((errno == EWOULDBLOCK)?0:-1) : ret;
 }
 
@@ -115,13 +116,16 @@ int main(int argc, char ** argv)
 
          if (MGHasBytesToOutput(gw)) FD_SET(s, &writeSet);
 
+#ifndef SELECT_ON_FILE_DESCRIPTORS_NOT_AVAILABLE  // Windows doesn't support reading from STDIN_FILENO :(
          if (STDIN_FILENO > maxfd) maxfd = STDIN_FILENO;
          FD_SET(STDIN_FILENO, &readSet);
+#endif
 
          while(keepGoing) 
          {
             if (select(maxfd+1, &readSet, &writeSet, NULL, NULL) < 0) printf("minireflectclient: select() failed!\n");
 
+#ifndef SELECT_ON_FILE_DESCRIPTORS_NOT_AVAILABLE
             if (FD_ISSET(STDIN_FILENO, &readSet))
             {
                char * ret;
@@ -129,6 +133,7 @@ int main(int argc, char ** argv)
                ret = strchr(text, '\n'); 
                if (ret) *ret = '\0';
             }
+#endif
 
             if (text[0])
             {
@@ -283,10 +288,10 @@ int main(int argc, char ** argv)
    
             {
                MMessage * incomingMsg = NULL;
-               MBool reading    = FD_ISSET(s, &readSet);
-               MBool writing    = FD_ISSET(s, &writeSet);
-               MBool writeError = ((writing)&&(MGDoOutput(gw, ~0, SocketSendFunc, &s) < 0));
-               MBool readError  = ((reading)&&(MGDoInput( gw, ~0, SocketRecvFunc, &s, &incomingMsg) < 0));
+               const MBool reading    = FD_ISSET(s, &readSet);
+               const MBool writing    = FD_ISSET(s, &writeSet);
+               const MBool writeError = ((writing)&&(MGDoOutput(gw, ~0, SocketSendFunc, &s) < 0));
+               const MBool readError  = ((reading)&&(MGDoInput( gw, ~0, SocketRecvFunc, &s, &incomingMsg) < 0));
 
                if (incomingMsg)
                {
@@ -309,7 +314,9 @@ int main(int argc, char ** argv)
                FD_ZERO(&writeSet);
                FD_SET(s, &readSet);
                if (MGHasBytesToOutput(gw)) FD_SET(s, &writeSet);
+#ifndef SELECT_ON_FILE_DESCRIPTORS_NOT_AVAILABLE
                FD_SET(STDIN_FILENO, &readSet);
+#endif
             }
          }
       } 

@@ -13,8 +13,6 @@ namespace muscle {
 class ThreadSupervisorSession;
 class MessageTransceiverThread;
 
-// MTT_EVENT_SESSION_CONNECTED events, this field contains a string representation of the IPAddressAndPort object
-
 /** These are reply codes returned by MessageTransceiverThread::GetNextEventFromInternalThread() 
   * @see MessageTransceiverThread::GetNextEventFromInternalThread()
   */
@@ -46,28 +44,29 @@ enum {
    MTT_COMMAND_SET_OUTGOING_ENCODING,          /**< set the MUSCLE_MESSAGE_ENCODING_* setting on worker sessions */
    MTT_COMMAND_SET_SSL_PRIVATE_KEY,            /**< set the private key used to authenticate accepted incoming TCP connections */
    MTT_COMMAND_SET_SSL_PUBLIC_KEY,             /**< set the public key used to certify outgoing TCP connections */
+   MTT_COMMAND_SET_SSL_PSK_INFO,               /**< set the PSK username/password for authenticating incoming or outgoing TCP connections */
    MTT_LAST_COMMAND                            /**< guard value */
 };
 
 /** These are field names used in the MessageTransceiverThread's internal protocol */
-#define MTT_NAME_PATH        "path"  // field containing a session path (e.g. "/*/*")
-#define MTT_NAME_DATA        "data"  // field containing a raw bytes
-#define MTT_NAME_MESSAGE     "mssg"  // field containing a message object
-#define MTT_NAME_SOCKET      "sock"  // field containing a Socket reference
-#define MTT_NAME_IP_ADDRESS  "addr"  // field containing an int32 IP address
-#define MTT_NAME_HOSTNAME    "host"  // field containing an ASCII hostname or IP address
-#define MTT_NAME_PORT        "port"  // field containing an int16 port number
-#define MTT_NAME_FACTORY_ID  "fcid"  // field containing a uint32 factory ID number (new for v3.40)
-#define MTT_NAME_SESSION     "sess"  // field containing an AbstractReflectSession tag
-#define MTT_NAME_FROMSESSION "sfrm"  // field containing the root path of the session this message is from (e.g. "192.168.1.103/17")
-#define MTT_NAME_FACTORY     "fact"  // field containing a ReflectSessionFactory tag
-#define MTT_NAME_DRAIN_TAG   "dtag"  // field containing a DrainTag reference
-#define MTT_NAME_POLICY_TAG  "ptag"  // field containing an IOPolicy reference
-#define MTT_NAME_ENCODING    "enco"  // field containing the MUSCLE_MESSAGE_ENCODING_* value
-#define MTT_NAME_EXPANDLOCALHOST "expl" // boolean field indicating whether localhost IP should be expanded to primary IP
-#define MTT_NAME_AUTORECONNECTDELAY "arcd" // int64 indicating how long after disconnect before an auto-reconnect should occur
-#define MTT_NAME_MAXASYNCCONNPERIOD "maxa" // int64 indicating how long we should wait for an async TCP connect to be established
-#define MTT_NAME_LOCATION    "loc" // String field representing an IPAddressAndPort of where the session connected to (or was accepted from)
+#define MTT_NAME_PATH               "path"  /**< field containing a session-path */
+#define MTT_NAME_DATA               "data"  /**< field containing a raw bytes */
+#define MTT_NAME_MESSAGE            "mssg"  /**< field containing a message object */
+#define MTT_NAME_SOCKET             "sock"  /**< field containing a Socket reference */
+#define MTT_NAME_IP_ADDRESS         "addr"  /**< field containing an int32 IP address */
+#define MTT_NAME_HOSTNAME           "host"  /**< field containing an ASCII hostname or IP address */
+#define MTT_NAME_PORT               "port"  /**< field containing an int16 port number */
+#define MTT_NAME_FACTORY_ID         "fcid"  /**< field containing a uint32 factory ID number (new for v3.40) */
+#define MTT_NAME_SESSION            "sess"  /**< field containing an AbstractReflectSession tag */
+#define MTT_NAME_FROMSESSION        "sfrm"  /**< field containing the root path of the session this message is from (e.g. "192.168.1.103/17") */
+#define MTT_NAME_FACTORY            "fact"  /**< field containing a ReflectSessionFactory tag */
+#define MTT_NAME_DRAIN_TAG          "dtag"  /**< field containing a DrainTag reference */
+#define MTT_NAME_POLICY_TAG         "ptag"  /**< field containing an IOPolicy reference */
+#define MTT_NAME_ENCODING           "enco"  /**< field containing the MUSCLE_MESSAGE_ENCODING_* value */
+#define MTT_NAME_EXPANDLOCALHOST    "expl"  /**< boolean field indicating whether localhost IP should be expanded to primary IP */
+#define MTT_NAME_AUTORECONNECTDELAY "arcd"  /**< int64 indicating how long after disconnect before an auto-reconnect should occur */
+#define MTT_NAME_MAXASYNCCONNPERIOD "maxa"  /**< int64 indicating how long we should wait for an async TCP connect to be established */
+#define MTT_NAME_LOCATION           "loc"   /**< String field representing an IPAddressAndPort of where the session connected to (or was accepted from) */
 
 /** This little class is used to help us track when workers' output queues are empty.
   * When it gets deleted (inside the internal thread), it triggers the supervisor session
@@ -75,7 +74,7 @@ enum {
   * It's exposed publically here only because certain (ahem) poorly written programs 
   * need to subclass it in order to be able to safely block until it has gone away.
   */
-class DrainTag : public RefCountable, private CountedObject<DrainTag>
+class DrainTag : public RefCountable
 {
 public:
    /** Constructor */
@@ -95,6 +94,8 @@ private:
 
    ThreadSupervisorSession * _notify;
    MessageRef _replyRef;
+
+   DECLARE_COUNTED_OBJECT(DrainTag);
 };
 DECLARE_REFTYPES(DrainTag);
 
@@ -102,7 +103,7 @@ DECLARE_REFTYPES(DrainTag);
   * ThreadWorkerSessions are added to a MessageTransceiverThread's held ReflectServer
   * object by the ThreadSupervisorSession on demand.
   */
-class ThreadWorkerSession : public StorageReflectSession, private CountedObject<ThreadWorkerSession>
+class ThreadWorkerSession : public StorageReflectSession
 {
 public:
    /** Constructor */
@@ -123,16 +124,19 @@ public:
    /** Overridden to send a message back to the user to let him know the connection is ready */
    virtual void AsyncConnectCompleted();
 
-   /** Overridden to wrap incoming messages and pass them along to our supervisor session */
+   /** Overridden to wrap incoming messages and pass them along to our supervisor session 
+     * @copydoc StorageReflectSession::MessageReceivedFromGateway(const MessageRef &, void *)
+     */
    virtual void MessageReceivedFromGateway(const MessageRef & msg, void * userData);
 
-   /** Overriden to handle messages from our supervisor session */
+   /** Overriden to handle messages from our supervisor session
+     * @copydoc StorageReflectSession::MessageReceivedFromSession(AbstractReflectSession &, const MessageRef &, void *)
+     */
    virtual void MessageReceivedFromSession(AbstractReflectSession & from, const MessageRef & msg, void * userData);
 
-   /** Returns a human-readable label for this session type:  "ThreadWorker" */
-   virtual const char * GetTypeName() const {return "ThreadWorker";}
-
-   /** Overridden to clear our _drainNotifiers Queue when appropriate */
+   /** Overridden to clear our _drainNotifiers Queue when appropriate 
+     * @copydoc StorageReflectSession::DoOutput(uint32)
+     */
    virtual int32 DoOutput(uint32 maxBytes);
 
    /** Returns true iff our MessageReceivedFromGateway() method should automatically forward all Messages
@@ -153,7 +157,7 @@ protected:
    /** Sends the specified Message to our ThreadSupervisorSession object
      * @param msg The Message to send
      * @param userData Can be used to pass context information to the supervisor's MessageReceivedFromSession() method, if desired.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (supervisor not found?)
+     * @returns B_NO_ERROR on success, or B_BAD_OBJECT if the supervisor-session couldn't be found.
      */
    status_t SendMessageToSupervisorSession(const MessageRef & msg, void * userData = NULL);
 
@@ -169,11 +173,13 @@ private:
 
    TamperEvidentValue<bool> _forwardAllIncomingMessagesToSupervisor;
    ThreadSupervisorSession * _supervisorSession;  // cached for efficiency
+
+   DECLARE_COUNTED_OBJECT(ThreadWorkerSession);
 };
 DECLARE_REFTYPES(ThreadWorkerSession);
 
 /** A factory class that returns new ThreadWorkerSession objects. */
-class ThreadWorkerSessionFactory : public StorageReflectSessionFactory, private CountedObject<ThreadWorkerSessionFactory>
+class ThreadWorkerSessionFactory : public StorageReflectSessionFactory
 {
 public:
    /** Default Constructor.  */
@@ -191,12 +197,19 @@ public:
      * to have this factory class return a different type of
      * session object should override CreateThreadWorkerSession(const String &, const IPAddressAndPort &);
      * instead of this method.
+     *
+     * @param clientAddress A string representing the connecting client's host (typically an IP address, e.g. "192.168.1.102")
+     * @param factoryInfo The IP address and port number of the local network interface on which this connection was received.
+     * @returns a reference to a freshly allocated AbstractReflectSession object on success, or a NULL reference on failure.
      */
    virtual AbstractReflectSessionRef CreateSession(const String & clientAddress, const IPAddressAndPort & factoryInfo);
 
    /** Default implementation returns a new ThreadWorkerSession object.
      * Subclasses may override this method to return a different type of
      * object, as long as the returned object is a subclass of ThreadWorkerSession.
+     * @param clientAddress A string representing the connecting client's host (typically an IP address, e.g. "192.168.1.102")
+     * @param factoryInfo The IP address and port number of the local network interface on which this connection was received.
+     * @returns a reference to a freshly allocated ThreadWorkerSession object on success, or a NULL reference on failure.
      */
    virtual ThreadWorkerSessionRef CreateThreadWorkerSession(const String & clientAddress, const IPAddressAndPort & factoryInfo);
 
@@ -218,7 +231,7 @@ protected:
    /** Sends the specified Message to our ThreadSupervisorSession object
      * @param msg The Message to send
      * @param userData Can be used to pass context information to the supervisor's MessageReceivedFromFactory() method, if desired.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure (supervisor not found?)
+     * @returns B_NO_ERROR on success, or B_BAD_OBJECT if the supervisor-session couldn't be found.
      */
    status_t SendMessageToSupervisorSession(const MessageRef & msg, void * userData = NULL);
 
@@ -228,6 +241,8 @@ private:
    void SetForwardAllIncomingMessagesToSupervisorIfNotAlreadySet(bool defaultValue);
 
    TamperEvidentValue<bool> _forwardAllIncomingMessagesToSupervisor;
+
+   DECLARE_COUNTED_OBJECT(ThreadWorkerSessionFactory);
 };
 DECLARE_REFTYPES(ThreadWorkerSessionFactory);
 
@@ -235,7 +250,7 @@ DECLARE_REFTYPES(ThreadWorkerSessionFactory);
   * held ReflectServer object.  It accepts commands from the MessageTransceiverThread object, and
   * routes messages to and from the ThreadWorkerSessions.
   */
-class ThreadSupervisorSession : public StorageReflectSession, private CountedObject<ThreadSupervisorSession>
+class ThreadSupervisorSession : public StorageReflectSession
 {
 public:
    /** Default Constructor */
@@ -252,13 +267,12 @@ public:
 
    /** Overridden to deal with the MessageTransceiverThread.  If you are subclassing
      * ThreadSupervisorSession, don't override this method; override MessageReceivedFromOwner() instead.
+     * @param msg the Message coming from the gateway object
+     * @param userData a user-defined context value
      */
    virtual void MessageReceivedFromGateway(const MessageRef & msg, void * userData);
 
-   /** Overridden to handle messages coming from the ThreadWorkerSessions. */
    virtual void MessageReceivedFromSession(AbstractReflectSession & from, const MessageRef & msg, void * userData);
-
-   /** Overriden to handle messages from factories */
    virtual void MessageReceivedFromFactory(ReflectSessionFactory & from, const MessageRef & msg, void * userData);
 
    /** Overridden to end the server (and hence, the thread) if our connection to the thread is broken. 
@@ -277,14 +291,11 @@ public:
    /** Returns the current default distribution path. */
    const String & GetDefaultDistributionPath() const {return _defaultDistributionPath;}
 
-   /** Returns a human-readable label for this session type:  "ThreadSupervisor" */
-   virtual const char * GetTypeName() const {return "ThreadSupervisor";}
-
 protected:
    /** Handles control messages received from the main thread. 
      * @param msg Reference to the message from the owner.
      * @param numLeft Number of messages still pending in the message queue
-     * @returns B_NO_ERROR on success, or B_ERROR if the thread should go away.
+     * @returns B_NO_ERROR on success, or an error code if the thread should go away.
      */
    virtual status_t MessageReceivedFromOwner(const MessageRef & msg, uint32 numLeft);
 
@@ -300,11 +311,13 @@ private:
    friend class DrainTag;
 
    void DrainTagIsBeingDeleted(DrainTag * tag);
-   status_t AddNewWorkerConnectSession(const ThreadWorkerSessionRef & sessionRef, const ip_address & hostIP, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod);
+   status_t AddNewWorkerConnectSession(const ThreadWorkerSessionRef & sessionRef, const IPAddress & hostIP, uint16 port, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod);
 
    Hashtable<DrainTag *, Void> _drainTags;
    String _defaultDistributionPath;
    MessageTransceiverThread * _mtt;
+
+   DECLARE_COUNTED_OBJECT(ThreadSupervisorSession);
 };
 DECLARE_REFTYPES(ThreadSupervisorSession);
 
@@ -316,7 +329,7 @@ DECLARE_REFTYPES(ThreadSupervisorSession);
   * @see BMessageTransceiverThread for use with BeOS APIs
   * @see QMessageTransceiverThread for use with Qt's APIs
   */
-class MessageTransceiverThread : public Thread, private CountedObject<MessageTransceiverThread>
+class MessageTransceiverThread : public Thread
 {
 public:
    /** Constructor */
@@ -328,7 +341,7 @@ public:
    virtual ~MessageTransceiverThread();
 
    /** Overridden to do some additional setup, before starting the internal thread.
-     * @returns B_NO_ERROR on success, B_ERROR on error (out of memory, or thread is already running)
+     * @returns B_NO_ERROR on success, or B_BAD_OBJECT if the internal thread is already running.
      */
    virtual status_t StartInternalThread();
 
@@ -338,7 +351,7 @@ public:
      * @param msgRef Reference to the message to send
      * @param optDistPath Optional node path to match against to decide which ThreadWorkerSessions to send to.  
      *                    If left as NULL, the default distribution path will be used.
-     * @returns B_NO_ERROR if the message was enqueued successfully, or B_ERROR if out-of-memory
+     * @returns B_NO_ERROR if the message was enqueued successfully, or an error code on failure.
      */
    virtual status_t SendMessageToSessions(const MessageRef & msgRef, const char * optDistPath = NULL);
 
@@ -354,15 +367,19 @@ public:
      *                      ThreadWorkerSession, a subclass of ThreadWorkerSession, or at least something that acts 
      *                      like one, or else things won't work correctly.
      *                      The referenced session becomes sole property of the MessageTransceiverThread on success.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */  
    virtual status_t AddNewSession(const ConstSocketRef & socket, const ThreadWorkerSessionRef & optSessionRef);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
+   /** Convenience method -- calls the above method with a NULL session reference.
+     * @param socket the socket that the new session should use
+     */
    status_t AddNewSession(const ConstSocketRef & socket) {return AddNewSession(socket, ThreadWorkerSessionRef());}
 
-   /** Convenience method -- calls the above method with a NULL socket reference. */
+   /** Convenience method -- calls the above method with a NULL socket reference.
+     * @param optSessionRef the worker session that should be added 
+     */
    status_t AddNewSession(const ThreadWorkerSessionRef & optSessionRef) {return AddNewSession(ConstSocketRef(), optSessionRef);}
 
    /** Convenience method -- calls the above method with a NULL socket and NULL session reference. */
@@ -392,13 +409,34 @@ public:
      *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
      *                              is used; typically this means that it will be left up to the operating system how long to wait
      *                              before timing out the connection attempt.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */
-   virtual status_t AddNewConnectSession(const ip_address & targetIPAddress, uint16 port, const ThreadWorkerSessionRef & optSessionRef, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
+   virtual status_t AddNewConnectSession(const IPAddress & targetIPAddress, uint16 port, const ThreadWorkerSessionRef & optSessionRef, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
-   status_t AddNewConnectSession(const ip_address & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return AddNewConnectSession(targetIPAddress, port, ThreadWorkerSessionRef(), autoReconnectDelay, maxAsyncConnectPeriod);}
+   /**
+     * Convenience method:  Adds a new default ThreadWorkerSession that will connect out to the given IP address and port.
+     * May be called at any time, but behaves slightly differently depending on whether the internal
+     * thread is running or not.  If the internal thread is running, the session will be added asynchronously
+     * to the server.  If not, the call is immediately passed on through to ReflectServer::AddNewConnectSession(). 
+     * @param targetIPAddress IP address to connect to
+     * @param port Port to connect to at that IP address.
+     * @param autoReconnectDelay If specified, this is the number of microseconds after the
+     *                           connection is broken that an automatic reconnect should be
+     *                           attempted.  If not specified, an automatic reconnect will not
+     *                           be attempted, and the session will be removed when the
+     *                           connection breaks.  Specifying this is equivalent to calling
+     *                           SetAutoReconnectDelay() on (optSessionRef).
+     * @param maxAsyncConnectPeriod If specified, this is the maximum time (in microseconds) that we will
+     *                              wait for the asynchronous TCP connection to complete.  If this amount of time passes
+     *                              and the TCP connection still has not been established, we will force the connection attempt to
+     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
+     *                              is used; typically this means that it will be left up to the operating system how long to wait
+     *                              before timing out the connection attempt.
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
+     *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
+     */
+   status_t AddNewConnectSession(const IPAddress & targetIPAddress, uint16 port, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return AddNewConnectSession(targetIPAddress, port, ThreadWorkerSessionRef(), autoReconnectDelay, maxAsyncConnectPeriod);}
 
    /**
      * Adds a new session that will connect out to the given hostname and port.
@@ -425,12 +463,34 @@ public:
      *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
      *                              is used; typically this means that it will be left up to the operating system how long to wait
      *                              before timing out the connection attempt.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
      */
    virtual status_t AddNewConnectSession(const String & targetHostName, uint16 port, const ThreadWorkerSessionRef & optSessionRef, bool expandLocalhost = false, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS);
 
-   /** Convenience method -- calls the above method with a NULL session reference. */
+   /**
+     * Convenience method: Adds a new default ThreadWorkerSession that will connect out to the given hostname and port.
+     * May be called at any time, but behaves slightly differently depending on whether the internal
+     * thread is running or not.  If the internal thread is running, the session will be added asynchronously
+     * to the server.  If not, the call is passed immediately on through to ReflectServer::AddNewConnectSession(). 
+     * @param targetHostName ASCII hostname or ASCII IP address to connect to.  (e.g. "blah.com" or "132.239.50.8")
+     * @param port Port to connect to at that IP address.
+     * @param expandLocalhost Passed to GetHostByName().  See GetHostByName() documentation for details.  Defaults to false.
+     * @param autoReconnectDelay If specified, this is the number of microseconds after the
+     *                           connection is broken that an automatic reconnect should be
+     *                           attempted.  If not specified, an automatic reconnect will not
+     *                           be attempted, and the session will be removed when the
+     *                           connection breaks.  Specifying this is equivalent to calling
+     *                           SetAutoReconnectDelay() on (optSessionRef).
+     * @param maxAsyncConnectPeriod If specified, this is the maximum time (in microseconds) that we will
+     *                              wait for the asynchronous TCP connection to complete.  If this amount of time passes
+     *                              and the TCP connection still has not been established, we will force the connection attempt to
+     *                              abort.  If not specified, the default value (as specified by MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS)
+     *                              is used; typically this means that it will be left up to the operating system how long to wait
+     *                              before timing out the connection attempt.
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
+     *         then success merely indicates that the add command was enqueued successfully, not that it was executed (yet).
+     */
    status_t AddNewConnectSession(const String & targetHostName, uint16 port, bool expandLocalhost = false, uint64 autoReconnectDelay = MUSCLE_TIME_NEVER, uint64 maxAsyncConnectPeriod = MUSCLE_MAX_ASYNC_CONNECT_DELAY_MICROSECONDS) {return AddNewConnectSession(targetHostName, port, ThreadWorkerSessionRef(), expandLocalhost, autoReconnectDelay, maxAsyncConnectPeriod);}
 
    /** Installs a new ReflectSessionFactory onto the ReflectServer (or replaces an existing one) on the given port.
@@ -451,12 +511,14 @@ public:
      *                   internal thread has been started.  If the internal thread is running already, this argument
      *                   will be ignored (because the socket binding will happen asynchronously and therefore the
      *                   port chosen is not known in time to return it here).  Defaults to NULL.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
+     * @return B_NO_ERROR on success, or an error code on failure.  Note that if the internal thread is currently running,
      *         then success merely indicates that the put command was enqueued successfully, not that it was executed (yet).
      */
-   virtual status_t PutAcceptFactory(uint16 port, const ThreadWorkerSessionFactoryRef & optFactoryRef, const ip_address & optInterfaceIP = invalidIP, uint16 * optRetPort = NULL);
+   virtual status_t PutAcceptFactory(uint16 port, const ThreadWorkerSessionFactoryRef & optFactoryRef, const IPAddress & optInterfaceIP = invalidIP, uint16 * optRetPort = NULL);
 
-   /** Convenience method -- calls the above method with a NULL factory reference. */
+   /** Convenience method -- calls the above method with a NULL factory reference.
+     * @param port the TCP port to install the new factory at
+     */
    status_t PutAcceptFactory(uint16 port) {return PutAcceptFactory(port, ThreadWorkerSessionFactoryRef());}
 
    /** Removes an existing ReflectSessionFactory from the held ReflectServer.
@@ -466,10 +528,11 @@ public:
      * @param port The port to remove the factory from, or zero to remove all factories.
      *  @param optInterfaceIP Interface(s) that the specified callbacks were assigned to in their PutAcceptFactory() call.
      *                        This parameter is ignored when (port) is zero. 
-     * @return B_NO_ERROR on success, or B_ERROR on failure.  Note that if the internal thread is currently running,
-     *         then success merely indicates that the remove command was enqueued successfully, not that it was executed (yet).
+     * @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if no factory is currently installed on the given port.
+     *         Note that if the internal thread is currently running, then success merely indicates that the remove 
+     *         command was enqueued successfully, not that it was executed (yet).
      */
-   virtual status_t RemoveAcceptFactory(uint16 port, const ip_address & optInterfaceIP = invalidIP);
+   virtual status_t RemoveAcceptFactory(uint16 port, const IPAddress & optInterfaceIP = invalidIP);
 
    /** Stops the internal thread if it is running, destroys internal the internal ReflectServer object, and more or
      * less make this MessageTransceiverThread look like it had just been constructed anew.
@@ -487,7 +550,7 @@ public:
      * The change of target path will only affect the routing of messages enqueued after this call has
      * returned, not ones that are currently enqueued for distribution or transmission.
      * @param distPath Node path to use by default, or NULL to send to all.
-     * @return B_NO_ERROR if the set-target-path command was enqueued successfully, or B_ERROR if there was
+     * @return B_NO_ERROR if the set-target-path command was enqueued successfully, or an error code if there was
      *                    an error enqueueing it.  Note that the actual change-of-path is done asynchronously.
      */
    status_t SetDefaultDistributionPath(const String & distPath);
@@ -516,7 +579,6 @@ public:
      *  </ol>
      * May return some other code if the ThreadSupervisorSession or ThreadWorkerSessions have
      * been customized to return other message types.
-     * @param retEventCode On successful return, the MTT_EVENT_* code for this event will be written here.
      * @param optRetMsgRef If non-NULL, on success the MessageRef this argument points to is written into so that
      *                     it references a Message associated with the event.  This is mainly used with the 
      *                     MTT_EVENT_INCOMING_MESSAGE event code.
@@ -543,7 +605,7 @@ public:
      *                    know what you are doing.  ;^)  On success, (optDrainTag) becomes property
      *                    of this MessageTransceiverThread.
      * @returns B_NO_ERROR on success (in which case an MTT_EVENT_OUTPUT_QUEUES_DRAINED event will be
-     *          forthcoming) or B_ERROR on error (out of memory).
+     *          forthcoming) or an error code on failure.
      */
    status_t RequestOutputQueuesDrainedNotification(const MessageRef & notificationMsg, const char * optDistPath = NULL, DrainTag * optDrainTag = NULL);
 
@@ -555,7 +617,7 @@ public:
      *             the existing input policy.
      * @param optDistPath If non-NULL, only sessions matching this path will be affected.
      *                    A NULL path (the default) means affect all worker sessions.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetNewInputPolicy(const AbstractSessionIOPolicyRef & pref, const char * optDistPath = NULL);
 
@@ -567,7 +629,7 @@ public:
      *             the existing output policy.
      * @param optDistPath If non-NULL, only sessions matching this path will be affected.
      *                    A NULL path (the default) means affect all worker sessions.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetNewOutputPolicy(const AbstractSessionIOPolicyRef & pref, const char * optDistPath = NULL);
 
@@ -580,7 +642,7 @@ public:
      * @param encoding one of the MUSCLE_MESSAGE_ENCODING_* constant declared in MessageIOGateway.h
      * @param optDistPath If non-NULL, only sessions matching this path will be affected.
      *                    A NULL path (the default) means affect all worker sessions.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t SetOutgoingMessageEncoding(int32 encoding, const char * optDistPath = NULL);
 
@@ -588,7 +650,7 @@ public:
      * Tells the specified worker session(s) to go away.
      * @param optDistPath If non-NULL, only sessions matching this path will be affected.
      *                    A NULL path (the default) means all worker sessions will be destroyed.
-     * @return B_NO_ERROR on success, or B_ERROR on failure.
+     * @return B_NO_ERROR on success, or an error code on failure.
      */
    status_t RemoveSessions(const char * optDistPath = NULL);
 
@@ -627,6 +689,14 @@ public:
      * @note this method is only available if MUSCLE_ENABLE_OPENSSL is defined.
      */
    status_t SetSSLPublicKeyCertificate(const ConstByteBufferRef & publicKey);
+
+   /** Sets the SSL pre-shared-key data that should be used to authenticate and
+     * encrypt either incoming or outgoing TCP connections.  Default state is empty strings.
+     * @param userName the user name to transmit (or expect)
+     * @param password the password to transmit (or expect)
+     * @note this method is only available if MUSCLE_ENABLE_OPENSSL is defined.
+     */
+   status_t SetSSLPreSharedKeyLoginInfo(const String & userName, const String & password);
 #endif
 
 protected:
@@ -666,7 +736,7 @@ private:
    status_t EnsureServerAllocated();
    void UpdateWorkerSessionForwardingLogic(ThreadWorkerSessionRef & sRef) const;
    void UpdateWorkerSessionFactoryForwardingLogic(ThreadWorkerSessionFactoryRef & fRef) const;
-   status_t SendAddNewSessionMessage(const ThreadWorkerSessionRef & sessionRef, const ConstSocketRef & socket, const char * hostName, const ip_address & hostIP, uint16 port, bool expandLocalhost, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod);
+   status_t SendAddNewSessionMessage(const ThreadWorkerSessionRef & sessionRef, const ConstSocketRef & socket, const char * hostName, const IPAddress & hostIP, uint16 port, bool expandLocalhost, uint64 autoReconnectDelay, uint64 maxAsyncConnectPeriod);
    status_t SetNewPolicyAux(uint32 what, const AbstractSessionIOPolicyRef & pref, const char * optDistPath);
 
    ReflectServerRef _server;
@@ -674,11 +744,15 @@ private:
 #ifdef MUSCLE_ENABLE_SSL
    ConstByteBufferRef _privateKey;
    ConstByteBufferRef _publicKey;
+   String _pskUserName;            // used for pre-shared-key connections
+   String _pskPassword;            // used for pre-shared-key connections
 #endif
    bool _forwardAllIncomingMessagesToSupervisor;
+
+   DECLARE_COUNTED_OBJECT(MessageTransceiverThread);
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif
 

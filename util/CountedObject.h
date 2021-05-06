@@ -4,27 +4,28 @@
 #define MuscleCountedObject_h
 
 #include <typeinfo>   // So we can use typeid().name() in GetCounterTypeName()
+#include "support/NotCopyable.h"
 #include "system/AtomicCounter.h"
 #include "util/Hashtable.h"
 
 namespace muscle {
 
-#ifndef MUSCLE_AVOID_OBJECT_COUNTING
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
 
 /** This base class is used to construct a linked-list of ObjectCounter objects so that we can iterate over them and print them out */
-class ObjectCounterBase
+class ObjectCounterBase : private NotCopyable
 {
 public:
    /** To be implemented by ObjectCounter subclass to return a human-readable name indicating the type that is being counted */
    virtual const char * GetCounterTypeName() const = 0;
 
-   /** Implemented by subclass to return the number of objects of our type that are currently allocated. */
+   /** Returns the number of objects of our type that are currently allocated. */
    uint32 GetCount() const {return _counter.GetCount();}
 
-   /** Returns the previous counter in our global list of ObjectCounters. */
+   /** Returns the previous counter in our global linked-list of ObjectCounters. */
    const ObjectCounterBase * GetPreviousCounter() const {return _prevCounter;}
 
-   /** Returns the next counter in our global list of ObjectCounters. */
+   /** Returns the next counter in our global linked-list of ObjectCounters. */
    const ObjectCounterBase * GetNextCounter() const {return _nextCounter;}
 
    /** Increments our internal count */
@@ -41,7 +42,6 @@ protected:
    virtual ~ObjectCounterBase();
 
 private:
-   ObjectCounterBase(const ObjectCounterBase &);  // private and unimplemented
    void PrependObjectCounterBaseToGlobalCountersList();
    void RemoveObjectCounterBaseFromGlobalCountersList();
 
@@ -66,12 +66,12 @@ public:
 
 #endif
 
-/** This class is a superclass that other classes can derive from if it is
-  * desired to keep track of the number of objects of the derived class
-  * that are currently allocated.  Note that this class will compile down
-  * to a no-op if -DMUSCLE_AVOID_OBJECT_COUNTING is present.  Otherwise, you can
-  * call PrintCountedObjectInfo() at any time to get a report of current object
-  * allocation counts by type.
+/** This is a class that other classes can derive from, or keep as a
+  * private member variable, if it is desired to keep track of the number 
+  * of objects of that other class that are currently allocated.  Note that 
+  * this class will compile down to a no-op unless -DMUSCLE_ENABLE_OBJECT_COUNTING 
+  * is present.  Otherwise, you can call PrintCountedObjectInfo() at any time 
+  * to get a report of current object allocation counts by type.
   */
 template <class ObjectType> class CountedObject
 {
@@ -79,7 +79,7 @@ public:
    /** Default Constructor.  */      
    CountedObject() 
    {
-#ifndef MUSCLE_AVOID_OBJECT_COUNTING
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
       GetGlobalObjectForType< ObjectCounter<ObjectType> >().IncrementCounter();
 #endif
    }
@@ -87,7 +87,7 @@ public:
    /** Copy Constructor.  */      
    CountedObject(const CountedObject<ObjectType> & /*rhs*/) 
    {
-#ifndef MUSCLE_AVOID_OBJECT_COUNTING
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
       GetGlobalObjectForType< ObjectCounter<ObjectType> >().IncrementCounter();
 #endif
    }
@@ -95,22 +95,32 @@ public:
    /** Destructor (deliberately not virtual, to avoid a vtable-pointer size-penalty) */
    ~CountedObject() 
    {
-#ifndef MUSCLE_AVOID_OBJECT_COUNTING
+#ifdef MUSCLE_ENABLE_OBJECT_COUNTING
       GetGlobalObjectForType< ObjectCounter<ObjectType> >().DecrementCounter();
 #endif
    }
+
+   /** Assignment operator -- implemented only to avoid compiler warnings */
+   CountedObject & operator =(const CountedObject<ObjectType> & /*rhs*/) {return *this;}
 };
 
 /** For debugging.  On success, populates (results) with type names and their associated object counts,
   * respectively.
   * @param results a Hashtable to populate.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure (out of memory, or -DMUSCLE_TRACK_OBJECT_COUNTS wasn't defined)
+  * @returns B_NO_ERROR on success, or B_LOCK_FAILED, or B_OUT_OF_MEMORY, or B_UNIMPLEMENTED (if -DMUSCLE_TRACK_OBJECT_COUNTS wasn't defined).
   */
 status_t GetCountedObjectInfo(Hashtable<const char *, uint32> & results);
 
 /** Convenience function.  Calls GetCountedObjectInfo() and pretty-prints the results to stdout. */
 void PrintCountedObjectInfo();
 
-}; // end namespace muscle
+#if defined(MUSCLE_ENABLE_OBJECT_COUNTING)
+# define DECLARE_COUNTED_OBJECT(className) CountedObject<className> _declaredCountedObject /**< Macro to declare CountedObject<className> as a member variable, iff MUSCLE_ENABLE_OBJECT_COUNTING is defined */
+#else
+  // Note:  the only reason for this typedef is to serve as filler, to avoid "extra semicolon" warnings when compiling in clang++ with -Wpedantic
+# define DECLARE_COUNTED_OBJECT(className) typedef int unused_type /**< Macro to declare CountedObject<className> as a member variable, iff MUSCLE_ENABLE_OBJECT_COUNTING is defined */
+#endif
+
+} // end namespace muscle
 
 #endif

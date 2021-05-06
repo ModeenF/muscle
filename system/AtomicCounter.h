@@ -5,22 +5,24 @@
 
 #include "support/MuscleSupport.h"
 
-#ifndef MUSCLE_SINGLE_THREAD_ONLY
-# if defined(MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS)
+#ifdef MUSCLE_SINGLE_THREAD_ONLY
   // empty
-# elif defined(__ATHEOS__)
-#  include <atheos/atomic.h>
-# elif defined(__BEOS__) || defined(__HAIKU__)
-#  include <kernel/OS.h>
-# elif defined(WIN32)
-   // empty
-# elif defined(__APPLE__)
-#  include <libkern/OSAtomic.h>
-# elif defined(MUSCLE_USE_POWERPC_INLINE_ASSEMBLY) || defined(MUSCLE_USE_X86_INLINE_ASSEMBLY)
-   // empty
-# elif defined(MUSCLE_USE_PTHREADS) || defined(ANDROID) 
-#  define MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS
-# endif
+#elif !defined(MUSCLE_AVOID_CPLUSPLUS11)
+# include <atomic>
+#elif defined(MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS)
+  // empty
+#elif defined(__ATHEOS__)
+# include <atheos/atomic.h>
+#elif defined(__BEOS__) || defined(__HAIKU__)
+# include <kernel/OS.h>
+#elif defined(WIN32)
+  // empty
+#elif defined(__APPLE__)
+# include <libkern/OSAtomic.h>
+#elif defined(MUSCLE_USE_POWERPC_INLINE_ASSEMBLY) || defined(MUSCLE_USE_X86_INLINE_ASSEMBLY)
+  // empty
+#elif defined(MUSCLE_USE_PTHREADS) || defined(ANDROID) 
+# define MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS
 #endif
 
 #if defined(MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS)
@@ -78,7 +80,7 @@ public:
      */
    inline bool AtomicIncrement() 
    {
-#if defined(MUSCLE_SINGLE_THREAD_ONLY) 
+#if defined(MUSCLE_SINGLE_THREAD_ONLY) || !defined(MUSCLE_AVOID_CPLUSPLUS11)
       return (++_count == 1);
 #elif defined(MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS)
       return (DoMutexAtomicIncrement(&_count, 1) == 1);
@@ -109,7 +111,7 @@ public:
          :"memory");
       return (value==0);  // at this point value contains the counter's pre-increment value
 #else
-# error "No atomic increment supplied for this OS!  Add it here in AtomicCount.h, or put -DMUSCLE_SINGLE_THREAD_ONLY in your Makefile if you will not be using multithreading." 
+# error "No atomic increment supplied for this OS!  Add it here in AtomicCount.h, remove -DMUSCLE_AVOID_CPLUSPLUS11 from your compiler-defines to use std::atomic, or put -DMUSCLE_SINGLE_THREAD_ONLY in your compiler-defines if you will not be using multithreading." 
 #endif 
    }
 
@@ -119,7 +121,7 @@ public:
      */
    inline bool AtomicDecrement() 
    {
-#if defined(MUSCLE_SINGLE_THREAD_ONLY) 
+#if defined(MUSCLE_SINGLE_THREAD_ONLY) || !defined(MUSCLE_AVOID_CPLUSPLUS11)
       return (--_count == 0);
 #elif defined(MUSCLE_USE_MUTEXES_FOR_ATOMIC_OPERATIONS)
       return (DoMutexAtomicIncrement(&_count, -1) == 0);
@@ -155,7 +157,7 @@ public:
          );
       return isZero;
 #else
-# error "No atomic decrement supplied for this OS!  Add your own here in AtomicCounter.h, or put -DMUSCLE_SINGLE_THREAD_ONLY in your Makefile if you will not be using multithreading." 
+# error "No atomic decrement supplied for this OS!  Add it here in AtomicCount.h, or remove -DMUSCLE_AVOID_CPLUSPLUS11 in your compiler-defines to use std::atomic, or put -DMUSCLE_SINGLE_THREAD_ONLY in your compiler-defines if you will not be using multithreading." 
 #endif 
    }
 
@@ -170,12 +172,29 @@ public:
      * Be careful when using this function in multithreaded
      * environments, it can easily lead to race conditions
      * if you don't know what you are doing!
+     * @param c the new count-value to set
      */
    void SetCount(int32 c) {_count = c;}
+
+#if !defined(MUSCLE_AVOID_CPLUSPLUS11) && !defined(MUSCLE_SINGLE_THREAD_ONLY)
+   /** Copy constructor, defined explicitly for the C++11-based implementation,
+     * since std::atomic<int32> won't compile using the implicit copy constructor.
+     * @param rhs the AtomicCounter to make this one equivalent to
+     */
+   AtomicCounter(const AtomicCounter & rhs) {_count.store(rhs._count.load());}
+
+   /** Assignment operator, defined explicitly for C++11-based implementation
+     * since std::atomic<int32> won't compile using the implicit copy constructor.
+     * @param rhs the AtomicCounter to make this one equivalent to
+     */
+   AtomicCounter & operator=(const AtomicCounter & rhs) {_count.store(rhs._count.load()); return *this;}
+#endif
 
 private:
 #if defined(MUSCLE_SINGLE_THREAD_ONLY) || defined(__HAIKU__)
    int32 _count;
+#elif !defined(MUSCLE_AVOID_CPLUSPLUS11)
+   std::atomic<int32> _count;
 #elif defined(__ATHEOS__)
    atomic_t _count;
 #elif defined(WIN32)
@@ -195,6 +214,6 @@ private:
 #endif
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

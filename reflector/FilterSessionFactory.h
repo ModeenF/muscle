@@ -38,58 +38,70 @@ public:
      */
    virtual AbstractReflectSessionRef CreateSession(const String & clientAddress, const IPAddressAndPort & factoryInfo);
 
-   /** Implemented to handle PR_COMMAND_(ADD/REMOVE)(BANS/REQUIRES) messages from our sessions */
+   /** Implemented to handle PR_COMMAND_(ADD/REMOVE)(BANS/REQUIRES) messages from our sessions
+     * @param from the session that sent us the Message
+     * @param msgRef the Message the session sent to us
+     * @param userData an arbitrary userData pointer for purpose-specific use
+     */
    virtual void MessageReceivedFromSession(AbstractReflectSession & from, const MessageRef & msgRef, void * userData);       
+
    /** Add a new ban pattern to our set of ban patterns 
      * @param banPattern Pattern to match against (e.g. "192.168.0.*")
-     * @return B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+     * @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    status_t PutBanPattern(const String & banPattern);
 
    /** Add a new require pattern to our set of require patterns
      * @param requirePattern Pattern to match against (e.g. "192.168.0.*")
-     * @return B_NO_ERROR on success, or B_ERROR on failure (out of memory?)
+     * @return B_NO_ERROR on success, or B_OUT_OF_MEMORY on failure.
      */
    status_t PutRequirePattern(const String & requirePattern);
 
-   /** Remove the first matching instance of (banPattern) from our set of ban patterns.
-     * Note that we don't do any pattern matching here, we will remove exactly one ban
-     * pattern that is exactly equal to the supplied argument.
+   /** Remove the first matching instance of (banPattern) from our set of ban-patterns.
+     * Note that we don't do any pattern-matching here, we will remove exactly one ban-pattern
+     * that is exactly equal to the supplied argument.
      * @param requirePattern Pattern to remove from the set of ban patterns
-     * @return B_NO_ERROR on success, or B_ERROR if the given pattern wasn't found in the set.
+     * @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the given pattern wasn't found in the set.
      */
    status_t RemoveBanPattern(const String & requirePattern);
 
-   /** Remove the first matching instance of (requirePattern) from our set of require patterns.
-     * Note that we don't do any pattern matching here, we will remove exactly one require
-     * pattern that is exactly equal to the supplied argument.
+   /** Remove the first matching instance of (requirePattern) from our set of require-patterns.
+     * Note that we don't do any pattern-matching here, we will remove exactly one require-pattern
+     * that is exactly equal to the supplied argument.
      * @param requirePattern Pattern to remove from the set of require patterns
-     * @return B_NO_ERROR on success, or B_ERROR if the given pattern wasn't found in the set.
+     * @return B_NO_ERROR on success, or B_DATA_NOT_FOUND if the given pattern wasn't found in the set.
      */
    status_t RemoveRequirePattern(const String & requirePattern);
 
-   /** Removes all ban patterns who match the given regular expression.
+   /** Removes all ban-patterns who match the given regular expression.
      * @param exp Expression to match on.
      */
    void RemoveMatchingBanPatterns(const String & exp);
 
-   /** Removes all require patterns who match the given regular expression.
+   /** Removes all require-patterns who match the given regular expression.
      * @param exp Expression to match on.
      */
    void RemoveMatchingRequirePatterns(const String & exp);
 
-   /** Sets the input-bandwidth-allocation policy to apply to sessions that we create */
+   /** Sets the input-bandwidth-allocation policy to apply to sessions that we create 
+     * @param ref reference to the input policy to use, or a NULL reference to use no input policy
+     */
    void SetInputPolicy(const AbstractSessionIOPolicyRef & ref) {_inputPolicyRef = ref;}
 
-   /** Sets the output-bandwidth-allocation policy to apply to sessions that we create */
+   /** Sets the output-bandwidth-allocation policy to apply to sessions that we create
+     * @param ref reference to the output policy to use, or a NULL reference to use no output policy
+     */
    void SetOutputPolicy(const AbstractSessionIOPolicyRef & ref) {_outputPolicyRef = ref;}
 
    /** Sets the new max-sessions-per-host limit -- i.e. how many sessions from any given IP address
      * may be connected to our server concurrently.
+     * @param maxSessionsPerHost the new maximum sessions-per-host limit
      */
    void SetMaxSessionsPerHost(uint32 maxSessionsPerHost) {_maxSessionsPerHost = maxSessionsPerHost;}
 
-   /** Sets the new total-max-sessions limit -- i.e. how many sessions may be connected to our server concurrently.  */
+   /** Sets the new total-max-sessions limit -- i.e. how many sessions may be connected to our server concurrently. 
+     * @param maxSessions the new max-simultaneous-sessions limit
+     */
    void SetTotalMaxSessions(uint32 maxSessions) {_totalMaxSessions = maxSessions;}
 
    /** Returns the current max-sessions-per-host limit  */
@@ -109,7 +121,8 @@ private:
    uint32 _maxSessionsPerHost;
    uint32 _totalMaxSessions;
 };
+DECLARE_REFTYPES(FilterSessionFactory);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

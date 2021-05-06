@@ -1,6 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
 #include <stdio.h>
+
 #include "system/SetupSystem.h"
 #include "system/Thread.h"
 #include "util/String.h"
@@ -41,17 +42,17 @@ public:
       uint32 counter = 0;
       while(keepGoing)
       {
-         uint32 x = rand() % 10000;
+         const uint32 x = rand() % 10000;
          while(q.GetNumItems() < x) 
          {
             TestItemRef tRef(_pool.ObtainObject());
             if (tRef())
             {
-               char buf[128]; muscleSprintf(buf, "-" UINT32_FORMAT_SPEC, ++counter);
+               muscleSprintf(buf, "-" UINT32_FORMAT_SPEC, ++counter);
                tRef()->SetName(prefix+buf);
                q.AddTail(tRef);
             }
-            else WARN_OUT_OF_MEMORY; 
+            else MWARN_OUT_OF_MEMORY; 
          }
          while(q.GetNumItems() > x) q.RemoveTail();
 
@@ -60,7 +61,7 @@ public:
          {
             if (q[i]()->GetName().StartsWith(prefix) == false)
             {
-               printf("ERROR, thread %p expected prefix [%s], saw [%s] at position " INT32_FORMAT_SPEC"/" UINT32_FORMAT_SPEC"\n", this, prefix(), q[i]()->GetName()(), i, q.GetNumItems());
+               printf("ERROR, thread %p expected prefix [%s], saw [%s] at position " INT32_FORMAT_SPEC "/" UINT32_FORMAT_SPEC "\n", this, prefix(), q[i]()->GetName()(), i, q.GetNumItems());
                ExitWithoutCleanup(10);
             }
          }

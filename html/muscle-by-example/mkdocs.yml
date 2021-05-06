@@ -1,0 +1,106 @@
+site_name: MUSCLE by Example
+theme:     readthedocs
+
+pages:
+- Home: 'index.md'
+
+- MUSCLE Naming Conventions: 'naming-conventions.md'
+
+- Core MUSCLE Classes:
+   - String: 'string.md'
+   - Queue: 'queue.md'
+   - Hashtable: 'hashtable.md'
+   - Ref/RefCountable: 'refcount.md'
+   - Flattenable/PseudoFlattenable: 'flattenable.md'
+   - FlatCountable: 'flatcountable.md'
+   - ByteBuffer: 'bytebuffer.md'
+   - Message: 'message.md'
+
+- Low-Level Sockets API:
+   - Overview: 'low-level-sockets-api.md'
+   - Socket: 'socket.md'
+   - SocketMultiplexer: 'socketmultiplexer.md'
+   - IPAddress/IPAddressAndPort: 'ipaddress.md'
+   - NetworkInterfaceInfo: 'networkinterfaceinfo.md'
+   - NetworkUtilityFunctions: 'networkutilityfunctions.md'
+
+- Low-Level DataIO API:
+   - DataIO: 'dataio.md'
+   - SeekableDataIO: 'seekabledataio.md'
+   - PacketDataIO: 'packetdataio.md'
+   - TCPSocketDataIO: 'tcpsocketdataio.md'
+   - UDPSocketDataIO: 'udpsocketdataio.md'
+   - StdinDataIO: 'stdindataio.md'
+   - FileDataIO: 'filedataio.md'
+   - FileDescriptorDataIO: 'filedescriptordataio.md'
+   - ChildProcessDataIO: 'childprocessdataio.md'
+   - ByteBufferDataIO: 'bytebufferdataio.md'
+   - NullDataIO: 'nulldataio.md'
+   - RS232DataIO: 'rs232dataio.md'
+   - SSLSocketDataIO: 'sslsocketdataio.md'
+   - SimulatedMulticastDataIO: 'simulatedmulticastdataio.md'
+   - ProxyDataIO: 'proxydataio.md'
+   - Win32FileHandleDataIO: 'win32filehandledataio.md'
+
+- Mid-Level AbstractMessageIOGateway API:
+   - AbstractMessageIOGateway: 'abstractmessageiogateway.md'
+   - MessageIOGateway: 'messageiogateway.md'
+   - PlainTextMessageIOGateway: 'plaintextmessageiogateway.md'
+   - RawDataMessageIOGateway: 'rawdatamessageiogateway.md'
+   - SLIPFramedDataMessageIOGateway: 'slipframeddatamessageiogateway.md'
+   - SignalMessageIOGateway: 'signalmessageiogateway.md'
+
+- High-Level Messaging API:
+   - ReflectServer: 'reflectserver.md'
+   - ReflectSessionFactory: 'reflectsessionfactory.md'
+   - AbstractReflectSession: 'abstractreflectsession.md'
+   - DumbReflectSession: 'dumbreflectsession.md'
+   - StorageReflectSession: 'storagereflectsession.md'
+   - PulseNode: 'pulsenode.md'
+   - DataNode: 'datanode.md'
+   - AbstractSessionIOPolicy: 'abstractsessioniopolicy.md'
+   - RateLimitSessionIOPolicy: 'ratelimitsessioniopolicy.md'
+
+- StorageReflectSession Messages:
+   - Command Messages: 'srscommandmessages.md'
+   - Reply Messages: 'srsreplymessages.md'
+
+- Multithreading API:
+   - Thread: 'thread.md'
+   - Mutex/MutexGuard: 'mutex.md'
+   - AtomicCounter: 'atomiccounter.md'
+   - ThreadLocalStorage: 'threadlocalstorage.md'
+   - MessageTransceiverThread: 'messagetransceiverthread.md'
+
+- Qt Support Classes:
+   - QMessageTransceiverThread: 'qmessagetransceiverthread.md'
+
+- MicroMessage C API:
+   - Overview: 'micromessage-api.md'
+   - MicroMessage: 'micromessage.md'
+   - MicroMessageGateway: 'micromessagegateway.md'
+
+- Additional Support Classes:
+   - StringTokenizer: 'stringtokenizer.md'
+   - StringMatcher: 'stringmatcher.md'
+   - BitChord: 'bitchord.md'
+   - LogTime/LogCallback: 'logtime.md'
+   - NestCount/NestCountGuard: 'nestcount.md'
+   - MiscUtilityFunctions: 'miscutilityfunctions.md'
+   - TimeUtilityFunctions: 'timeutilityfunctions.md'
+   - FilePathInfo: 'filepathinfo.md'
+   - Directory: 'directory.md'
+   - SystemInfo: 'systeminfo.md'
+   - QueryFilter: 'queryfilter.md'
+   - SignalHandlerSession: 'signalhandlersession.md'
+   - DetectNetworkConfigChangesSession: 'detectnetworkconfigchangessession.md'
+   - SharedMemory: 'sharedmemory.md'
+   - ZipFileUtilityFunctions: 'zipfileutilityfunctions.md'
+   - ZLibUtilityFunctions: 'zlibutilityfunctions.md'
+   - ZLibCodec: 'zlibcodec.md'
+   - CPULoadMeter: 'cpuloadmeter.md'
+   - TarFileWriter: 'tarfilewriter.md'
+   - Void: 'void.md'
+
+- Other Client-side Languages:
+   - Overview: otherlanguages.md

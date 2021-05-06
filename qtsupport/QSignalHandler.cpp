@@ -5,15 +5,19 @@
 
 namespace muscle {
 
-QSignalHandler :: QSignalHandler(QObject * parent, const char * name) : QObject(parent), _socketNotifier(NULL)
+QSignalHandler :: QSignalHandler(QObject * parent, const char * name)
+   : QObject(parent)
+   , _socketNotifier(NULL)
 {
    if (name) setObjectName(name);
-   if ((CreateConnectedSocketPair(_mainThreadSocket, _handlerFuncSocket) == B_NO_ERROR)&&(SignalMultiplexer::GetSignalMultiplexer().AddHandler(this) == B_NO_ERROR))
+
+   status_t ret;
+   if ((CreateConnectedSocketPair(_mainThreadSocket, _handlerFuncSocket).IsOK(ret))&&(SignalMultiplexer::GetSignalMultiplexer().AddHandler(this).IsOK(ret)))
    {
       _socketNotifier = new QSocketNotifier(_mainThreadSocket.GetFileDescriptor(), QSocketNotifier::Read, this);
       connect(_socketNotifier, SIGNAL(activated(int)), this, SLOT(SocketDataReady()));
    }
-   else LogTime(MUSCLE_LOG_CRITICALERROR, "QSignalHandler %p could not register with the SignalMultiplexer!\n", this);
+   else LogTime(MUSCLE_LOG_CRITICALERROR, "QSignalHandler %p could not register with the SignalMultiplexer! [%s]\n", this, ret());
 }
 
 QSignalHandler :: ~QSignalHandler()
@@ -27,7 +31,7 @@ void QSignalHandler :: SocketDataReady()
    while(1)
    {
       char buf[64];
-      int32 bytesReceived = ReceiveData(_mainThreadSocket, buf, sizeof(buf), false);
+      const int32 bytesReceived = ReceiveData(_mainThreadSocket, buf, sizeof(buf), false);
       if (bytesReceived <= 0) break;
       for (int32 i=0; i<bytesReceived; i++) emit SignalReceived(buf[i]);
    }
@@ -40,15 +44,15 @@ void QSignalHandler :: SignalHandlerFunc(int sigNum)
    // worry that the SignalHandlerSession object might have been deleted by the time we get here, but I don't
    // think there is much I can do about that)
    int nextSigNum;
-   for (uint32 i=0; GetNthSignalNumber(i, nextSigNum) == B_NO_ERROR; i++)
+   for (uint32 i=0; GetNthSignalNumber(i, nextSigNum).IsOK(); i++)
    {
       if (sigNum == nextSigNum)
       {
-         char c = (char) sigNum;
+         const char c = (char) sigNum;
          (void) SendData(_handlerFuncSocket, &c, 1, false);  // send the signal value to the main thread so it can handle it later
          break;
       }
    }
 }
 
-}; // end namespace muscle
+} // end namespace muscle

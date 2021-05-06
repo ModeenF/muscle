@@ -11,7 +11,7 @@ AcceptSocketsThread :: AcceptSocketsThread()
    // empty
 }
 
-AcceptSocketsThread :: AcceptSocketsThread(uint16 port, const ip_address & optInterfaceIP)
+AcceptSocketsThread :: AcceptSocketsThread(uint16 port, const IPAddress & optInterfaceIP)
 {
    (void) SetPort(port, optInterfaceIP);
 }
@@ -21,7 +21,7 @@ AcceptSocketsThread :: ~AcceptSocketsThread()
    // empty
 }
 
-status_t AcceptSocketsThread :: SetPort(uint16 port, const ip_address & optInterfaceIP)
+status_t AcceptSocketsThread :: SetPort(uint16 port, const IPAddress & optInterfaceIP)
 {
    if (IsInternalThreadRunning() == false)
    {
@@ -32,8 +32,9 @@ status_t AcceptSocketsThread :: SetPort(uint16 port, const ip_address & optInter
          _port = port;
          return B_NO_ERROR;
       }
+      else return B_ERROR("CreateAcceptingSocket() failed");
    }
-   return B_ERROR;
+   return B_BAD_OBJECT;
 }
 
 status_t AcceptSocketsThread :: StartInternalThread()
@@ -41,9 +42,9 @@ status_t AcceptSocketsThread :: StartInternalThread()
    if ((IsInternalThreadRunning() == false)&&(_acceptSocket()))
    {
       _notifySocket = GetInternalThreadWakeupSocket();
-      return (_notifySocket.GetFileDescriptor() >= 0) ? Thread::StartInternalThread() : B_ERROR;
+      return (_notifySocket.GetFileDescriptor() >= 0) ? Thread::StartInternalThread() : B_BAD_OBJECT;
    } 
-   return B_ERROR;
+   return B_BAD_OBJECT;
 }
 
 void AcceptSocketsThread :: InternalThreadEntry()
@@ -52,8 +53,8 @@ void AcceptSocketsThread :: InternalThreadEntry()
    bool keepGoing = true;
    while(keepGoing)
    {
-      int afd = _acceptSocket.GetFileDescriptor();
-      int nfd = _notifySocket.GetFileDescriptor();
+      const int afd = _acceptSocket.GetFileDescriptor();
+      const int nfd = _notifySocket.GetFileDescriptor();
 
       multiplexer.RegisterSocketForReadReady(afd);
       multiplexer.RegisterSocketForReadReady(nfd);
@@ -64,7 +65,7 @@ void AcceptSocketsThread :: InternalThreadEntry()
          int32 numLeft;
          while((numLeft = WaitForNextMessageFromOwner(msgRef, 0)) >= 0)
          {
-            if (MessageReceivedFromOwner(msgRef, numLeft) != B_NO_ERROR)
+            if (MessageReceivedFromOwner(msgRef, numLeft).IsError())
             { 
                keepGoing = false;
                break;
@@ -84,4 +85,4 @@ void AcceptSocketsThread :: InternalThreadEntry()
    }
 }
 
-}; // end namespace muscle
+} // end namespace muscle

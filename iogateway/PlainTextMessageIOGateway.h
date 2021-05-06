@@ -7,11 +7,11 @@
 
 namespace muscle {
 
-/** This is the name of the string field used to hold text lines. */
-#define PR_NAME_TEXT_LINE "tl"
-
 /** The 'what' code that will be found in incoming Messages. */
 #define PR_COMMAND_TEXT_STRINGS 1886681204  // 'ptxt'
+
+/** This is the name of the string field used to hold text lines. */
+#define PR_NAME_TEXT_LINE "tl"
 
 /**
  * This gateway translates lines of text (separated by "\r", "\n", or "\r\n") into
@@ -19,7 +19,7 @@ namespace muscle {
  * Incoming and outgoing messages may have one or more strings in their PR_NAME_TEXT_LINE field.
  * Each of these strings represents a line of text (separator chars not included)
  */
-class PlainTextMessageIOGateway : public AbstractMessageIOGateway, private CountedObject<PlainTextMessageIOGateway>
+class PlainTextMessageIOGateway : public AbstractMessageIOGateway
 {
 public:
    /** Default constructor */
@@ -40,6 +40,7 @@ public:
     *  will be added to the incoming Message.  If false (the default), then incoming
     *  text without a carriage return will be buffered internally until the next
     *  carriage return is received.
+    *  @param f true to flush partial incoming lines; false to wait until they are fully received
     */
    void SetFlushPartialIncomingLines(bool f) {_flushPartialIncomingLines = f;}
 
@@ -64,6 +65,7 @@ protected:
    virtual void FilterInputBuffer(char * buf, uint32 & bufLen, uint32 maxLen);
 
 private:
+   int32 DoOutputImplementationAux(uint32 maxBytes, uint32 recurseDepth);
    MessageRef AddIncomingText(const MessageRef & msg, const char * s);
 
    MessageRef _currentSendingMessage;
@@ -74,7 +76,10 @@ private:
    bool _prevCharWasCarriageReturn;
    String _incomingText;
    bool _flushPartialIncomingLines;
+
+   DECLARE_COUNTED_OBJECT(PlainTextMessageIOGateway);
 };
+DECLARE_REFTYPES(PlainTextMessageIOGateway);
 
 /** This class is the same as a PlainTextMessageIOGateway, except that
   * some filtering logic has been added to strip out telnet control codes.
@@ -96,7 +101,8 @@ private:
    bool _inSubnegotiation;
    int _commandBytesLeft;
 };
+DECLARE_REFTYPES(TelnetPlainTextMessageIOGateway);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

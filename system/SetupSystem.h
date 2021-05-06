@@ -8,7 +8,9 @@
 #include "util/GenericCallback.h"
 #include "util/Queue.h"
 
-#if !defined(MUSCLE_SINGLE_THREAD_ONLY) && defined(MUSCLE_QT_HAS_THREADS)
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+# include <thread>
+#elif !defined(MUSCLE_SINGLE_THREAD_ONLY) && defined(MUSCLE_QT_HAS_THREADS)
 # if QT_VERSION >= 0x040000
 #  include <QThread>
 # else
@@ -122,6 +124,19 @@ public:
    virtual ~MathSetupSystem();
 };
 
+/** This SetupSystem handles initializing the system's 
+  * time-handling routines as necessary.
+  */
+class TimeSetupSystem : public SetupSystem
+{
+public:
+   /** Constructor. */
+   TimeSetupSystem();
+
+   /** Destructor. */
+   virtual ~TimeSetupSystem();
+};
+
 /** This SetupSystem just does some basic sanity checks
   * to ensure that the code was compiled in a way that
   * has some chance of working (e.g. it makes sure that
@@ -187,13 +202,21 @@ public:
      */ 
    static CompleteSetupSystem * GetCurrentCompleteSetupSystem();
 
+   /** Returns the amount of RAM being used by this process at the moment the
+     * CompleteSetupSystem constructor was executed.  (Useful for comparing how
+     * much RAM the process is using later on compared to its initial allotment)
+     */
+   size_t GetInitialMemoryUsage() const {return _initialMemoryUsage;}
+
 private: 
+   TimeSetupSystem    _time;
    NetworkSetupSystem _network;
    ThreadSetupSystem  _threads;
    MathSetupSystem    _math;
    SanitySetupSystem  _sanity;
    Queue<GenericCallbackRef> _cleanupCallbacks;
    CompleteSetupSystem * _prevInstance;  // stack (via linked list) so that nested scopes are handled appropriately
+   size_t             _initialMemoryUsage;  // RAM footprint of this process at the time our constructor ran
 };
 
 /** Returns a pointer to a process-wide Mutex, or NULL if that Mutex
@@ -219,16 +242,16 @@ class muscle_thread_id
 public:
    /** Default constructor.  Returns an muscle_thread_id object that doesn't represent any thread. */
    muscle_thread_id() 
-# ifndef MUSCLE_USE_PTHREADS
+#if !defined(MUSCLE_USE_CPLUSPLUS11_THREADS) && !defined(MUSCLE_USE_PTHREADS)
       : _id(0)
 # endif
    {
-# ifdef MUSCLE_USE_PTHREADS
+# if defined(MUSCLE_USE_PTHREADS)
       memset(&_id, 0, sizeof(_id));
 # endif  
    }
 
-   /** Returns true iff the two objects represent the same thread ID. */
+   /** @copydoc DoxyTemplate::operator==(const DoxyTemplate &) const */
    bool operator == (const muscle_thread_id & rhs) const
    {
 # if defined(MUSCLE_USE_PTHREADS)
@@ -238,14 +261,16 @@ public:
 # endif
    }
 
-   /** Returns true iff the two thread objects do not represent that same thread ID. */
+   /** @copydoc DoxyTemplate::operator!=(const DoxyTemplate &) const */
    bool operator != (const muscle_thread_id & rhs) const {return !(*this == rhs);}
 
    /** Returns a muscle_thread_id object representing the calling thread. */
    static muscle_thread_id GetCurrentThreadID()
    {
       muscle_thread_id ret(false);
-# if defined(MUSCLE_USE_PTHREADS)
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+      ret._id = std::this_thread::get_id();
+# elif defined(MUSCLE_USE_PTHREADS)
       ret._id = pthread_self();
 # elif defined(WIN32)
       ret._id = GetCurrentThreadId();
@@ -254,7 +279,7 @@ public:
 # elif defined(__BEOS__) || defined(__HAIKU__) || defined(__ATHEOS__)
       ret._id = find_thread(NULL);
 # else
-#  error "GetCurrentThreadID():  No implementation found for this OS!"
+#  error "GetCurrentThreadID():  No implementation found for this OS!  (If you're compiling with a pre-C++11 compiler, adding -DMUSCLE_USE_PTHREADS to your compile arguments might help)"
 # endif
       return ret;
    }
@@ -266,8 +291,8 @@ public:
      */
    const char * ToString(char * buf) const
    {
-# if defined(MUSCLE_USE_PTHREADS)
-      // pthread_t might be a struct, so generate a good-enough ID from its bytes
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS) || defined(MUSCLE_USE_PTHREADS)
+      // _id is a POD value, so generate a good-enough ID from its bytes
       unsigned long count = 0;
       unsigned long base  = 1; 
       unsigned char * s = (unsigned char*)(void*)(&_id);
@@ -287,7 +312,9 @@ public:
 private:
    muscle_thread_id(bool /*junk*/) {/* empty */}
 
-# if defined(MUSCLE_USE_PTHREADS)
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+   std::thread::id _id;
+# elif defined(MUSCLE_USE_PTHREADS)
    pthread_t _id;
 # elif defined(WIN32)
    DWORD _id;
@@ -296,12 +323,12 @@ private:
 # elif defined(__BEOS__) || defined(__HAIKU__) || defined(__ATHEOS__)
    thread_id _id;
 # else
-#  error "muscle_thread_id():  No implementation found for this OS!"
+#  error "muscle_thread_id():  No implementation found for this OS!  (If you're compiling with a pre-C++11 compiler, adding -DMUSCLE_USE_PTHREADS to your compile arguments might help)"
 # endif
 };
 
 #endif
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -15,6 +15,20 @@ using namespace muscle;
 // This program exercises the String class.
 int main(void) 
 {
+#ifdef TEST_DISTANCE
+   while(1)
+   {
+      char base[512];  
+      printf("Enter string A: "); fflush(stdout); if (fgets(base, sizeof(base), stdin) == NULL) base[0] = '\0';
+      String a = base; a = a.Trim();
+      printf("Enter string B: "); fflush(stdout); if (fgets(base, sizeof(base), stdin) == NULL) base[0] = '\0';
+      String b = base; b = b.Trim();
+
+      printf("Distance from [%s] to [%s] is %u\n", a(), b(), a.GetDistanceTo(b));
+      printf("Distance from [%s] to [%s] is %u\n", b(), a(), b.GetDistanceTo(a));
+   }
+#endif
+
 #ifdef TEST_MEMMEM
    char lookIn[512]; printf("Enter LookIn  string: "); fflush(stdout); if (fgets(lookIn, sizeof(lookIn), stdin) == NULL) lookIn[0] = '\0';
    lookIn[strlen(lookIn)-1] = '\0';
@@ -35,7 +49,7 @@ int main(void)
       char base[512];  printf("Enter string: "); fflush(stdout); if (fgets(base, sizeof(base), stdin) == NULL) base[0] = '\0';
 
       Message args;
-      if (ParseArgs(base, args) == B_NO_ERROR)
+      if (ParseArgs(base, args).IsOK())
       {
          printf("Parsed: "); args.PrintToStream();
       }
@@ -56,7 +70,7 @@ int main(void)
    {
       printf("Testing string-buffer-expansion behavior...\n");
 
-      String shortString = "1234567890";
+      const String shortString = "1234567890";
       printf("shortString=[%s] length=" UINT32_FORMAT_SPEC " numAllocedBytes=" UINT32_FORMAT_SPEC "\n", shortString(), shortString.Length(), shortString.GetNumAllocatedBytes());
 
       // Watch the behavior of the buffer size
@@ -65,31 +79,31 @@ int main(void)
       for (int i=0; i<50000; i++)
       {
          s += 'x';
-         uint32 newNumAlloced = s.GetNumAllocatedBytes();
+         const uint32 newNumAlloced = s.GetNumAllocatedBytes();
          if (newNumAlloced != numAllocedBytes)
          {
             printf("i=%i s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", i, s.Length(), newNumAlloced);
             numAllocedBytes = newNumAlloced;
          }
       }
-      if (s.ShrinkToFit() == B_NO_ERROR) printf("After ShrinkToFit():  s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s.Length(), s.GetNumAllocatedBytes());
-                                    else printf("ShrinkToFit() failed!\n");
+      if (s.ShrinkToFit().IsOK()) printf("After ShrinkToFit():  s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s.Length(), s.GetNumAllocatedBytes());
+                              else printf("ShrinkToFit() failed!\n");
 
       s = "Now I'm small";
       printf("After setting small:  s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s.Length(), s.GetNumAllocatedBytes());
 
-      if (s.ShrinkToFit() == B_NO_ERROR) printf("After ShrinkToFit to small():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
-                                    else printf("ShrinkToFit() to small failed!\n");
+      if (s.ShrinkToFit().IsOK()) printf("After ShrinkToFit to small():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
+                              else printf("ShrinkToFit() to small failed!\n");
 
       s = "tiny";
       printf("After setting tiny:  s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s.Length(), s.GetNumAllocatedBytes());
-      if (s.ShrinkToFit() == B_NO_ERROR) printf("After ShrinkToFit to tiny():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
-                                    else printf("ShrinkToFit() to tiny failed!\n");
+      if (s.ShrinkToFit().IsOK()) printf("After ShrinkToFit to tiny():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
+                              else printf("ShrinkToFit() to tiny failed!\n");
 
       s = "tin";
       printf("After setting tin:  s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s.Length(), s.GetNumAllocatedBytes());
-      if (s.ShrinkToFit() == B_NO_ERROR) printf("After ShrinkToFit to tin():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
-                                    else printf("ShrinkToFit() to tin failed!\n");
+      if (s.ShrinkToFit().IsOK()) printf("After ShrinkToFit to tin():  s=[%s] s.Length()=" UINT32_FORMAT_SPEC " s.GetNumAllocatedBytes()=" UINT32_FORMAT_SPEC "\n", s(), s.Length(), s.GetNumAllocatedBytes());
+                              else printf("ShrinkToFit() to tin failed!\n");
    }
 
 #ifdef TEST_REPLACE_METHOD
@@ -100,10 +114,31 @@ int main(void)
       char withMe[512];    printf("Enter withMe:    "); fflush(stdout); if (fgets(withMe,    sizeof(withMe),    stdin) == NULL) withMe[0]    = '\0';
 
       String b(base);
-      int32 ret = b.Replace(replaceMe, withMe);
-      printf(INT32_FORMAT_SPEC": Afterwards, [%s] (" UINT32_FORMAT_SPEC")\n", ret, b(), b.Length());
+      const int32 ret = b.Replace(replaceMe, withMe);
+      printf(INT32_FORMAT_SPEC ": Afterwards, [%s] (" UINT32_FORMAT_SPEC ")\n", ret, b(), b.Length());
    }
 #endif
+
+   // Test the multi-search-and-replace version of WithReplacements()
+   {
+      const String before = "One potato, Two potato, Three potato, Four.  Five potato, Six potato, Seven potato, more!  One Two Three Four Five";
+
+      Hashtable<String,String> replaceMap;
+      replaceMap.Put("One", "Two");
+      replaceMap.Put("Two", "3");
+      replaceMap.Put("Three", "4");
+      replaceMap.Put("potato", "sweet potato");
+      replaceMap.Put("sweet", "sour");   // shouldn't have any effect, since the original string doesn't contain the substring 'sour'
+      const String after = before.WithReplacements(replaceMap);
+
+      const String expected = "Two sweet potato, 3 sweet potato, 4 sweet potato, Four.  Five sweet potato, Six sweet potato, Seven sweet potato, more!  Two 3 4 Four Five";
+      if (after == expected) printf("Multi-replace:  got expected result [%s]\n", after());
+      else
+      {
+         printf("ERROR GOT WRONG MULTI-REPLACE RESULT [%s], expected [%s]\n", after(), expected());
+         return 10;
+      }
+   }
 
    int five=5, six=6;
    muscleSwap(five, six);
@@ -115,9 +150,9 @@ int main(void)
    PrintAndClearStringCopyCounts("After Swap");
    printf("ss1=[%s] ss2=[%s]\n", ss1(), ss2());
 
-   Point p(1.5,2.5);
-   Rect r(3.5,4.5,5.5,6.5);
-   int16 dozen = 13;
+   const Point p(1.5,2.5);
+   const Rect r(3.5,4.5,5.5,6.5);
+   const int16 dozen = 13;
    String aString = String("%1 is a %2 %3 booltrue=%4 boolfalse=%5 point=%6 rect=%7").Arg(dozen).Arg("baker's dozen").Arg(3.14159).Arg(true).Arg(false).Arg(p).Arg(r);
    printf("arg string = [%s]\n", aString());
 

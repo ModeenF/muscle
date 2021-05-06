@@ -1,11 +1,6 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */
 
-#include <netdb.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <time.h>
 
 #include "dataio/TCPSocketDataIO.h"
 #include "iogateway/MessageIOGateway.h"
@@ -29,7 +24,7 @@ int main(int argc, char ** argv)
    MessageIOGateway gw;
    gw.SetDataIO(DataIORef(new TCPSocketDataIO(s, false)));
 
-   bool send = (argc > 2)&&(strcmp(argv[2], "send") == 0);
+   const bool send = (argc > 2)&&(strcmp(argv[2], "send") == 0);
    if (send) printf("Sending bandwidthtester messages...\n");
    else
    {
@@ -52,35 +47,35 @@ int main(int argc, char ** argv)
    QueueGatewayMessageReceiver inQueue;
    while(true)
    {
-      int fd = s.GetFileDescriptor();
+      const int fd = s.GetFileDescriptor();
       multiplexer.RegisterSocketForReadReady(fd);
       if ((send)||(gw.HasBytesToOutput())) multiplexer.RegisterSocketForWriteReady(fd);
 
       const struct timeval printInterval = {5, 0};
       if (OnceEvery(printInterval, lastPrintTime))
       {
-         uint64 now = GetRunTime64();
+         const uint64 now = GetRunTime64();
          if (tallyBytesSent > 0) 
          {
-            if (send) LogTime(MUSCLE_LOG_INFO, "Sending at " UINT32_FORMAT_SPEC" bytes/second\n", tallyBytesSent/((uint32)(((now-startTime))/MICROS_PER_SECOND)));
-                 else LogTime(MUSCLE_LOG_INFO, "Sent " UINT32_FORMAT_SPEC" bytes\n", tallyBytesSent);
+            if (send) LogTime(MUSCLE_LOG_INFO, "Sending at " UINT32_FORMAT_SPEC " bytes/second\n", tallyBytesSent/((uint32)(((now-startTime))/MICROS_PER_SECOND)));
+                 else LogTime(MUSCLE_LOG_INFO, "Sent " UINT32_FORMAT_SPEC " bytes\n", tallyBytesSent);
             tallyBytesSent = 0;
          }
          if (tallyBytesReceived > 0)
          {
-            if (send) LogTime(MUSCLE_LOG_INFO, "Received " UINT32_FORMAT_SPEC" bytes\n", tallyBytesReceived);
-                 else LogTime(MUSCLE_LOG_INFO, "Receiving at " UINT32_FORMAT_SPEC" bytes/second\n", tallyBytesReceived/((uint32)((now-startTime)/MICROS_PER_SECOND)));
+            if (send) LogTime(MUSCLE_LOG_INFO, "Received " UINT32_FORMAT_SPEC " bytes\n", tallyBytesReceived);
+                 else LogTime(MUSCLE_LOG_INFO, "Receiving at " UINT32_FORMAT_SPEC " bytes/second\n", tallyBytesReceived/((uint32)((now-startTime)/MICROS_PER_SECOND)));
             tallyBytesReceived = 0;
          }
          startTime = now;
       }
 
-      if (multiplexer.WaitForEvents() < 0) LogTime(MUSCLE_LOG_CRITICALERROR, "bandwidthtester: WaitForEvents() failed!\n");
-      if ((send)&&(gw.HasBytesToOutput() == false)) for (int i=0; i<10; i++) gw.AddOutgoingMessage(sendMsgRef);
-      bool reading = multiplexer.IsSocketReadyForRead(fd);
-      bool writing = multiplexer.IsSocketReadyForWrite(fd);
-      int32 wroteBytes = (writing) ? gw.DoOutput() : 0;
-      int32 readBytes  = (reading) ? gw.DoInput(inQueue) : 0;
+      if (multiplexer.WaitForEvents() < 0) LogTime(MUSCLE_LOG_CRITICALERROR, "bandwidthtester: WaitForEvents() failed! [%s]\n", B_ERRNO());
+      if ((send)&&(gw.HasBytesToOutput() == false)) for (int i=0; i<10; i++) (void) gw.AddOutgoingMessage(sendMsgRef);
+      const bool reading = multiplexer.IsSocketReadyForRead(fd);
+      const bool writing = multiplexer.IsSocketReadyForWrite(fd);
+      const int32 wroteBytes = (writing) ? gw.DoOutput() : 0;
+      const int32 readBytes  = (reading) ? gw.DoInput(inQueue) : 0;
       if ((readBytes < 0)||(wroteBytes < 0))
       {
          LogTime(MUSCLE_LOG_ERROR, "Connection closed, exiting.\n");
@@ -90,7 +85,7 @@ int main(int argc, char ** argv)
       tallyBytesReceived += readBytes;
 
       MessageRef incoming;
-      while(inQueue.RemoveHead(incoming) == B_NO_ERROR) {/* ignore it, we just want to measure bandwidth */}
+      while(inQueue.RemoveHead(incoming).IsOK()) {/* ignore it, we just want to measure bandwidth */}
    }
    LogTime(MUSCLE_LOG_INFO, "\n\nBye!\n");
    return 0;

@@ -13,12 +13,23 @@ extern "C" {
  *  This is a minimalist implentation and not so easy to use as the C++ Message
  *  class, but on the plus side it is much more space-efficient, compiling
  *  to just over 80KB of code.
+ *
+ *  @note This implementation employs dynamic memory-allocation internally,
+ *        and as such is potentially subject to memory leaks or heap fragmentation.
+ *        If you're looking for a super-lightweight implementation that never
+ *        uses the heap at all, check out the \ref micromessage, in
+ *        the muscle/micromessage folder.
  *  @{
  */
 
-/* My own little boolean type, since C doesn't come with one built in. */
+/** My own little boolean type, since C doesn't come with one built in. */
 typedef char MBool;
-enum {MFalse = 0, MTrue};  /* and boolean values to go in it */
+
+/** Supported values for the MBool type */
+enum {
+   MFalse = 0, /**< Constant value for boolean-false (zero) */
+   MTrue       /**< Constant value for boolean-true (one)   */
+};
 
 /* This file contains a C API for a "minimalist" implementation of the MUSCLE  */
 /* Message dictionary object.  This implementation sacrifices a certain amount */
@@ -39,12 +50,13 @@ typedef struct _MRect {
    float bottom; /**< bottom edge of the rectangle */
 } MRect;
 
+struct _MMessage;
+
 /** Definition of our opaque handle to a MMessage object.  Your
   * code doesn't know what a (MMessage *) points to, and it doesn't care,
   * because all operations on it should happen via calls to the functions
   * that are defined below.
   */
-struct _MMessage;
 typedef struct _MMessage MMessage;
 
 /** This object is used in field name iterations */
@@ -135,9 +147,9 @@ void MMClearMessage(MMessage * msg);
 /** Attempts to remove and free the specified field from the given MMessage.
   * @param msg the MMessage object to remove the field from
   * @param fieldName Name of the field to remove and free. 
-  * @returns B_NO_ERROR if the field was found and removed, or B_ERROR if it wasn't found.
+  * @returns CB_NO_ERROR if the field was found and removed, or CB_ERROR if it wasn't found.
   */
-status_t MMRemoveField(MMessage * msg, const char * fieldName);
+c_status_t MMRemoveField(MMessage * msg, const char * fieldName);
 
 /** Attempts to create and install a string field with the specified field name into the MMessage.
   * On success, any previously installed field with the same name will be replaced and freed.
@@ -358,10 +370,10 @@ void MMFlattenMessage(const MMessage * msg, void * outBuf);
   * @param inBuf Buffer containing the flattened MMessage bytes, as previously created by 
   *              MMFlattenMessage() (or some other code that writes the flattened MUSCLE Message format).
   * @param bufSizeBytes How many valid bytes of data are available at (inBuf).
-  * @returns B_NO_ERROR if the restoration was a success, or B_ERROR otherwise (in which case (msg) will
+  * @returns CB_NO_ERROR if the restoration was a success, or CB_ERROR otherwise (in which case (msg) will
   *                     likely be left in some valid but only partially restored state)
   */
-status_t MMUnflattenMessage(MMessage * msg, const void * inBuf, uint32 bufSizeBytes);
+c_status_t MMUnflattenMessage(MMessage * msg, const void * inBuf, uint32 bufSizeBytes);
 
 /** Moves the specified field from one MMessage to another.
   * @param sourceMsg The MMessage where the field currently resides.
@@ -369,9 +381,9 @@ status_t MMUnflattenMessage(MMessage * msg, const void * inBuf, uint32 bufSizeBy
   * @param destMsg The MMessage to move the field to.  If a field with this name already exists
   *                inside (destMsg), it will be replaced and freed.  If (destMsg) is NULL, the
   *                field will be removed from the source Message and freed.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.  
+  * @returns CB_NO_ERROR on success, or CB_ERROR on failure.  
   */
-status_t MMMoveField(MMessage * sourceMsg, const char * fieldName, MMessage * destMsg);
+c_status_t MMMoveField(MMessage * sourceMsg, const char * fieldName, MMessage * destMsg);
 
 /** Copies the specified field from one MMessage to another.
   * @param sourceMsg The MMessage where the field currently resides.
@@ -379,18 +391,18 @@ status_t MMMoveField(MMessage * sourceMsg, const char * fieldName, MMessage * de
   * @param destMsg The MMessage to copy the field to.  If a field with this name already exists
   *                inside (destMsg), it will be replaced and freed.  If (destMsg) is NULL, this
   *                call will have no effect.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.  
+  * @returns CB_NO_ERROR on success, or CB_ERROR on failure.  
   */
-status_t MMCopyField(const MMessage * sourceMsg, const char * fieldName, MMessage * destMsg);
+c_status_t MMCopyField(const MMessage * sourceMsg, const char * fieldName, MMessage * destMsg);
 
 /** Change the name of a field within its Message.
   * @param sourceMsg The MMessage where the field currently resides.
   * @param oldFieldName Current name of the field.
   * @param newFieldName Desired new name of the field.  If a field with this name already exists
   *                inside (sourceMsg), it will be replaced and freed.
-  * @returns B_NO_ERROR on success, or B_ERROR on failure.  
+  * @returns CB_NO_ERROR on success, or CB_ERROR on failure.  
   */
-status_t MMRenameField(MMessage * sourceMsg, const char * oldFieldName, const char * newFieldName);
+c_status_t MMRenameField(MMessage * sourceMsg, const char * oldFieldName, const char * newFieldName);
 
 /** Retrieves the string field with the given name.
   * @param msg The MMessage to look for the field in.
@@ -516,9 +528,9 @@ MByteBuffer ** MMGetDataField(const MMessage * msg, uint32 typeCode, const char 
   * @param typeCode The typecode of the field to look for, or B_ANY_TYPE if you aren't particular about type.
   * @param optRetNumItems If non-NULL, on success the uint32 this points to will have the number of items in the field written into it.
   * @param optRetTypeCode If non-NULL, on success the uint32 this points to will have the type code of the field written into it.
-  * @returns B_NO_ERROR if the field was found, or B_ERROR if no field with the specified name and type were present.
+  * @returns CB_NO_ERROR if the field was found, or CB_ERROR if no field with the specified name and type were present.
   */
-status_t MMGetFieldInfo(const MMessage * msg, const char * fieldName, uint32 typeCode, uint32 * optRetNumItems, uint32 * optRetTypeCode);
+c_status_t MMGetFieldInfo(const MMessage * msg, const char * fieldName, uint32 typeCode, uint32 * optRetNumItems, uint32 * optRetTypeCode);
 
 /** Returns MTrue iff the two MMessage objects are exactly equivalent.  (Note that field ordering is not considered)
   * @param msg1 First MMessage to compare.  Must not be NULL.
@@ -551,24 +563,29 @@ const char * MMGetNextFieldName(MMessageIterator * iteratorPtr, uint32 * optRetT
 #ifdef MUSCLE_ENABLE_MEMORY_TRACKING
 
 /** A wrapper for malloc() that allows us to track the number of bytes currently allocated.  
-  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise #defined to malloc().
+  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise defined to be equivalent to malloc().
+  * @param numBytes the number of bytes to allocate
   */
 void * MMalloc(uint32 numBytes);
 
 /** A wrapper for free() that allows us to track the number of bytes currently allocated.
-  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise #defined to free().
+  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise defined to be equivalent to free().
+  * @param ptr the buffer to free (as previously allocated using MMalloc())
   */
-void * MFree(void * ptr);
+void MFree(void * ptr);
 
 /** A wrapper for realloc() that allows us to track the number of bytes currently allocated.
-  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise #defined to realloc().
+  * Good for catching memory leaks.  Only enabled if MUSCLE_ENABLE_MEMORY_TRACKING is defined; otherwise defined to be equivalent to realloc().
+  * @param oldBuf a pointer to reallocate, realloc() style
+  * @param newSize the desired size of the post-reallocation buffer
+  * @returns a pointer to the post-reallocation buffer
   */
 void * MRealloc(void * oldBuf, uint32 newSize);
 
 #else
-# define MMalloc  malloc
-# define MRealloc realloc
-# define MFree    free
+# define MMalloc  malloc   /**< if MUSCLE_ENABLE_MEMORY_TRACKING is not defined, then MMalloc() just becomes a synonym for malloc()   */
+# define MRealloc realloc  /**< if MUSCLE_ENABLE_MEMORY_TRACKING is not defined, then MRealloc() just becomes a synonym for realloc() */
+# define MFree    free     /**< if MUSCLE_ENABLE_MEMORY_TRACKING is not defined, then MFree() just becomes a synonym for free()       */
 #endif
 
 /** Returns the current number of allocated bytes. 

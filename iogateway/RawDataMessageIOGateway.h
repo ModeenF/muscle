@@ -7,17 +7,17 @@
 
 namespace muscle {
 
-/** This is the name of the field used to hold data chunks */
-#define PR_NAME_DATA_CHUNKS "rd"
-
 /** The 'what' code that will be found in incoming Messages. */
 #define PR_COMMAND_RAW_DATA 1919181923 // 'rddc'
+
+/** This is the name of the field used to hold data chunks */
+#define PR_NAME_DATA_CHUNKS "rd"
 
 /** 
  * This gateway is very crude; it can be used to write raw data to a TCP socket, and
  * to retrieve data from the socket in chunks of a specified size range.
  */
-class RawDataMessageIOGateway : public AbstractMessageIOGateway, private CountedObject<RawDataMessageIOGateway>
+class RawDataMessageIOGateway : public AbstractMessageIOGateway
 {
 public:
    /** Constructor.
@@ -45,8 +45,6 @@ protected:
    virtual MessageRef PopNextOutgoingMessage();
 
 private:
-   void FlushPendingInput();
-
    MessageRef _sendMsgRef;
    const void * _sendBuf;
    int32 _sendBufLength;      // # of bytes in current buffer
@@ -63,7 +61,10 @@ private:
 
    uint32 _minChunkSize;
    uint32 _maxChunkSize;
+
+   DECLARE_COUNTED_OBJECT(RawDataMessageIOGateway);
 };
+DECLARE_REFTYPES(RawDataMessageIOGateway);
 
 /** 
  * This class is the same as a RawDataMessageIOGateway, except that it is instrumented
@@ -73,10 +74,15 @@ private:
 class CountedRawDataMessageIOGateway : public RawDataMessageIOGateway
 {
 public:
+   /** Constructor.
+     * @param minChunkSize Don't return any data in chunks smaller than this.  Defaults to zero.
+     * @param maxChunkSize Don't return any data in chunks larger than this.  Defaults to the largest possible uint32 value.
+     */
    CountedRawDataMessageIOGateway(uint32 minChunkSize=0, uint32 maxChunkSize=MUSCLE_NO_LIMIT);
 
    virtual status_t AddOutgoingMessage(const MessageRef & messageRef);
 
+   /** Returns the number of bytes of data currently present in our outgoing-data-queue */
    uint32 GetNumOutgoingDataBytes() const {return _outgoingByteCount;}
 
    virtual void Reset();
@@ -89,7 +95,8 @@ private:
 
    uint32 _outgoingByteCount;
 };
+DECLARE_REFTYPES(CountedRawDataMessageIOGateway);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -1,5 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
+#include <stdio.h>
+
 #ifdef MUSCLE_ENABLE_SSL
 # include "dataio/SSLSocketDataIO.h"
 # include "iogateway/SSLSocketAdapterGateway.h"
@@ -7,7 +9,11 @@
 
 #include "dataio/StdinDataIO.h"
 #include "dataio/TCPSocketDataIO.h"
-#include "iogateway/MessageIOGateway.h"
+#ifdef MUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
+# include "iogateway/TemplatingMessageIOGateway.h"
+#else
+# include "iogateway/MessageIOGateway.h"
+#endif
 #include "iogateway/PlainTextMessageIOGateway.h"
 #include "reflector/StorageReflectConstants.h"
 #include "regex/QueryFilter.h"
@@ -18,7 +24,7 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Test failed, line %i\n",__LINE__)
+#define TEST(x) if ((x).IsError()) printf("Test failed, line %i\n",__LINE__)
 
 // This is a text based test client for the muscled server.  It is useful for testing
 // the server, and could possibly be useful for other things, I don't know.
@@ -39,34 +45,60 @@ int main(int argc, char ** argv)
 
    // And send and receive flattened Message objects over our TCP socket
    TCPSocketDataIO tcpIO(sock, false);
+#ifdef MUSCLE_USE_TEMPLATING_MESSAGE_IO_GATEWAY_BY_DEFAULT
+   TemplatingMessageIOGateway tcpGateway;
+#else
    MessageIOGateway tcpGateway;
+#endif
    tcpGateway.SetDataIO(DataIORef(&tcpIO, false));
 
    DataIORef networkIORef(&tcpIO, false);
    AbstractMessageIOGatewayRef gatewayRef(&tcpGateway, false);
 
 #ifdef MUSCLE_ENABLE_SSL
+   const char * publicKeyPath  = NULL;
+   const char * privateKeyPath = NULL;
+
    for (int i=1; i<argc; i++)
    {
       const char * a = argv[i];
-      if (strncmp(a, "publickey=", 10) == 0)
-      { 
-         a += 10;  // skip past the 'publickey=' part
-         SSLSocketDataIO * sslIO = new SSLSocketDataIO(sock, false, false);
-         DataIORef sslIORef(sslIO);
-         if (sslIO->SetPublicKeyCertificate(a) == B_NO_ERROR) 
+           if (strncmp(a, "publickey=",  10) == 0) publicKeyPath  = a+10;
+      else if (strncmp(a, "privatekey=", 11) == 0) privateKeyPath = a+11;
+   }
+
+   if ((privateKeyPath)&&(publicKeyPath == NULL)) publicKeyPath = privateKeyPath;  // grab public key from private-key-file
+   if ((publicKeyPath)||(privateKeyPath))
+   { 
+      SSLSocketDataIORef sslIORef(new SSLSocketDataIO(sock, false, false));
+      if (publicKeyPath)
+      {
+         status_t ret;
+         if (sslIORef()->SetPublicKeyCertificate(publicKeyPath).IsOK(ret))
          {
-            LogTime(MUSCLE_LOG_INFO, "Using public key certificate file [%s] to connect to server\n", a);
-            networkIORef = sslIORef;
-            gatewayRef.SetRef(new SSLSocketAdapterGateway(gatewayRef));
-            gatewayRef()->SetDataIO(networkIORef);
+            LogTime(MUSCLE_LOG_INFO, "Using public key certificate file [%s] to connect to server\n", publicKeyPath);
          }
          else
          {
-            LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't load public key certificate file [%s] (file not found?)\n", a);
+            LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't load public key certificate file [%s] [%s]\n", publicKeyPath, ret());
             return 10;
          }
       }
+      if (privateKeyPath)
+      {
+         if (sslIORef()->SetPrivateKey(privateKeyPath).IsOK(ret))
+         {
+            LogTime(MUSCLE_LOG_INFO, "Using private key file [%s] to authenticate client with server\n", privateKeyPath);
+         }
+         else
+         {
+            LogTime(MUSCLE_LOG_CRITICALERROR, "Couldn't load private key file [%s] [%s]\n", privateKeyPath, ret());
+            return 10;
+         }
+      }
+
+      networkIORef = sslIORef;
+      gatewayRef.SetRef(new SSLSocketAdapterGateway(gatewayRef));
+      gatewayRef()->SetDataIO(networkIORef);
    }
 #endif
 
@@ -76,16 +108,16 @@ int main(int argc, char ** argv)
    uint64 nextTimeoutTime = MUSCLE_TIME_NEVER;
    while(keepGoing)
    {
-      int stdinFD       = stdinIO.GetReadSelectSocket().GetFileDescriptor();
-      int socketReadFD  = networkIORef()->GetReadSelectSocket().GetFileDescriptor();
-      int socketWriteFD = networkIORef()->GetWriteSelectSocket().GetFileDescriptor();
+      const int stdinFD       = stdinIO.GetReadSelectSocket().GetFileDescriptor();
+      const int socketReadFD  = networkIORef()->GetReadSelectSocket().GetFileDescriptor();
+      const int socketWriteFD = networkIORef()->GetWriteSelectSocket().GetFileDescriptor();
 
       multiplexer.RegisterSocketForReadReady(stdinFD);
       multiplexer.RegisterSocketForReadReady(socketReadFD);
       if (gatewayRef()->HasBytesToOutput()) multiplexer.RegisterSocketForWriteReady(socketWriteFD);
       if (multiplexer.WaitForEvents(nextTimeoutTime) < 0) printf("portablereflectclient: WaitForEvents() failed!\n");
 
-      uint64 now = GetRunTime64();
+      const uint64 now = GetRunTime64();
       if (now >= nextTimeoutTime)
       {
          // For OpenSSL testing:  Generate some traffic to the server every 50mS
@@ -107,7 +139,7 @@ int main(int argc, char ** argv)
       {
          while(1)
          {
-            int32 bytesRead = stdinGateway.DoInput(stdinInQueue);
+            const int32 bytesRead = stdinGateway.DoInput(stdinInQueue);
             if (bytesRead < 0)
             {
                printf("Stdin closed, exiting!\n");
@@ -120,10 +152,10 @@ int main(int argc, char ** argv)
 
       // Handle any input lines that were received from stdin
       MessageRef msgFromStdin;
-      while(stdinInQueue.RemoveHead(msgFromStdin) == B_NO_ERROR)
+      while(stdinInQueue.RemoveHead(msgFromStdin).IsOK())
       {
          const String * st;
-         for (int32 i=0; msgFromStdin()->FindString(PR_NAME_TEXT_LINE, i, &st) == B_NO_ERROR; i++)
+         for (int32 i=0; msgFromStdin()->FindString(PR_NAME_TEXT_LINE, i, &st).IsOK(); i++)
          {
             const char * text = st->Cstr();
 
@@ -131,11 +163,12 @@ int main(int argc, char ** argv)
             bool send = true;
             MessageRef ref = GetMessageFromPool();
 
+            const char * arg1 = (st->Length()>2) ? &text[2] : NULL;
             switch(text[0])
             {
                case 'm':
                   ref()->what = MAKETYPE("umsg");
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                   ref()->AddString("info", "This is a user message");
                break;
 
@@ -149,33 +182,55 @@ int main(int argc, char ** argv)
                   ref()->what = PR_COMMAND_SETDATA;
                   MessageRef uploadMsg = GetMessageFromPool(MAKETYPE("HELO"));
                   uploadMsg()->AddString("This node was posted at: ", GetHumanReadableTimeString(GetRunTime64()));
-                  ref()->AddMessage(&text[2], uploadMsg);
+                  if (arg1) ref()->AddMessage(arg1, uploadMsg);
+               }
+               break;
+
+               case 'c': case 'C':
+               {
+                  // Set the same node multiple times in rapid succession,
+                  // to test the results of the SETDATANODE_FLAG_ENABLESUPERCEDE flag
+                  const bool enableSupercede = (text[0] == 'C');
+
+                  for (int j=0; j<10; j++)
+                  {
+                     ref = GetMessageFromPool(PR_COMMAND_SETDATA);
+                     if (enableSupercede)  ref()->AddFlat(PR_NAME_FLAGS, SetDataNodeFlags(SETDATANODE_FLAG_ENABLESUPERCEDE));
+
+                     MessageRef subMsg = GetMessageFromPool();
+                     subMsg()->AddInt32(String("%1 counter").Arg(enableSupercede?"Supercede":"Normal"), j);
+                     ref()->AddMessage("test_node", subMsg);
+
+                     gatewayRef()->AddOutgoingMessage(ref);
+                  }
+
+                  ref = GetMessageFromPool(PR_COMMAND_PING);  // just so we can see when it's done
                }
                break;
 
                case 'k':
                   ref()->what = PR_COMMAND_KICK;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 'b':
                   ref()->what = PR_COMMAND_ADDBANS;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 'B':
                   ref()->what = PR_COMMAND_REMOVEBANS;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 'g':
                   ref()->what = PR_COMMAND_GETDATA;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 'G':
                   ref()->what = PR_COMMAND_GETDATATREES;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                   ref()->AddString(PR_NAME_TREE_REQUEST_ID, "Tree ID!");
                break;
 
@@ -185,7 +240,7 @@ int main(int argc, char ** argv)
 
                case 'p':
                   ref()->what = PR_COMMAND_SETPARAMETERS;
-                  ref()->AddString(&text[2], "");
+                  if (arg1) ref()->AddString(arg1, "");
                break;
 
                case 'P':
@@ -212,12 +267,12 @@ int main(int argc, char ** argv)
 
                case 'd':
                   ref()->what = PR_COMMAND_REMOVEDATA;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 'D':
                   ref()->what = PR_COMMAND_REMOVEPARAMETERS;
-                  ref()->AddString(PR_NAME_KEYS, &text[2]);
+                  if (arg1) ref()->AddString(PR_NAME_KEYS, arg1);
                break;
 
                case 't':
@@ -262,10 +317,10 @@ int main(int argc, char ** argv)
       }
 
       // Handle input and output on the TCP socket
-      bool reading = multiplexer.IsSocketReadyForRead(socketReadFD);
-      bool writing = multiplexer.IsSocketReadyForWrite(socketWriteFD);
-      bool writeError = ((writing)&&(gatewayRef()->DoOutput() < 0));
-      bool readError  = ((reading)&&(gatewayRef()->DoInput(tcpInQueue) < 0));
+      const bool reading = multiplexer.IsSocketReadyForRead(socketReadFD);
+      const bool writing = multiplexer.IsSocketReadyForWrite(socketWriteFD);
+      const bool writeError = ((writing)&&(gatewayRef()->DoOutput() < 0));
+      const bool readError  = ((reading)&&(gatewayRef()->DoInput(tcpInQueue) < 0));
       if ((readError)||(writeError))
       {
          printf("Connection closed (%s), exiting.\n", writeError?"Write Error":"Read Error");
@@ -273,7 +328,7 @@ int main(int argc, char ** argv)
       }
 
       MessageRef msgFromTCP;
-      while(tcpInQueue.RemoveHead(msgFromTCP) == B_NO_ERROR)
+      while(tcpInQueue.RemoveHead(msgFromTCP).IsOK())
       {
          printf("Heard message from server:-----------------------------------\n");
          msgFromTCP()->PrintToStream();

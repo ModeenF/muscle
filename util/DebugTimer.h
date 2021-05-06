@@ -5,12 +5,13 @@
 
 #include "util/Hashtable.h"
 #include "util/String.h"
+#include "util/TimeUtilityFunctions.h"  // for GetCurrentTime64() and GetRunTime64()
 
 #ifndef MUSCLE_DEBUG_TIMER_CLOCK
 # if defined(__BEOS__) || defined(__HAIKU__) || defined(__ATHEOS__) || defined(WIN32) || (defined(MUSCLE_USE_LIBRT) && defined(_POSIX_MONOTONIC_CLOCK)) || (defined(TARGET_PLATFORM_XENOMAI) && !defined(MUSCLE_AVOID_XENOMAI))
-#  define MUSCLE_DEBUG_TIMER_CLOCK GetRunTime64()
+#  define MUSCLE_DEBUG_TIMER_CLOCK GetRunTime64()       /**< Function call that DebugTimer should use to get the current time.  Defaults to GetRunTime64() except under OS's where GetRunTime64() has large granularity; for these platforms GetCurrentTime64() is used instead.  May be overridden at compile-time via -DMUSCLE_DEBUG_TIMER_CLOCK=SomeOtherFunc() */
 # else
-#  define MUSCLE_DEBUG_TIMER_CLOCK GetCurrentTime64()   /* POSIX API's run-time clock has crappy resolution :^( */
+#  define MUSCLE_DEBUG_TIMER_CLOCK GetCurrentTime64()   /**< Function call that DebugTimer should use to get the current time.  Defaults to GetRunTime64() except under OS's where GetRunTime64() has large granularity; for these platforms GetCurrentTime64() is used instead.  May be overridden at compile-time via -DMUSCLE_DEBUG_TIMER_CLOCK=SomeOtherFunc() */
 # endif
 #endif
 
@@ -34,7 +35,9 @@ public:
    /** Destructor.  Prints out a log message with the elapsed time, in milliseconds, spent in each mode. */
    ~DebugTimer();
 
-   /** Set the timer to record elapsed time to a different mode. */
+   /** Set the timer to record elapsed time to a different mode.
+    *  @param newMode the mode we switching our timing mechanism to record elapsed time into.  (mode-numbering is arbitrary and up to the caller)
+     */
    void SetMode(uint32 newMode);
 
    /** Returns the currently active mode number */
@@ -45,6 +48,7 @@ public:
 
    /** Returns the amount of elapsed time, in microseconds, that has been spent in the given mode.
     *  Note that if (whichMode) is the currently active mode, the returned value will be growing from moment to moment. 
+    *  @param whichMode the mode we are querying the elapsed-time for (mode-numbering is arbitrary and up to the caller)
     */
    uint64 GetElapsedTime(uint32 whichMode) const 
    {
@@ -52,13 +56,17 @@ public:
       return (et ? *et : 0) + ((whichMode == _currentMode) ? (MUSCLE_DEBUG_TIMER_CLOCK-_startTime) : 0);
    }
 
-   /** Set whether or not the destructor should print results to the system log.  Default is true. */
+   /** Set whether or not the destructor should print results to the system log.  Default is true. 
+     * @param e true to enable logging, false to disable it 
+     */
    void SetLogEnabled(bool e) {_enableLog = e;}
 
    /** Returns the state of the print-to-log-enabled, as set by SetLogEnabled() */
    bool IsLogEnabled() const {return _enableLog;}
 
-   /** Set the minimum-log-time value, in microseconds.  Time intervals shorter than this will not be logged.  Defaults to zero. */
+   /** Set the minimum-log-time value, in microseconds.  Time intervals shorter than this will not be logged.  Defaults to zero.
+     * @param lt time threshold, in microseconds
+     */
    void SetMinLogTime(uint64 lt) {_minLogTime = lt;}
 
    /** Returns the current minimum-log-time value, in microseconds. */
@@ -76,12 +84,8 @@ private:
 };
 
 /** A macro for quickly declaring a DebugTimer object on the stack.  Usage example:  DECLARE_DEBUGTIMER("hi") */
-#ifdef _MSC_VER
-# define DECLARE_DEBUGTIMER(...) DECLARE_ANONYMOUS_STACK_OBJECT(DebugTimer, __VA_ARGS__)
-#else
-# define DECLARE_DEBUGTIMER(args...) DECLARE_ANONYMOUS_STACK_OBJECT(DebugTimer, args)
-#endif
+#define MDECLARE_DEBUGTIMER(...) MDECLARE_ANONYMOUS_STACK_OBJECT(DebugTimer, __VA_ARGS__)
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

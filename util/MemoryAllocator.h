@@ -14,7 +14,7 @@ namespace muscle {
 class MemoryAllocator;
 
 /** Interface class representing an object that can allocate and free blocks of memory. */
-class MemoryAllocator : public RefCountable, private CountedObject<MemoryAllocator>
+class MemoryAllocator : public RefCountable
 {
 public:
    /** Default constructor; no-op */
@@ -28,7 +28,7 @@ public:
     *  @param allocRequestBytes How many bytes the system would like to allocate.
     *  @note Implementations of this method shall assume that calls to this method will
     *        be serialized, so they don't need to do any serialization themselves.
-    *  @return Should return B_NO_ERROR if the allocation may proceed, or B_ERROR if the allocation should fail.
+    *  @return Should return B_NO_ERROR if the allocation may proceed, or an error code if the allocation should fail.
     */
    virtual status_t AboutToAllocate(size_t currentlyAllocatedBytes, size_t allocRequestBytes) = 0;
 
@@ -56,6 +56,7 @@ public:
    /** Sets the state of the "allocation has failed" flag.  Typically this is set true just
     *  before a call to AllocationFailed(), and set false again later on, after the flag has
     *  been noticed and dealt with.
+    *  @param hasFailed true to set the allocation-has-failed flag; false to clear it
     */
    virtual void SetAllocationHasFailed(bool hasFailed) {_hasAllocationFailed = hasFailed;}
 
@@ -67,6 +68,7 @@ public:
    /** Should be overridden to return the number of bytes still available for allocation,
     *  given that (currentlyAllocated) bytes have already been allocated.
     *  If there is no set limit, this method should return MUSCLE_NO_LIMIT.
+    *  @param currentlyAllocated how many bytes are already allocated
     */
    virtual size_t GetNumAvailableBytes(size_t currentlyAllocated) const = 0;
 
@@ -75,6 +77,8 @@ public:
 
 private:
    bool _hasAllocationFailed;
+
+   DECLARE_COUNTED_OBJECT(MemoryAllocator);
 };
 DECLARE_REFTYPES(MemoryAllocator);
 
@@ -103,6 +107,7 @@ public:
 private:
    MemoryAllocatorRef _slaveRef;
 };
+DECLARE_REFTYPES(ProxyMemoryAllocator);
 
 /** This MemoryAllocator decorates its slave MemoryAllocator to 
   * enforce a user-defined per-process limit on how much memory may be allocated at any given time. 
@@ -120,21 +125,29 @@ public:
    /** Destructor.  */
    virtual ~UsageLimitProxyMemoryAllocator();
 
-   /** Overridden to return false if memory usage would go over maximum due to this allocation. */
+   /** Overridden to return false if memory usage would go over maximum due to this allocation. 
+    *  @param currentlyAllocatedBytes How many bytes the system has allocated currently
+    *  @param allocRequestBytes How many bytes the system would like to allocate.
+    */
    virtual status_t AboutToAllocate(size_t currentlyAllocatedBytes, size_t allocRequestBytes);
 
-   /** Set a new maximum number of allocatable bytes */
-   void SetMaxNumBytes(size_t mb) {_maxBytes = mb;}
+   /** Set a new maximum number of allocatable bytes
+     * @param maxBytes the new allocation limit, in bytes
+     */
+   void SetMaxNumBytes(size_t maxBytes) {_maxBytes = maxBytes;}
 
    /** Implemented to return our hard-coded size limit, same as GetMaxNumBytes() */
    virtual size_t GetMaxNumBytes() const {return muscleMin(_maxBytes, ProxyMemoryAllocator::GetMaxNumBytes());}
 
-   /** Implemented to return the difference between the maximum allocation and the current number allocated. */
-   virtual size_t GetNumAvailableBytes(size_t ca) const {return muscleMin((_maxBytes>ca)?_maxBytes-ca:0, ProxyMemoryAllocator::GetNumAvailableBytes(ca));}
+   /** Implemented to return the difference between the maximum allocation and the current number allocated.
+     * @param currentlyAllocated how many bytes are already allocated
+     */
+   virtual size_t GetNumAvailableBytes(size_t currentlyAllocated) const {return muscleMin((_maxBytes>currentlyAllocated)?_maxBytes-currentlyAllocated:0, ProxyMemoryAllocator::GetNumAvailableBytes(currentlyAllocated));}
 
 private:
    size_t _maxBytes;
 };
+DECLARE_REFTYPES(UsageLimitProxyMemoryAllocator);
 
 /** This MemoryAllocator decorates its slave MemoryAllocator to call a list of
   * GenericCallback objects when the slave's memory allocation fails.  These
@@ -153,7 +166,10 @@ public:
    /** Destructor.  Calls ClearCallbacks(). */
    virtual ~AutoCleanupProxyMemoryAllocator() {/* empty */}
 
-   /** Overridden to call our callbacks in event of a failure. */
+   /** Overridden to call our callbacks in event of a failure.
+    *  @param currentlyAllocatedBytes How many bytes the system has allocated currently
+    *  @param allocRequestBytes How many bytes the system would like to allocate.
+    */
    virtual void AllocationFailed(size_t currentlyAllocatedBytes, size_t allocRequestBytes);
 
    /** Read-write access to our list of out-of-memory callbacks. */
@@ -165,7 +181,8 @@ public:
 private:
    Queue<GenericCallbackRef> _callbacks;
 };
+DECLARE_REFTYPES(AutoCleanupProxyMemoryAllocator);
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif

@@ -5,7 +5,14 @@
 
 #include "system/Thread.h"  // to get the #defines that are calculated in Thread.h
 
-#if defined(MUSCLE_USE_PTHREADS)
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+# if !defined(MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD) && defined(_MSC_VER) && (_MSC_VER < 1900)
+#  define MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD  // MSVC2013 and earlier don't support thread_local, sigh
+# endif
+# if !defined(MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD) && defined(__apple_build_version__) && (__apple_build_version__ < 8000042)
+#  define MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD  // XCode before 8.0 doesn't support thread_local, sigh
+# endif
+#elif defined(MUSCLE_USE_PTHREADS)
   // deliberately empty
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
   // deliberately empty
@@ -45,7 +52,7 @@ public:
 
 #if defined(MUSCLE_USE_PTHREADS)
       _isKeyValid = (pthread_key_create(&_key, _freeHeldObjects?((PthreadDestructorFunction)DeleteObjFunc):NULL) == 0);
-#elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
+#elif !defined(MUSCLE_USE_CPLUSPLUS11_THREADS) && defined(MUSCLE_PREFER_WIN32_OVER_QT)
       _tlsIndex = TlsAlloc();
 #endif
    }
@@ -56,8 +63,8 @@ public:
       if (IsSetupOkay())
       {
 #if defined(MUSCLE_USE_PTHREADS)
-         pthread_key_delete(_key);
-#elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
+         (void) pthread_key_delete(_key);
+#elif !defined(MUSCLE_USE_CPLUSPLUS11_THREADS) && defined(MUSCLE_PREFER_WIN32_OVER_QT)
          TlsFree(_tlsIndex);
 #endif
       }
@@ -81,9 +88,9 @@ public:
 
       // If we got here, we'll auto-create an object to return
       ret = newnothrow ObjType;
-      if (ret == NULL) {WARN_OUT_OF_MEMORY; return NULL;}
+      if (ret == NULL) {MWARN_OUT_OF_MEMORY; return NULL;}
 
-      if (SetThreadLocalObject(ret) == B_NO_ERROR) return ret;
+      if (SetThreadLocalObject(ret).IsOK()) return ret;
       else
       {
          delete ret;
@@ -96,12 +103,12 @@ public:
      *               If (newObj) is non-NULL, then this class takes ownership of the object
      *               and will call delete on it at the appropriate time.  If (newObj) is
      *               NULL, then this method will free any existing object only.
-     * @returns B_NO_ERROR if (newObj) was successfully installed, or B_ERROR if it was not.
+     * @returns B_NO_ERROR if (newObj) was successfully installed, or an error code if it was not.
      *                     If an error occurred, then (newObj) still belongs to the caller.
      */
    status_t SetThreadLocalObject(ObjType * newObj)
    {
-      if (IsSetupOkay() == false) return B_ERROR;
+      if (IsSetupOkay() == false) return B_BAD_OBJECT;
 
       ObjType * oldObj = GetThreadLocalObjectAux();
       if (oldObj == newObj) return B_NO_ERROR;  // nothing to do!
@@ -109,12 +116,13 @@ public:
 #if defined(MUSCLE_USE_QT_THREADLOCALSTORAGE) || defined(MUSCLE_USE_PTHREADS)
       return SetThreadLocalObjectAux(newObj);   // pthreads and Qt manage memory so we don't have to
 #else
-      if (_allocedObjsMutex.Lock() != B_NO_ERROR) return B_ERROR;
 
-      status_t ret = B_NO_ERROR;
-      if (SetThreadLocalObjectAux(newObj) == B_NO_ERROR)  // SetThreadLocalObjectAux() MUST be called first to avoid re-entrancy trouble!
+      MRETURN_ON_ERROR(_allocedObjsMutex.Lock());
+
+      status_t ret;
+      if (SetThreadLocalObjectAux(newObj).IsOK(ret))  // SetThreadLocalObjectAux() MUST be called first to avoid re-entrancy trouble!
       {
-         int32 idx = oldObj ? _allocedObjs.IndexOf(oldObj) : -1;
+         const int32 idx = oldObj ? _allocedObjs.IndexOf(oldObj) : -1;
          if (idx >= 0)
          {
             if (newObj) _allocedObjs[idx] = newObj;
@@ -122,10 +130,9 @@ public:
          }
          else if (newObj) (void) _allocedObjs.AddTail(newObj);
       }
-      else ret = B_ERROR;
 
       _allocedObjsMutex.Unlock();
-      if (ret == B_NO_ERROR) delete oldObj;
+      if (ret.IsOK()) delete oldObj;
       return ret;
 #endif
    }
@@ -134,7 +141,17 @@ private:
 #if defined(MUSCLE_USE_QT_THREADLOCALSTORAGE)
    QThreadStorage<ObjType *> _storage;
 #else
-# if defined(MUSCLE_USE_PTHREADS)
+# if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+#  if defined(MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD)
+#   if defined(_MSC_VER)
+   static __declspec(thread) ObjType * _threadLocalObject;
+#   elif defined(__GNUC__)
+   static __thread ObjType * _threadLocalObject;
+#   endif
+#  else
+   static thread_local ObjType * _threadLocalObject;
+#  endif
+# elif defined(MUSCLE_USE_PTHREADS)
    typedef void (*PthreadDestructorFunction )(void *);
    static void DeleteObjFunc(void * o) {delete ((ObjType *)o);}
    bool _isKeyValid;
@@ -152,6 +169,8 @@ private:
    {
 #if defined(MUSCLE_USE_QT_THREADLOCALSTORAGE)
       return _storage.localData();
+#elif defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+      return _threadLocalObject;
 #elif defined(MUSCLE_USE_PTHREADS)
       return (ObjType *) pthread_getspecific(_key);
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
@@ -163,16 +182,18 @@ private:
    {
 #if defined(MUSCLE_USE_QT_THREADLOCALSTORAGE)
       _storage.setLocalData(o); return B_NO_ERROR;
+#elif defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+      _threadLocalObject = o;   return B_NO_ERROR;
 #elif defined(MUSCLE_USE_PTHREADS)
-      return (pthread_setspecific(_key, o) == 0) ? B_NO_ERROR : B_ERROR;
+      return B_ERRNUM(pthread_setspecific(_key, o));
 #elif defined(MUSCLE_PREFER_WIN32_OVER_QT)
-      return TlsSetValue(_tlsIndex, o) ? B_NO_ERROR : B_ERROR;
+      return TlsSetValue(_tlsIndex, o) ? B_NO_ERROR : B_ERRNO;
 #endif
    }
 
    inline bool IsSetupOkay() const
    {
-#if defined(MUSCLE_USE_QT_THREADLOCALSTORAGE)
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS) || defined(MUSCLE_USE_QT_THREADLOCALSTORAGE)
       return true;
 #elif defined(MUSCLE_USE_PTHREADS)
       return _isKeyValid;
@@ -182,6 +203,21 @@ private:
    }
 };
 
-}; // end namespace muscle
+#if defined(MUSCLE_USE_CPLUSPLUS11_THREADS)
+// declare storage space for our thread-local object
+# if defined(MUSCLE_AVOID_CPLUSPLUS11_THREAD_LOCAL_KEYWORD)
+#  if defined(_MSC_VER)
+template <typename T> __declspec(thread) T * ThreadLocalStorage<T>::_threadLocalObject;
+#  elif defined(__GNUC__)
+template <typename T> __thread           T * ThreadLocalStorage<T>::_threadLocalObject;
+#  else
+template <typename T> T * ThreadLocalStorage<T>::_threadLocalObject;
+#  endif
+# else
+template <typename T> thread_local T * ThreadLocalStorage<T>::_threadLocalObject;
+# endif
+#endif
+
+} // end namespace muscle
 
 #endif

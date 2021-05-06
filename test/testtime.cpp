@@ -1,6 +1,7 @@
 /* This file is Copyright 2000-2013 Meyer Sound Laboratories Inc.  See the included LICENSE.txt file for details. */  
 
 #include <stdio.h>
+
 #include "system/SetupSystem.h"
 #include "util/MiscUtilityFunctions.h"
 #include "util/StringTokenizer.h"
@@ -38,10 +39,10 @@ int main(int argc, char ** argv)
    printf("The offset between local time and UTC is %.1f hours.\n", GetDiffHours(nowLocal, nowUTC));
 
    HumanReadableTimeValues v;
-   if (GetHumanReadableTimeValues(nowLocal, v, MUSCLE_TIMEZONE_LOCAL) == B_NO_ERROR) printf("HRTV(local) = [%s]\n", v.ExpandTokens("%T DoW=%w (%t) (%f) (%q) (micro=%x) (rand=%r)")());
-                                                                                else printf("Error getting human readable time values for local!\n");
-   if (GetHumanReadableTimeValues(nowUTC, v, MUSCLE_TIMEZONE_LOCAL) == B_NO_ERROR)   printf("HRTV(UTC)   = [%s]\n", v.ExpandTokens("%T DoW=%w (%t) (%f) (%q) (micro=%x) (rand=%r)")());
-                                                                                else printf("Error getting human readable time values for UTC!\n");
+   if (GetHumanReadableTimeValues(nowLocal, v, MUSCLE_TIMEZONE_LOCAL).IsOK()) printf("HRTV(local) = [%s]\n", v.ExpandTokens("%T DoW=%w (%t) (%f) (%q) (micro=%x) (rand=%r)")());
+                                                                         else printf("Error getting human readable time values for local!\n");
+   if (GetHumanReadableTimeValues(nowUTC, v, MUSCLE_TIMEZONE_LOCAL).IsOK())   printf("HRTV(UTC)   = [%s]\n", v.ExpandTokens("%T DoW=%w (%t) (%f) (%q) (micro=%x) (rand=%r)")());
+                                                                         else printf("Error getting human readable time values for UTC!\n");
 
    // Interactive time interval testing
    if ((argc > 1)&&(strcmp(argv[1], "testintervals") == 0))
@@ -50,16 +51,16 @@ int main(int argc, char ** argv)
       {
          printf("Enter micros, minPrecision(micros): ");  fflush(stdout);
          char buf[512]; if (fgets(buf, sizeof(buf), stdin) == NULL) buf[0] = '\0';
-         StringTokenizer tok(buf, ", ");
+         StringTokenizer tok(buf);
          const char * m = tok();
          const char * p = tok();
          if (m)
          {
-            uint64 micros    = Atoull(m);
-            uint64 precision = p ? Atoull(p) : 0;
-            printf("  You entered " UINT64_FORMAT_SPEC" microseconds, minimum precision " UINT64_FORMAT_SPEC" microseconds.\n", micros, precision);
+            const uint64 micros    = Atoull(m);
+            const uint64 precision = p ? Atoull(p) : 0;
+            printf("  You entered " UINT64_FORMAT_SPEC " microseconds, minimum precision " UINT64_FORMAT_SPEC " microseconds.\n", micros, precision);
             bool isAccurate;
-            String s = GetHumanReadableTimeIntervalString(micros, MUSCLE_NO_LIMIT, precision, &isAccurate);
+            const String s = GetHumanReadableTimeIntervalString(micros, MUSCLE_NO_LIMIT, precision, &isAccurate);
             printf("Result (%s) : %s\n", isAccurate?"Exact":"Approximate", s());
          }
       }
@@ -72,11 +73,11 @@ int main(int argc, char ** argv)
    for (uint64 i=0; i<=TEN_YEARS_IN_MICROSECONDS; i+=delta)
    {
       bool isAccurate;
-      String s = GetHumanReadableTimeIntervalString(i, MUSCLE_NO_LIMIT, 0, &isAccurate);
-      if (isAccurate == false) printf("Error, string [%s] is not accurate for i=" UINT64_FORMAT_SPEC".\n", s(), i);
-      uint64 t = ParseHumanReadableTimeIntervalString(s);
-      //printf(" %llu -> %s -> %llu\n", i, s(), t);
-      if (t != i) printf("Error, Recovered time " UINT64_FORMAT_SPEC" does not match original time " UINT64_FORMAT_SPEC" (string=[%s])\n", t, i, s());
+      const String s = GetHumanReadableTimeIntervalString(i, MUSCLE_NO_LIMIT, 0, &isAccurate);
+      if (isAccurate == false) printf("Error, string [%s] is not accurate for i=" UINT64_FORMAT_SPEC ".\n", s(), i);
+      const uint64 t = ParseHumanReadableTimeIntervalString(s);
+      //printf(" " UINT64_FORMAT_SPEC " -> %s -> " UINT64_FORMAT_SPEC "\n", i, s(), t);
+      if (t != i) printf("Error, Recovered time " UINT64_FORMAT_SPEC " does not match original time " UINT64_FORMAT_SPEC " (string=[%s])\n", t, i, s());
       delta++;
    }
 

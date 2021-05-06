@@ -83,7 +83,7 @@ App::App(void)
 			LogTime(MUSCLE_LOG_INFO, "Limiting aggregate I/O bandwidth to %.02f kilobytes/second.\n", ((float)maxCombinedRate/1024.0f));
 		else
 		{
-			WARN_OUT_OF_MEMORY;
+			MWARN_OUT_OF_MEMORY;
 			okay = false;
 		}
 	} else {
@@ -93,7 +93,7 @@ App::App(void)
 			if (inputPolicyRef())
 				LogTime(MUSCLE_LOG_INFO, "Limiting aggregate receive bandwidth to %.02f kilobytes/second.\n", ((float)maxReceiveRate/1024.0f));
 			else {
-				WARN_OUT_OF_MEMORY;
+				MWARN_OUT_OF_MEMORY;
 				okay = false;
 			}
 		}
@@ -104,7 +104,7 @@ App::App(void)
 			if (outputPolicyRef())
 				LogTime(MUSCLE_LOG_INFO, "Limiting aggregate send bandwidth to %.02f kilobytes/second.\n", ((float)maxSendRate/1024.0f)); 
 			else {
-				WARN_OUT_OF_MEMORY;
+				MWARN_OUT_OF_MEMORY;
 				okay = false; 
 			}
 		}
@@ -275,10 +275,10 @@ App::ArgvReceived(int32 argc, char **argv)
 
 	{
 		for (int32 i = 0; (args.FindString("remap", i, &value) == B_NO_ERROR); i++) {
-			StringTokenizer tok(value, ",=");
+			StringTokenizer tok(value, ",=", NULL);
 			const char * from = tok();
 			const char * to = tok();
-			ip_address fromIP = from ? Inet_AtoN(from) : 0;
+			IPAddress fromIP = from ? Inet_AtoN(from) : invalidIP;
 			
 			if ((fromIP != invalidIP)&&(to)) {
 				char ipbuf[64]; Inet_NtoA(fromIP, ipbuf);
@@ -320,23 +320,23 @@ App::ArgvReceived(int32 argc, char **argv)
 
 	if (args.FindString("maxnodespersession", &value) == B_NO_ERROR) {
 		maxNodesPerSession = atoi(value);
-		LogTime(MUSCLE_LOG_INFO, "Limiting nodes-per-session to "UINT32_FORMAT_SPEC".\n", maxNodesPerSession);
+		LogTime(MUSCLE_LOG_INFO, "Limiting nodes-per-session to " UINT32_FORMAT_SPEC ".\n", maxNodesPerSession);
 	}
 
 	if (args.FindString("maxsessions", &value) == B_NO_ERROR) {
 		maxSessions = atoi(value);
-		LogTime(MUSCLE_LOG_INFO, "Limiting total session count to "UINT32_FORMAT_SPEC".\n", maxSessions);
+		LogTime(MUSCLE_LOG_INFO, "Limiting total session count to " UINT32_FORMAT_SPEC ".\n", maxSessions);
 	}
 
 	if (args.FindString("maxsessionsperhost", &value) == B_NO_ERROR) {
 		maxSessionsPerHost = atoi(value);
-		LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to "UINT32_FORMAT_SPEC".\n", maxSessionsPerHost);
+		LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to " UINT32_FORMAT_SPEC ".\n", maxSessionsPerHost);
 	}
 	
 	if (args.FindString("privatekey", &value) == B_NO_ERROR) {
 		fprivateKeyFilePath = new String(value);	
 		//const String * fprivateKeyFilePath = args.GetStringPointer("privatekey");
-		//LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to "UINT32_FORMAT_SPEC".\n", fprivateKeyFilePath);
+		//LogTime(MUSCLE_LOG_INFO, "Limiting session count for any given host to " UINT32_FORMAT_SPEC ".\n", fprivateKeyFilePath);
 	}
 
 	{

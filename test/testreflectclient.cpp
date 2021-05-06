@@ -34,7 +34,7 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Test failed, line %i\n",__LINE__)
+#define TEST(x) if ((x).IsError()) printf("Test failed, line %i\n",__LINE__)
 
 enum {
    METHOD_MANUAL = 0,
@@ -48,7 +48,8 @@ enum {
 class MyLooper : public BLooper
 {
 public:
-   explicit MyLooper(MessageTransceiverThread & mtt) : 
+   explicit MyLooper(MessageTransceiverThread & mtt)
+      : 
 #ifdef __ATHEOS__
      Looper(""),
 #endif     
@@ -118,31 +119,32 @@ public:
 
 status_t SetupTransceiverThread(MessageTransceiverThread & mtt, const char * hostName, uint16 port, int method)
 {
+   status_t ret;
    switch(method)
    {
       case METHOD_MANUAL:
-         if (mtt.AddNewSession(Connect(hostName, port, "trc")) != B_NO_ERROR)
+         if (mtt.AddNewSession(Connect(hostName, port, "trc")).IsError(ret))
          {
             printf("Error adding manual session!\n");
-            return B_ERROR;
+            return ret;
          }
       break;
 
       case METHOD_AUTOMATIC:
-         if (mtt.AddNewConnectSession(hostName, port) != B_NO_ERROR)
+         if (mtt.AddNewConnectSession(hostName, port).IsError(ret))
          {
             printf("Error adding connect session!\n");
-            return B_ERROR;
+            return ret;
          }
          else printf("Will connect asynchronously to %s\n", GetConnectString(hostName, port)());
       break;
 
       case METHOD_ACCEPT:
       {
-         if (mtt.PutAcceptFactory(port) != B_NO_ERROR)
+         if (mtt.PutAcceptFactory(port).IsError(ret))
          {
             printf("Error adding accept factory!\n");
-            return B_ERROR;
+            return ret;
          }
          printf("Accepting connections\n");
       }
@@ -150,7 +152,7 @@ status_t SetupTransceiverThread(MessageTransceiverThread & mtt, const char * hos
 
       default:
          printf("CreateTransceiverThread(): unknown method %i\n", method);
-         return B_ERROR;
+         return B_BAD_ARGUMENT;
       break;
    }
 
@@ -182,22 +184,21 @@ int main(int argc, char ** argv)
       {
          method = METHOD_AUTOMATIC;
          if (argc > 2) hostName = argv[2];
-         if (argc > 3) port = atoi(argv[3]);
-         if (port <= 0) port = 2960;
+         if (argc > 3) port = muscleMax(0, atoi(argv[3]));
       } 
       else if (strcmp(argv[1], "-connectsync") == 0)
       {
          method = METHOD_MANUAL;
          if (argc > 2) hostName = argv[2];
-         if (argc > 3) port = atoi(argv[3]);
-         if (port <= 0) port = 2960;
+         if (argc > 3) port = muscleMax(0, atoi(argv[3]));
       }
       else if (strcmp(argv[1], "-accept") == 0)
       {
          method = METHOD_ACCEPT;
-         if (argc > 2) port = atoi(argv[2]);
+         if (argc > 2) port = muscleMax(0, atoi(argv[2]));
       }
    }
+   if (port == 0) port = 2960;
 
    if (method != -1)
    {
@@ -205,7 +206,7 @@ int main(int argc, char ** argv)
       MyLooper * looper = new MyLooper(mtt);
       looper->Run();
       mtt.SetTarget(looper);
-      if ((mtt.StartInternalThread() == B_NO_ERROR)&&(SetupTransceiverThread(mtt, hostName, (uint16)port, method) == B_NO_ERROR))
+      if ((mtt.StartInternalThread().IsOK())&&(SetupTransceiverThread(mtt, hostName, (uint16)port, method).IsOK()))
       {
          char text[1000];
          bool keepGoing = true;

@@ -8,8 +8,8 @@
 
 using namespace muscle;
 
-#define TEST(x) if ((x) != B_NO_ERROR) printf("Operation failed, line " INT32_FORMAT_SPEC"\n", __LINE__);
-#define NEGATIVETEST(x) if ((x) == B_NO_ERROR) printf("Operation succeeded when it should not have, line " INT32_FORMAT_SPEC "\n", __LINE__);
+#define TEST(x) if ((x).IsError()) printf("Operation failed, line " INT32_FORMAT_SPEC "\n", __LINE__);
+#define NEGATIVETEST(x) if ((x).IsOK()) printf("Operation succeeded when it should not have, line " INT32_FORMAT_SPEC "\n", __LINE__);
 
 // This program tests the Message <-> Message conversion functions in the atheossupport directory.
 int main(void) 
@@ -59,8 +59,8 @@ int main(void)
    mmsg.PrintToStream();
 
    Message rSub, rDeep;
-   if ((mmsg.FindMessage("TestMessage", rSub) == B_NO_ERROR)&&
-       (rSub.FindMessage("Russian Dolls", rDeep) == B_NO_ERROR)) 
+   if ((mmsg.FindMessage("TestMessage", rSub).IsOK())&&
+       (rSub.FindMessage("Russian Dolls", rDeep).IsOK())) 
    { 
       printf("Nested messages are:\n");
       rSub.PrintToStream();
@@ -76,7 +76,7 @@ int main(void)
       TEST(ConvertFromAMessage(aMsg, mmsg));
       TEST(ConvertToAMessage(mmsg, aMsg));
       uint32 flatSize = mmsg.FlattenedSize();
-      if (flatSize != origSize) printf("ERROR, FLATTENED SIZE CHANGED " UINT32_FORMAT_SPEC" -> " UINT32_FORMAT_SPEC"\n", origSize, flatSize);
+      if (flatSize != origSize) printf("ERROR, FLATTENED SIZE CHANGED " UINT32_FORMAT_SPEC " -> " UINT32_FORMAT_SPEC "\n", origSize, flatSize);
       uint8 * buf = new uint8[flatSize]; 
       mmsg.Flatten(buf);
       TEST(mmsg.Unflatten(buf, flatSize));

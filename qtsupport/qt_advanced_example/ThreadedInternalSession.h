@@ -24,7 +24,7 @@ public:
 
    /** Our SignalMessageIOGateway gateway sends us an empty dummy Message whenever it wants us to check our 
     * internal thread's reply-messages-queue.  We respond by grabbing all of the Messages from the internal thread's queue,
-    * and handing them over to the superclass's MesageReceivedFromGateway() method, as if they came from a regular
+    * and handing them over to the superclass's MessageReceivedFromGateway() method, as if they came from a regular
     * old (TCP-connected) AdvancedThreadWorkerSession's client process.
     */
    virtual void MessageReceivedFromGateway(const MessageRef & /*dummyMsg*/, void * userData);
@@ -38,8 +38,6 @@ public:
    virtual void AboutToDetachFromServer();
 
 protected:
-   virtual const char * GetTypeName() const {return "ThreadedInternalSession";}
-
    /** Called by InternalThreadEntry(), in the internal/slave thread, whenever the main thread has a Message to give the slave Thread
      * @param msgRef the MessageRef that was handed to us from the MUSCLE thread.
      * @param numLeft the number of Messages left for us to process in the FIFO queue after this one.
@@ -47,7 +45,7 @@ protected:
    virtual status_t MessageReceivedFromOwner(const MessageRef & msgRef, uint32 numLeft);
 
    /** Overridden so that internal thread sessions will show up under the "hostname" of "InternalThreadSessions". */
-   virtual String GenerateHostName(const ip_address & /*ip*/, const String & /*defaultName*/) const {return "InternalThreadSessions";}
+   virtual String GenerateHostName(const IPAddress & /*ip*/, const String & /*defaultName*/) const {return "InternalThreadSessions";}
 
 private:
    /** Entry point for the internal thread -- overridden to customize the event loop with a poll timeout.
@@ -58,12 +56,19 @@ private:
    virtual void InternalThreadEntry();
 
    status_t SetupNotifierGateway();
+   void SendExampleMessageToMainThread();
+
+#if defined(MUSCLE_ENABLE_QTHREAD_EVENT_LOOP_INTEGRATION)
+   friend class TimerSignalReceiverObject;
+#endif
 
    MessageRef _args;
    bool _gatewayOK;
 
    uint32 _count;
    uint64 _nextStatusPostTime;
+
+   char _threadIDString[20];
 };
 
 #endif

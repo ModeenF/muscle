@@ -21,7 +21,7 @@ public:
    /** Retrieves the nth signal number that we should try to catch and respond to.
      * @param n The index of the signal number that is to be returned (e.g. 0, 1, ... n)
      * @param signalNumber on success, the signal number should be written here.
-     * @returns B_NO_ERROR on success, or B_ERROR if there is no (nth) signal number.
+     * @returns B_NO_ERROR on success, or B_BAD_ARGUMENT if there is no (nth) signal number.
      *
      * Default implementation will return SIGINT, SIGTERM, and SIGHUP under Posix OS's,
      * and CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, and CTRL_SHUTDOWN_EVENT under Windows.
@@ -33,6 +33,7 @@ public:
      * and therefore most function calls are unsafe to call from here.
      * Typically you would want to have this function simply set a flag
      * or write a byte onto a socket, and do all the actual work somewhere else.
+     * @param whichSignal ID of the signal we just received (meaning is OS-specific)
      */
    virtual void SignalHandlerFunc(int whichSignal) = 0;
 };
@@ -47,7 +48,7 @@ public:
    /** Adds the given ISignalHandler object to our list of objects that wish to be called when a signal is raised.
      * The object's GetNthSignalNumber() method will be called to see which signal(s) it is interested in hearing about.
      * @param handler A handler object that wants to receive signal callbacks.
-     * @returns B_NO_ERROR on success, or B_ERROR on failure.
+     * @returns B_NO_ERROR on success, or B_OUT_OF_MEMORY.
      */
    status_t AddHandler(ISignalHandler * handler);
 
@@ -91,7 +92,7 @@ private:
    static SignalMultiplexer _signalMultiplexer;  // the singleton object
 };
 
-}; // end namespace muscle
+} // end namespace muscle
 
 #endif
 

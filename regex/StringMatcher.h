@@ -4,6 +4,7 @@
 #define MuscleStringMatcher_h
 
 #include <sys/types.h>
+#include "support/BitChord.h"
 #include "util/Queue.h"
 #include "util/RefCount.h"
 #include "util/String.h"
@@ -29,28 +30,28 @@ class StringMatcher MUSCLE_FINAL_CLASS : public RefCountable
 {
 public:
    /** Default Constructor. */
-   StringMatcher();
+   StringMatcher() {/* empty */}
 
    /** A constructor that sets the given expression.  See SetPattern() for argument semantics.
      * @param expression the pattern string to use in future pattern-matches.
      * @param isSimpleFormat if true, a simple globbing syntax is expected in (expression).  
      *                       Otherwise, the full regex syntax will be expected.  Defaults to true.
      */
-   StringMatcher(const String & expression, bool isSimpleFormat = true);
+   StringMatcher(const String & expression, bool isSimpleFormat = true) {(void) SetPattern(expression, isSimpleFormat);}
     
-   /** Copy constructor */
-   StringMatcher(const StringMatcher & rhs);
+   /** @copydoc DoxyTemplate::DoxyTemplate(const DoxyTemplate &) */
+   StringMatcher(const StringMatcher & rhs) : RefCountable(rhs) {*this = rhs;}
 
    /** Destructor */
-   ~StringMatcher();
+   ~StringMatcher() {Reset();}
 
-   /** Equality constructor.  */
-   bool operator == (const StringMatcher & rhs) const {return ((_bits == rhs._bits)&&(_pattern == rhs._pattern));}
+   /** @copydoc DoxyTemplate::operator==(const DoxyTemplate &) const */
+   bool operator == (const StringMatcher & rhs) const {return ((_flags == rhs._flags)&&(_pattern == rhs._pattern));}
 
-   /** Inequality constructor */
+   /** @copydoc DoxyTemplate::operator!=(const DoxyTemplate &) const */
    bool operator != (const StringMatcher & rhs) const {return !(*this == rhs);}
 
-   /** Assignment operator */
+   /** @copydoc DoxyTemplate::operator=(const DoxyTemplate &) */
    StringMatcher & operator = (const StringMatcher & rhs);
 
    /** 
@@ -76,7 +77,7 @@ public:
     * @param expression The new globbing pattern or regular expression to match with.
     * @param isSimpleFormat If you wish to use the formal regex syntax, 
     *                       instead of the simple syntax, set isSimpleFormat to false.
-    * @return B_NO_ERROR on success, B_ERROR on error (e.g. expression wasn't parsable, or out of memory)
+    * @return B_NO_ERROR on success, or B_BAD_ARGUMENT if the expression wasn't parsable, or B_OUT_OF_MEMORY.
     */
    status_t SetPattern(const String & expression, bool isSimpleFormat=true);
     
@@ -88,10 +89,10 @@ public:
     *  @note StringMatchers using numeric ranges are never considered unique, because e.g. looking up the
     *        string "<5>" in a Hashtable would not return a child node whose node-name is "5".
     */
-   bool IsPatternUnique() const {return ((_ranges.IsEmpty())&&(IsBitSet(STRINGMATCHER_BIT_CANMATCHMULTIPLEVALUES|STRINGMATCHER_BIT_NEGATE) == false));}
+   bool IsPatternUnique() const {return ((_ranges.IsEmpty())&&(_flags.AreAnyOfTheseBitsSet(STRINGMATCHER_FLAG_CANMATCHMULTIPLEVALUES,STRINGMATCHER_FLAG_NEGATE) == false));}
 
    /** Returns true iff this StringMatcher's pattern specifies a comma-separated list of one or more non-wildcarded substrings. */
-   bool IsPatternListOfUniqueValues() const {return IsBitSet(STRINGMATCHER_BIT_UVLIST);}
+   bool IsPatternListOfUniqueValues() const {return _flags.IsBitSet(STRINGMATCHER_FLAG_UVLIST);}
 
    /** Returns true iff (string) is matched by the current expression.
     * @param matchString a string to match against using our current expression.
@@ -99,7 +100,10 @@ public:
     */
    bool Match(const char * const matchString) const;
     
-   /** Convenience method:  Same as above, but takes a String object instead of a (const char *). */
+   /** Convenience method:  Same as above, but takes a String object instead of a (const char *).
+     * @param matchString a string to match against using our current expression.
+     * @return true iff (matchString) matches, false otherwise.
+     */
    inline bool Match(const String & matchString) const {return Match(matchString());}
 
    /** If set true, Match() will return the logical opposite of what
@@ -108,14 +112,15 @@ public:
      * Default state is false.  Note that this flag is also set by
      * SetPattern(..., true), based on whether or not the pattern
      * string starts with a tilde.
+     * @param negate true if we should negate our Match()-output; false for the regular logic
      */
-   void SetNegate(bool negate) {SetBit(STRINGMATCHER_BIT_NEGATE, negate);}
+   void SetNegate(bool negate) {_flags.SetBit(STRINGMATCHER_FLAG_NEGATE, negate);}
 
    /** Returns the current state of our negate flag. */
-   bool IsNegate() const {return IsBitSet(STRINGMATCHER_BIT_NEGATE);}
+   bool IsNegate() const {return _flags.IsBitSet(STRINGMATCHER_FLAG_NEGATE);}
 
    /** Returns the true iff our current pattern is of the "simple" variety, or false if it is of the "official regex" variety. */
-   bool IsSimple() const {return IsBitSet(STRINGMATCHER_BIT_SIMPLE);}
+   bool IsSimple() const {return _flags.IsBitSet(STRINGMATCHER_FLAG_SIMPLE);}
 
    /** Resets this StringMatcher to the state it would be in if created with default arguments. */
    void Reset();
@@ -123,20 +128,32 @@ public:
    /** Returns a human-readable string representing this StringMatcher, for debugging purposes. */
    String ToString() const;
 
-   /** Returns a hash code for this StringMatcher */
-   inline uint32 HashCode() const {return _pattern.HashCode() + _bits;}
+   /** @copydoc DoxyTemplate::HashCode() const */
+   inline uint32 HashCode() const {return _pattern.HashCode() + _flags.HashCode();}
+
+   /** Efficiently swaps our state with the state of the StringMatcher passed in as an argument.
+     * @param withMe the StringMatcher whose state should be swapped with our own.
+     */
+   void SwapContents(StringMatcher & withMe);
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
+   StringMatcher(StringMatcher && rhs) {SwapContents(rhs);}
+
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
+   StringMatcher & operator =(StringMatcher && rhs) {SwapContents(rhs); return *this;}
+#endif
 
 private:
-   void SetBit(uint8 bit, bool set) {if (set) _bits |= bit; else _bits &= ~(bit);}
-   bool IsBitSet(uint8 bit) const {return (_bits & bit) != 0;}
-
    enum {
-      STRINGMATCHER_BIT_REGEXVALID             = (1<<0),
-      STRINGMATCHER_BIT_NEGATE                 = (1<<1),
-      STRINGMATCHER_BIT_CANMATCHMULTIPLEVALUES = (1<<2),
-      STRINGMATCHER_BIT_SIMPLE                 = (1<<3),
-      STRINGMATCHER_BIT_UVLIST                 = (1<<4),
+      STRINGMATCHER_FLAG_REGEXVALID = 0,
+      STRINGMATCHER_FLAG_NEGATE,
+      STRINGMATCHER_FLAG_CANMATCHMULTIPLEVALUES,
+      STRINGMATCHER_FLAG_SIMPLE,
+      STRINGMATCHER_FLAG_UVLIST,
+      NUM_STRINGMATCHER_FLAGS
    };
+   DECLARE_BITCHORD_FLAGS_TYPE(StringMatcherFlags, NUM_STRINGMATCHER_FLAGS);
 
    class IDRange
    {
@@ -152,7 +169,7 @@ private:
       uint32 _max; 
    };
 
-   uint8 _bits;
+   StringMatcherFlags _flags;
    String _pattern;
    regex_t _regExp;
    Queue<IDRange> _ranges;
@@ -188,7 +205,7 @@ StringMatcherRef GetStringMatcherFromPool(const String & matchString, bool isSim
 String EscapeRegexTokens(const String & str, const char * optTokens = NULL);
 
 /** This does essentially the opposite of EscapeRegexTokens():  It removes from the string
-  * and backslashes that are not immediately preceeded by another backslash.
+  * any backslashes that are not immediately preceded by another backslash.
   */
 String RemoveEscapeChars(const String & str);
 
@@ -236,7 +253,6 @@ bool MakeRegexCaseInsensitive(String & str);
  */
 inline String ToCaseInsensitive(const String & str) {String r = str; MakeRegexCaseInsensitive(r); return r;}
 
-}; // end namespace muscle
-
+} // end namespace muscle
 
 #endif

@@ -6,7 +6,12 @@
 
 namespace muscle {
 
-AbstractMessageIOGateway :: AbstractMessageIOGateway() : _hosed(false), _flushOnEmpty(true)
+AbstractMessageIOGateway :: AbstractMessageIOGateway()
+   : _packetDataIO(NULL)
+   , _mtuSize(0)
+   , _hosed(false)
+   , _flushOnEmpty(true)
+   , _packetRemoteLocationTaggingEnabled(true)
 {
    // empty
 }
@@ -52,11 +57,24 @@ Reset()
    _hosed = false;
 }
 
+void
+AbstractMessageIOGateway ::
+FlushOutput()
+{
+   DataIO * dio = GetDataIO()();
+   if (dio) dio->FlushOutput();
+}
+
 /** Used to funnel callbacks from DoInput() back through the AbstractMessageIOGateway's own API, so that subclasses can insert their logic as necessary */
 class ScratchProxyReceiver : public AbstractGatewayMessageReceiver
 {
 public:
-   ScratchProxyReceiver(AbstractMessageIOGateway * gw, AbstractGatewayMessageReceiver * r) : _gw(gw), _r(r) {/* empty */}
+   ScratchProxyReceiver(AbstractMessageIOGateway * gw, AbstractGatewayMessageReceiver * r)
+      : _gw(gw)
+      , _r(r) 
+   {
+      // empty
+   }
 
    virtual void MessageReceivedFromGateway(const MessageRef & msg, void * userData) {_gw->SynchronousMessageReceivedFromGateway(msg, userData, *_r);}
    virtual void AfterMessageReceivedFromGateway(const MessageRef & msg, void * userData) {_gw->SynchronousAfterMessageReceivedFromGateway(msg, userData, *_r);}
@@ -72,23 +90,38 @@ status_t
 AbstractMessageIOGateway :: 
 ExecuteSynchronousMessaging(AbstractGatewayMessageReceiver * optReceiver, uint64 timeoutPeriod)
 {
-   int readFD  = GetDataIO()() ? GetDataIO()()->GetReadSelectSocket().GetFileDescriptor()  : -1;
-   int writeFD = GetDataIO()() ? GetDataIO()()->GetWriteSelectSocket().GetFileDescriptor() : -1;
-   if ((readFD < 0)||(writeFD < 0)) return B_ERROR;  // no socket to transmit or receive on!
+   const int readFD  = GetDataIO()() ? GetDataIO()()->GetReadSelectSocket().GetFileDescriptor()  : -1;
+   const int writeFD = GetDataIO()() ? GetDataIO()()->GetWriteSelectSocket().GetFileDescriptor() : -1;
+   if ((readFD < 0)||(writeFD < 0)) return B_BAD_OBJECT;  // no socket to transmit or receive on!
 
    ScratchProxyReceiver scratchReceiver(this, optReceiver);
-   uint64 endTime = (timeoutPeriod == MUSCLE_TIME_NEVER) ? MUSCLE_TIME_NEVER : (GetRunTime64()+timeoutPeriod);
+   const uint64 endTime = (timeoutPeriod == MUSCLE_TIME_NEVER) ? MUSCLE_TIME_NEVER : (GetRunTime64()+timeoutPeriod);
    SocketMultiplexer multiplexer;
    while(IsStillAwaitingSynchronousMessagingReply())
    {
-      if (GetRunTime64() >= endTime) return B_ERROR;
+      if (GetRunTime64() >= endTime) return B_TIMED_OUT;
       if (optReceiver)        multiplexer.RegisterSocketForReadReady(readFD);
       if (HasBytesToOutput()) multiplexer.RegisterSocketForWriteReady(writeFD);
       if ((multiplexer.WaitForEvents(endTime) < 0)                        ||
          ((multiplexer.IsSocketReadyForWrite(writeFD))&&(DoOutput() < 0)) ||
-         ((multiplexer.IsSocketReadyForRead(readFD))&&(DoInput(scratchReceiver) < 0))) return IsStillAwaitingSynchronousMessagingReply() ? B_ERROR : B_NO_ERROR;
+         ((multiplexer.IsSocketReadyForRead(readFD))&&(DoInput(scratchReceiver) < 0))) return IsStillAwaitingSynchronousMessagingReply() ? B_IO_ERROR : B_NO_ERROR;
    }
    return B_NO_ERROR;
 }
 
-}; // end namespace muscle
+void AbstractMessageIOGateway :: SetDataIO(const DataIORef & ref) 
+{
+   _ioRef = ref;
+
+   _packetDataIO = dynamic_cast<PacketDataIO *>(_ioRef());
+   _mtuSize = _packetDataIO ? _packetDataIO->GetMaximumPacketSize() : 0;
+}
+
+int32 AbstractMessageIOGateway :: DoOutput(uint32 maxBytes) 
+{
+   const int32 numBytesSent = DoOutputImplementation(maxBytes);
+   if ((numBytesSent > 0)&&(_flushOnEmpty)&&(HasBytesToOutput() == false)) FlushOutput();
+   return numBytesSent;
+}
+
+} // end namespace muscle

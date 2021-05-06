@@ -12,12 +12,18 @@ namespace muscle {
 
 class RefCountable;
 
-// This macro lets you easily declare Reference classes fora give RefCountable type in the standard way,
-// which is that for a RefCountable class Named XXX you would have XXXRef and ConstXXXRef as simpler ways
-// to express Ref<XXX> and ConstRef<XXX>, respectively.
-#define DECLARE_REFTYPES(RefCountableClassName)                               \
-   typedef ConstRef<RefCountableClassName> Const##RefCountableClassName##Ref; \
-   typedef Ref<RefCountableClassName>      RefCountableClassName##Ref
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+class String;
+extern void UpdateAllocationStackTrace(bool isAllocation, String * & s);  // implemented in SysLog.cpp
+#endif
+
+/** This macro declares typedefs for a given RefCountable type that follow the standard convention.
+  * Given a RefCountable class Named XXX it will create typedefs named XXXRef and ConstXXXRef as 
+  * more readable synonyms for Ref<XXX> and ConstRef<XXX>, respectively.
+  */
+#define DECLARE_REFTYPES(RefCountableClassName)                                       \
+   typedef muscle::ConstRef<RefCountableClassName> Const##RefCountableClassName##Ref; \
+   typedef muscle::Ref<RefCountableClassName>      RefCountableClassName##Ref
 
 /** This class represents objects that can be reference-counted using the Ref class. 
   * Note that any object that can be reference-counted can also be cached and recycled via an ObjectPool.
@@ -26,13 +32,26 @@ class RefCountable
 {
 public:
    /** Default constructor.  Refcount begins at zero. */
-   RefCountable() : _manager(NULL) {/* empty */}
+   RefCountable() : _manager(NULL)
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+      , _allocatedAtStackTrace(NULL)
+#endif
+   {/* empty */}
 
    /** Copy constructor -- ref count and manager settings are deliberately not copied over! */
-   RefCountable(const RefCountable &) : _refCount(), _manager(NULL) {/* empty */}
+   RefCountable(const RefCountable &) : _refCount(), _manager(NULL) 
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+      , _allocatedAtStackTrace(NULL)
+#endif
+   {/* empty */}
 
    /** Virtual destructor, to keep C++ honest.  Don't remove this unless you like crashing */
-   virtual ~RefCountable() {/* empty */}
+   virtual ~RefCountable()
+   {
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+      UpdateAllocationStackTrace(false, _allocatedAtStackTrace);  // delete the allocation-location string, if any
+#endif
+   }
 
    /** Assigment operator.  deliberately implemented as a no-op! */
    inline RefCountable &operator=(const RefCountable &) {return *this;}
@@ -50,7 +69,13 @@ public:
      * Default value is NULL. 
      * @param manager Pointer to the new manager object to use, or NULL to use no manager.
      */
-   void SetManager(AbstractObjectManager * manager) {_manager = manager;}
+   void SetManager(AbstractObjectManager * manager) 
+   {
+      _manager = manager;
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+      UpdateAllocationStackTrace((_manager!=NULL), _allocatedAtStackTrace);
+#endif
+   }
 
    /** Returns this object's current recyler pointer. */
    AbstractObjectManager * GetManager() const {return _manager;}
@@ -62,9 +87,27 @@ public:
      */
    uint32 GetRefCount() const {return _refCount.GetCount();}
 
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+   /** If -DMUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS was specified on the compile line,
+     * and this RefCountable is currently being managed by an ObjectPool, this will return
+     * a string containing the stack trace of where the allocation occurred.  This is useful
+     * for tracking down the cause of on-exit assertion failures from the ObjectPool class
+     * destructors which are very picky about making sure all objects have been returned
+     * to the pool before they deallocate the ObjectSlabs.
+     *
+     * Note that enabling this feature uses up gobs of extra memory and CPU, so don't leave 
+     * it enabled after you are done debugging.
+     */
+   const String * GetAllocationLocation() const {return _allocatedAtStackTrace;}
+#endif
+
 private:
    mutable AtomicCounter _refCount;
    AbstractObjectManager * _manager;
+
+#ifdef MUSCLE_RECORD_REFCOUNTABLE_ALLOCATION_LOCATIONS
+   String * _allocatedAtStackTrace;
+#endif
 };
 template <class Item> class Ref;       // forward reference
 template <class Item> class ConstRef;  // forward reference
@@ -80,6 +123,7 @@ template <class Item> class ConstRef
 {
 public:
    typedef ObjectPool<Item> ItemPool;        /**< type of an ObjectPool of user data structures */
+   typedef Item ItemType;                    /**< the type we are specialized to */
 
    /** 
     *  Default constructor.
@@ -99,21 +143,21 @@ public:
      *                   But if you do that, it allows the possibility of the object going away while
      *                   other Refs are still using it, so be careful!
      */
-   explicit ConstRef(const Item * item, bool doRefCount = true) : _item(item, doRefCount)
-   {
-      RefItem();
-   } 
+   explicit ConstRef(const Item * item, bool doRefCount = true) : _item(item, doRefCount) {RefItem();} 
 
-   /** Copy constructor.  Creates an additional reference to the object referenced by (copyMe).
+   /** Copy constructor.  Creates an additional reference to the object referenced by (rhs).
     *  The referenced object won't be deleted until ALL Refs that reference it are gone.
+    *  @param rhs the object to make this a copy of.  Note that the data pointed to by (rhs) is not duplicated, only double-referenced.
     */
-   ConstRef(const ConstRef & copyMe) : _item(NULL, true)
-   {
-      *this = copyMe;
-   }
+   ConstRef(const ConstRef & rhs) : _item(NULL, true) {*this = rhs;}
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
-   /** C++11 Move Constructor */
+   /** This constructor is useful for automatic upcasting (e.g. creating an ConstAbstractReflectSessionRef from a ConstStorageReflectSessionRef)
+     * @param refItem A Ref or ConstRef to copy our state from.
+     */
+   template<typename T> ConstRef(const ConstRef<T> & refItem) : _item(refItem(), refItem.IsRefCounting()) {RefItem();}
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
    ConstRef(ConstRef && rhs) {this->SwapContents(rhs);}
 #endif
 
@@ -177,17 +221,19 @@ public:
 
    /** Assigment operator.
     *  Unreferences the previous held data item, and adds a reference to the data item of (rhs).
+    *  @param rhs Item to become a copy of.
     */
    inline ConstRef &operator=(const ConstRef & rhs) {this->SetRef(rhs.GetItemPointer(), rhs.IsRefCounting()); return *this;}
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
-   /** C++11 Move Assignment operator */
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
    inline ConstRef &operator=(ConstRef && rhs) {this->SwapContents(rhs); return *this;}
 #endif
 
    /** Similar to the == operator, except that this version will also call the comparison operator
      * on the objects themselves if necessary, to determine exact equality.  (This is different than
      * the behavior of the == operator, which only compares the pointers, not the objects themselves) 
+     * @param rhs the ConstRef whose referenced object we will compare to our own referenced object.
      */
    bool IsDeeplyEqualTo(const ConstRef & rhs) const
    {
@@ -198,16 +244,24 @@ public:
       return ((myItem == NULL)||(*myItem == *hisItem));
    }
 
-   /** Returns true iff both Refs are referencing the same data. */
+   /** Returns true iff both ConstRefs are referencing the same data.
+     * @param rhs the ConstRef to compare pointers with
+     */
    bool operator ==(const ConstRef &rhs) const {return this->GetItemPointer() == rhs.GetItemPointer();}
  
-   /** Returns true iff both Refs are not referencing the same data. */
+   /** Returns true iff both Refs are not referencing the same data. 
+     * @param rhs the ConstRef to compare pointers with
+     */
    bool operator !=(const ConstRef &rhs) const {return this->GetItemPointer() != rhs.GetItemPointer();}
  
-   /** Compares the pointers the two Refs are referencing. */
+   /** Compares the pointers the two Refs are referencing.
+     * @param rhs the ConstRef to compare pointers with
+     */
    bool operator < (const ConstRef &rhs) const {return this->GetItemPointer() < rhs.GetItemPointer();}
 
-   /** Compares the pointers the two Refs are referencing. */
+   /** Compares the pointers the two Refs are referencing.
+     * @param rhs the ConstRef to compare pointers with
+     */
    bool operator > (const ConstRef &rhs) const {return this->GetItemPointer() > rhs.GetItemPointer();}
 
    /** Returns the ref-counted data item.  The returned data item
@@ -250,7 +304,7 @@ public:
    /** Convenience method; attempts to set this typed ConstRef to be referencing the same item as the given ConstRefCountableRef.  
      * If the conversion cannot be done, our state will remain unchanged.
      * @param refCountableRef The ConstRefCountableRef to set ourselves from.
-     * @returns B_NO_ERROR if the conversion was successful, or B_ERROR if the ConstRefCountableRef's item
+     * @returns B_NO_ERROR if the conversion was successful, or B_BAD_ARGUMENT if the ConstRefCountableRef's item
      *                     type is incompatible with our own item type (as dictated by dynamic_cast)
      */
    status_t SetFromRefCountableRef(const ConstRefCountableRef & refCountableRef)
@@ -259,7 +313,7 @@ public:
       if (refCountableItem)
       {
          const Item * typedItem = dynamic_cast<const Item *>(refCountableItem);
-         if (typedItem == NULL) return B_ERROR;
+         if (typedItem == NULL) return B_BAD_ARGUMENT;
          SetRef(typedItem, refCountableRef.IsRefCounting());
       }
       else Reset();
@@ -272,6 +326,7 @@ public:
      * the user's code to guarantee that the conversion is valid.  If (refCountableRef)
      * references an object of the wrong type, undefined behaviour (read: crashing)
      * will likely occur.
+     * @param refCountableRef the ConstRefCountableRef object we should become equal to
      */
    inline void SetFromRefCountableRefUnchecked(const ConstRefCountableRef & refCountableRef)
    {
@@ -306,7 +361,7 @@ public:
      * make a copy that wasn't strictly necessary, but it will never fail to
      * make a copy when making a copy is necessary.
      * @returns B_NO_ERROR on success (i.e. the object was successfully copied,
-     *                     or a copy turned out to be unnecessary), or B_ERROR
+     *                     or a copy turned out to be unnecessary), or B_OUT_OF_MEMORY
      *                     on failure (i.e. out of memory)
      */
    status_t EnsureRefIsPrivate()
@@ -314,7 +369,7 @@ public:
       if (IsRefPrivate() == false)
       {
          Ref<Item> copyRef = this->Clone();
-         if (copyRef() == NULL) return B_ERROR;
+         if (copyRef() == NULL) return B_OUT_OF_MEMORY;
          *this = copyRef;
       }
       return B_NO_ERROR;
@@ -329,9 +384,16 @@ public:
       if (item)
       {
          AbstractObjectManager * m = item->GetManager();
-         Item * newItem = m ? static_cast<Item *>(m->ObtainObjectGeneric()) : static_cast<Item *>(CloneObject(*item));
+         Item * newItem;
+         if (m)
+         {
+            newItem = static_cast<Item *>(m->ObtainObjectGeneric());
+            if (newItem) *newItem = *item;
+         }
+         else newItem = CloneObject(*item); 
+
          if (newItem) return Ref<Item>(newItem);
-                 else WARN_OUT_OF_MEMORY;
+                 else MWARN_OUT_OF_MEMORY;
       }
       return Ref<Item>();
    }
@@ -353,7 +415,7 @@ private:
       const Item * item = this->GetItemPointer();
       if (item)
       {
-         bool isRefCounting = this->IsRefCounting();
+         const bool isRefCounting = this->IsRefCounting();
          if ((isRefCounting)&&(item->DecrementRefCount()))
          {
             AbstractObjectManager * m = item->GetManager();
@@ -371,7 +433,11 @@ private:
 template <typename ItemType> class CompareFunctor<ConstRef<ItemType> >
 {
 public:
-   /** Compares the two ConstRef's strcmp() style, returning zero if they are equal, a negative value if (item1) comes first, or a positive value if (item2) comes first. */
+   /** Compares the two ConstRef's strcmp() style, returning zero if they are equal, a negative value if (item1) comes first, or a positive value if (item2) comes first.
+     * @param item1 the first item to compare
+     * @param item2 the first item to compare
+     * @param cookie arbitrary user-specific value
+     */
    int Compare(const ConstRef<ItemType> & item1, const ConstRef<ItemType> & item2, void * cookie) const {return CompareFunctor<const ItemType *>().Compare(item1(), item2(), cookie);}
 };
 
@@ -404,13 +470,19 @@ public:
      */
    explicit Ref(Item * item, bool doRefCount = true) : ConstRef<Item>(item, doRefCount) {/* empty */}
 
-   /** Copy constructor.  Creates an additional reference to the object referenced by (copyMe).
+   /** Copy constructor.  Creates an additional reference to the object referenced by (rhs).
     *  The referenced object won't be deleted until ALL Refs that reference it are gone.
+    *  @param rhs the object to make this object a duplicate of
     */
-   Ref(const Ref & copyMe) : ConstRef<Item>(copyMe) {/* empty */}
+   Ref(const Ref & rhs) : ConstRef<Item>(rhs) {/* empty */}
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
-   /** C++11 Move Constructor */
+   /** This constructor is useful for automatic upcasting (e.g. creating an AbstractReflectSessionRef from a StorageReflectSessionRef)
+     * @param refItem A Ref to copy our state from.
+     */
+   template<typename T> Ref(const Ref<T> & refItem) : ConstRef<Item>(refItem(), refItem.IsRefCounting()) {/* empty */}
+
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
    Ref(Ref && rhs) {this->SwapContents(rhs);}
 #endif
 
@@ -437,11 +509,12 @@ public:
 
    /** Assigment operator.
     *  Unreferences the previous held data item, and adds a reference to the data item of (rhs).
+    *  @param rhs Item to become a copy of.
     */
    inline Ref &operator=(const Ref & rhs) {this->SetRef(rhs.GetItemPointer(), rhs.IsRefCounting()); return *this;}
 
-#ifdef MUSCLE_USE_CPLUSPLUS11
-   /** C++11 Move Assignment operator */
+#ifndef MUSCLE_AVOID_CPLUSPLUS11
+   /** @copydoc DoxyTemplate::DoxyTemplate(DoxyTemplate &&) */
    inline Ref &operator=(Ref && rhs) {this->SwapContents(rhs); return *this;}
 #endif
 };
@@ -462,9 +535,19 @@ template <class Item> inline Item * CheckedGetItemPointer(const Ref<Item> * rt) 
 
 /** Convenience method for converting a ConstRef into a non-const Ref.  Only call this method if you are sure you know what you are doing,
   * because usually the original ConstRef was declared as a ConstRef for a good reason!
+  * @param constItem the ConstRef we want to return a Ref equivalent of.
+  * @returns a non-const Ref that is pointing to the same object that the passed-in ConstRef was pointing to.
   */
 template <class Item> inline Ref<Item> CastAwayConstFromRef(const ConstRef<Item> & constItem) {return Ref<Item>(const_cast<Item *>(constItem()), constItem.IsRefCounting());}
 
-}; // end namespace muscle
+/** Convenience method for converting a non-const Ref into a ConstRef.  This method isn't strictly necessary, since
+  * you can also just use the assignment-operator, but I'm including it for completeness, and because some compilers
+  * want to warn you about object-slicing if you just use the assignment operator to do this.
+  * @param nonConstItem the Ref we want to return a ConstRef equivalent of.
+  * @returns a ConstRef that is pointing to the same object that the passed-in non-const Ref was pointing to.
+  */
+template <class Item> inline ConstRef<Item> AddConstToRef(const Ref<Item> & nonConstItem) {return ConstRef<Item>(nonConstItem(), nonConstItem.IsRefCounting());}
+
+} // end namespace muscle
 
 #endif
